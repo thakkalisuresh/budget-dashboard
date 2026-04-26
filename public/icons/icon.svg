@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background -->
+  <rect width="512" height="512" rx="112" fill="#4f46e5"/>
+  <!-- Wallet body -->
+  <rect x="96" y="160" width="320" height="220" rx="24" fill="white" opacity="0.95"/>
+  <!-- Wallet flap -->
+  <rect x="96" y="148" width="320" height="60" rx="16" fill="white"/>
+  <!-- Coin slot -->
+  <rect x="340" y="230" width="60" height="60" rx="12" fill="#4f46e5" opacity="0.15"/>
+  <circle cx="370" cy="260" r="16" fill="#4f46e5" opacity="0.5"/>
+  <!-- Lines suggesting money -->
+  <rect x="128" y="300" width="140" height="14" rx="7" fill="#4f46e5" opacity="0.2"/>
+  <rect x="128" y="326" width="100" height="14" rx="7" fill="#4f46e5" opacity="0.15"/>
+</svg>

@@ -1,0 +1,170 @@
+import { useState, useEffect, useCallback } from 'react';
+
+const TEMPLATE_ID = import.meta.env.VITE_TEMPLATE_SHEET_ID;
+const SETTINGS_SHEET = 'UserSettings';
+
+// Session cache — sheet only needs to be verified once per page load
+let _sheetReady = false;
+
+export const DEFAULT_LAYOUT = [
+  { i: 'stat-cards',    x: 0, y: 0,  w: 12, h: 3,  minH: 2, minW: 4  },
+  { i: 'expense-table', x: 0, y: 3,  w: 8,  h: 12, minH: 5, minW: 4  },
+  { i: 'donut-chart',   x: 8, y: 3,  w: 4,  h: 8,  minH: 4, minW: 3  },
+  { i: 'bar-chart',     x: 8, y: 11, w: 4,  h: 7,  minH: 3, minW: 3  },
+  { i: 'insight-cards', x: 0, y: 15, w: 8,  h: 5,  minH: 3, minW: 4  },
+  { i: 'non-monthly',   x: 0, y: 20, w: 8,  h: 3,  minH: 2, minW: 3  },
+  { i: 'budget-rules',  x: 0, y: 23, w: 12, h: 8,  minH: 3, minW: 6  },
+];
+
+export const DEFAULT_CATEGORY_ORDER = [
+  'Grocery', 'Eating Out', 'Misc', 'Thakkali', 'Entertainment',
+  'Investment', 'Travel', 'Utilities', 'Car Payments', 'Rent',
+  'Health', 'Furniture', 'Holiday', 'Wi-Fi',
+];
+
+export const DEFAULT_SETTINGS = {
+  visibility: {
+    statCards:      true,
+    donutChart:     true,
+    barChart:       true,
+    insightCards:   true,
+    nonMonthlyTile: true,
+    budgetRules:    true,
+  },
+  donutLegendCount: 5,
+  barSortOrder:    'amount',
+  categoryColors:  {},
+  categoryOrder:   DEFAULT_CATEGORY_ORDER,
+  layout:          null, // null = use DEFAULT_LAYOUT from DashboardGrid
+};
+
+// ─── Sheets helpers ───────────────────────────────────────────────────────────
+
+async function sheetsGet(path, accessToken) {
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${TEMPLATE_ID}${path}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  return res.json();
+}
+
+async function sheetsPut(path, body, accessToken) {
+  await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${TEMPLATE_ID}${path}`,
+    {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }
+  );
+}
+
+async function sheetsPost(path, body, accessToken) {
+  await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${TEMPLATE_ID}${path}`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }
+  );
+}
+
+// ─── Ensure the UserSettings tab exists ───────────────────────────────────────
+
+async function ensureSettingsSheet(accessToken) {
+  if (_sheetReady) return;
+  const meta = await sheetsGet('?fields=sheets.properties.title', accessToken);
+  const exists = (meta.sheets || []).some(s => s.properties?.title === SETTINGS_SHEET);
+  if (!exists) {
+    await sheetsPost(':batchUpdate', {
+      requests: [{ addSheet: { properties: { title: SETTINGS_SHEET } } }],
+    }, accessToken);
+    // Write header row
+    const range = encodeURIComponent(`'${SETTINGS_SHEET}'!A1:B1`);
+    await sheetsPut(`/values/${range}?valueInputOption=RAW`, {
+      values: [['UserID', 'Settings']],
+    }, accessToken);
+  }
+  _sheetReady = true;
+}
+
+// ─── Read all rows from UserSettings ─────────────────────────────────────────
+
+async function fetchRows(accessToken) {
+  const range = encodeURIComponent(`'${SETTINGS_SHEET}'!A:B`);
+  const json = await sheetsGet(`/values/${range}`, accessToken);
+  return json.values || [];
+}
+
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+export async function loadUserSettings(userId, accessToken) {
+  try {
+    await ensureSettingsSheet(accessToken);
+    const rows = await fetchRows(accessToken);
+    const row = rows.find(r => r[0] === userId);
+    if (!row || !row[1]) return { ...DEFAULT_SETTINGS, visibility: { ...DEFAULT_SETTINGS.visibility } };
+    const parsed = JSON.parse(row[1]);
+    return {
+      ...DEFAULT_SETTINGS,
+      ...parsed,
+      visibility:    { ...DEFAULT_SETTINGS.visibility, ...(parsed.visibility || {}) },
+      categoryColors: { ...(parsed.categoryColors || {}) },
+      categoryOrder:  parsed.categoryOrder || DEFAULT_CATEGORY_ORDER,
+      layout:         parsed.layout || null,
+    };
+  } catch {
+    return { ...DEFAULT_SETTINGS, visibility: { ...DEFAULT_SETTINGS.visibility } };
+  }
+}
+
+export async function saveUserSettings(userId, settings, accessToken) {
+  try {
+    await ensureSettingsSheet(accessToken);
+    const rows = await fetchRows(accessToken);
+    const rowIndex = rows.findIndex(r => r[0] === userId);
+    const json = JSON.stringify(settings);
+
+    if (rowIndex >= 0) {
+      const range = encodeURIComponent(`'${SETTINGS_SHEET}'!A${rowIndex + 1}:B${rowIndex + 1}`);
+      await sheetsPut(`/values/${range}?valueInputOption=RAW`, {
+        values: [[userId, json]],
+      }, accessToken);
+    } else {
+      const range = encodeURIComponent(`'${SETTINGS_SHEET}'!A:B`);
+      await sheetsPost(
+        `/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+        { values: [[userId, json]] },
+        accessToken
+      );
+    }
+  } catch (e) {
+    console.error('saveUserSettings:', e);
+  }
+}
+
+// ─── Hook ─────────────────────────────────────────────────────────────────────
+
+export function useSettings(userId, accessToken) {
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [loading, setLoading]   = useState(true);
+
+  useEffect(() => {
+    if (!userId || !accessToken) return;
+    loadUserSettings(userId, accessToken).then(s => {
+      setSettings(s);
+      setLoading(false);
+    });
+  }, [userId, accessToken]);
+
+  const updateSettings = useCallback((updater) => {
+    setSettings(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : { ...prev, ...updater };
+      saveUserSettings(userId, next, accessToken); // fire-and-forget
+      return next;
+    });
+  }, [userId, accessToken]);
+
+  return { settings, loading, updateSettings };
+}
