@@ -3,7 +3,7 @@ import { getCustomCategories } from './customCategories.js';
 const SHEET_ID = import.meta.env.VITE_SHEET_ID;
 const API_KEY = import.meta.env.VITE_SHEETS_API_KEY;
 
-const SHEET_MAP = {
+export const BUILT_IN_SHEET_MAP = {
   'Grocery':       { sheet: 'Grocery',                    descCol: 2, amtCol: 3 },
   'Misc':          { sheet: 'Misc',                       descCol: 2, amtCol: 3 },
   'Eating Out':    { sheet: 'Eating Out',                  descCol: 2, amtCol: 3 },
@@ -23,7 +23,7 @@ const SHEET_MAP = {
 };
 
 function getEffectiveSheetMap() {
-  return { ...SHEET_MAP, ...getCustomCategories() };
+  return { ...BUILT_IN_SHEET_MAP, ...getCustomCategories() };
 }
 
 export const hasDetail = (name) => !!getEffectiveSheetMap()[name];

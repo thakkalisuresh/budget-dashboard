@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { X, Trash2, AlertTriangle, AlertCircle } from 'lucide-react';
 import { deleteCategory } from './sheetsApi.js';
-import { getCustomCategories } from './customCategories.js';
+import { BUILT_IN_SHEET_MAP } from './fetchDetail.js';
 
 export function DeleteCategoryDialog({ accessToken, sheetId, category, onClose, onSuccess }) {
   const [step, setStep]         = useState(1); // 1 → 2 → 3
@@ -10,7 +10,7 @@ export function DeleteCategoryDialog({ accessToken, sheetId, category, onClose, 
   const [deleting, setDeleting]   = useState(false);
   const [error, setError]         = useState('');
 
-  const isCustom   = !!getCustomCategories()[category.name];
+  const isCustom   = !BUILT_IN_SHEET_MAP[category.name];
   const hasSpending = category.actual > 0;
   const nameMatches = nameInput.trim().toLowerCase() === category.name.toLowerCase();
 

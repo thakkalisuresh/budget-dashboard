@@ -1,6 +1,7 @@
 // sheetId is passed dynamically to every function — no module-level constant
 
 import { getCustomCategories, removeCustomCategory, upsertCustomCategory } from './customCategories.js';
+import { BUILT_IN_SHEET_MAP } from './fetchDetail.js';
 
 // Merge static SHEET_MAP with any user-created categories stored in localStorage
 function getEffectiveSheetMap() {
@@ -466,7 +467,8 @@ export async function updateVendorAmounts(
 // ─── Delete a budget category ────────────────────────────────────────────────
 
 export async function deleteCategory(sheetId, accessToken, { categoryName }) {
-  const isCustom = !!getCustomCategories()[categoryName];
+  // A category is custom if it is NOT in the static built-in map — reliable regardless of localStorage state
+  const isCustom = !BUILT_IN_SHEET_MAP[categoryName];
   const effectiveMap = getEffectiveSheetMap();
 
   // 1. Find and clear the Totals row
@@ -549,7 +551,7 @@ export async function deleteCategory(sheetId, accessToken, { categoryName }) {
 // ─── Rename a budget category ─────────────────────────────────────────────────
 
 export async function renameCategory(sheetId, accessToken, { oldName, newName }) {
-  const isCustom  = !!getCustomCategories()[oldName];
+  const isCustom  = !BUILT_IN_SHEET_MAP[oldName];
   const oldConfig = getEffectiveSheetMap()[oldName];
 
   // 1. Find the Totals row and update the name cell (A)
