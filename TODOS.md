@@ -19,9 +19,10 @@
 ### Features
 - **Reconciliation log** — track already-reconciled transactions so weekly/real-time
   use doesn't re-surface confirmed items (deferred, build after reconciliation ships)
-- **New month carries over custom categories** — when creating a new month from the
-  template, custom categories added in previous months are not automatically included.
-  Needs the template sheet to be updated or a copy step added to `createMonth`
+- ~~**New month carries over custom categories**~~ ✅ Fixed — `NewMonthDialog` now appends
+  custom categories to the budget step and `handleCreate` calls `addCategoryToTotals` +
+  `createCategoryDetailSheet` + `linkCategoryToDetailSheet` for each custom category after
+  the template copy completes
 
 ### Infrastructure
 - **localStorage → Google Sheets migration** (category icons + custom categories done ✅)
@@ -35,6 +36,9 @@
 - `fetchDetail.js` `getEffectiveSheetMap()` relies on localStorage for custom categories
   (intentional — kept as a fast sync cache hydrated from settings on load, but worth
   eventually making this fully settings-driven)
+- **Undo delete transaction writes outside table bounds** — when a transaction is deleted
+  and then undone via the history tab, the undo writes the row back outside the expected
+  table range in the Google Sheet
 
 ---
 

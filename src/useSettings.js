@@ -36,9 +36,10 @@ export const DEFAULT_SETTINGS = {
   categoryColors:   {},
   categoryOrder:    DEFAULT_CATEGORY_ORDER,
   layout:           null,
-  currency:         'USD',
-  categoryIcons:    {},   // { categoryName: emoji }
-  customCategories: [],   // [categoryName, ...]
+  currency:          'USD',
+  categoryIcons:     {},  // { categoryName: emoji }
+  customCategories:  [],  // [categoryName, ...]
+  recurringExpenses: [],  // [{ category, vendor, amount }]
 };
 
 // ─── Sheets helpers ───────────────────────────────────────────────────────────
@@ -116,9 +117,10 @@ export async function loadUserSettings(userId, accessToken) {
       categoryColors:   { ...(parsed.categoryColors || {}) },
       categoryOrder:    parsed.categoryOrder || DEFAULT_CATEGORY_ORDER,
       layout:           parsed.layout || null,
-      currency:         parsed.currency || 'USD',
-      categoryIcons:    { ...(parsed.categoryIcons || {}) },
-      customCategories: parsed.customCategories || [],
+      currency:          parsed.currency || 'USD',
+      categoryIcons:     { ...(parsed.categoryIcons || {}) },
+      customCategories:  parsed.customCategories || [],
+      recurringExpenses: parsed.recurringExpenses || [],
     };
     // Hydrate localStorage so synchronous callers (fetchDetail, dialogs) stay in sync
     try {

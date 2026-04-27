@@ -818,8 +818,8 @@ function Dashboard({ user, signOut }) {
                         </td>
                         {/* Row actions */}
                         <td className="px-2 py-4 sm:px-4 sm:py-5">
-                          {/* Desktop: hover-reveal pencil + trash */}
-                          <div className="hidden sm:flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {/* Desktop: faint at rest, full on hover */}
+                          <div className="hidden sm:flex items-center gap-1 opacity-20 group-hover:opacity-100 transition-opacity">
                             <button
                               onClick={e => { e.stopPropagation(); setRenamingCategory(item); }}
                               title="Rename category"
@@ -985,6 +985,15 @@ function Dashboard({ user, signOut }) {
           categories={expenses.map(e => e.name)}
           onClose={() => setShowAddDialog(false)}
           onSuccess={() => refresh()}
+          onSaveRecurring={item => updateSettings(prev => ({
+            ...prev,
+            recurringExpenses: [
+              ...(prev.recurringExpenses || []).filter(
+                r => !(r.category === item.category && r.vendor.toLowerCase() === item.vendor.toLowerCase())
+              ),
+              item,
+            ],
+          }))}
         />
       )}
 
@@ -1044,6 +1053,8 @@ function Dashboard({ user, signOut }) {
         <NewMonthDialog
           existingMonths={months}
           accessToken={user.accessToken}
+          customCategories={settings.customCategories || []}
+          recurringExpenses={settings.recurringExpenses || []}
           onClose={() => setShowNewMonth(false)}
           onCreate={async (name) => {
             const newMonth = await createMonth(name);

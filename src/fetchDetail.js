@@ -28,11 +28,12 @@ function getEffectiveSheetMap() {
 
 export const hasDetail = (name) => !!getEffectiveSheetMap()[name];
 
-export async function fetchDetail(name) {
+export async function fetchDetail(name, overrideSheetId) {
   const config = getEffectiveSheetMap()[name];
   if (!config) return [];
 
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(config.sheet)}?key=${API_KEY}`;
+  const id  = overrideSheetId || SHEET_ID;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(config.sheet)}?key=${API_KEY}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const { values = [] } = await res.json();

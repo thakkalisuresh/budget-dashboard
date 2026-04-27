@@ -19,13 +19,14 @@ const VENDOR_EXAMPLES = {
   'Wi-Fi':         'e.g. Comcast, AT&T…',
 };
 
-export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess, categories: categoriesProp }) {
+export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess, categories: categoriesProp, onSaveRecurring }) {
   // Use live categories from parent (includes new ones) falling back to static list
   const categoryList = categoriesProp?.length ? categoriesProp : CATEGORIES;
   const [category, setCategory]         = useState('');
   const [vendor, setVendor]             = useState('');
   const [amount, setAmount]             = useState('');
   const [isRandom, setIsRandom]         = useState(false);
+  const [isRecurring, setIsRecurring]   = useState(false);
   const [saving, setSaving]             = useState(false);
   const [error, setError]               = useState('');
 
@@ -90,6 +91,9 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
       await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'manual', isRandom);
       if (isRandom) {
         await appendRandomExpenseNote(sheetId, vendor.trim(), amt, accessToken);
+      }
+      if (isRecurring) {
+        onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
       }
       onSuccess?.();
       onClose();
@@ -208,28 +212,50 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
               </div>
             </div>
 
-            {/* Random expense toggle */}
-            <label className="flex items-start gap-3 cursor-pointer group">
-              <div className="relative flex-shrink-0 mt-0.5">
-                <input
-                  type="checkbox"
-                  checked={isRandom}
-                  onChange={e => setIsRandom(e.target.checked)}
-                  className="sr-only"
-                />
-                <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors ${isRandom ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700'}`}>
-                  {isRandom && <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+            {/* Toggles row */}
+            <div className="space-y-2.5">
+              {/* One-time toggle */}
+              <label className="flex items-start gap-3 cursor-pointer group">
+                <div className="relative flex-shrink-0 mt-0.5">
+                  <input
+                    type="checkbox"
+                    checked={isRandom}
+                    onChange={e => { setIsRandom(e.target.checked); if (e.target.checked) setIsRecurring(false); }}
+                    className="sr-only"
+                  />
+                  <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors ${isRandom ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700'}`}>
+                    {isRandom && <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                  </div>
                 </div>
-              </div>
-              <div>
-                <p className="text-sm font-bold text-slate-700 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-                  One-time / random expense
-                </p>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Marks this as a non-monthly expense in the dashboard
-                </p>
-              </div>
-            </label>
+                <div>
+                  <p className="text-sm font-bold text-slate-700 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                    One-time / random expense
+                  </p>
+                  <p className="text-xs text-slate-400 mt-0.5">Marks this as non-monthly in the dashboard</p>
+                </div>
+              </label>
+
+              {/* Repeats monthly toggle */}
+              <label className="flex items-start gap-3 cursor-pointer group">
+                <div className="relative flex-shrink-0 mt-0.5">
+                  <input
+                    type="checkbox"
+                    checked={isRecurring}
+                    onChange={e => { setIsRecurring(e.target.checked); if (e.target.checked) setIsRandom(false); }}
+                    className="sr-only"
+                  />
+                  <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors ${isRecurring ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700'}`}>
+                    {isRecurring && <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-slate-700 dark:text-slate-200 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
+                    Repeats monthly
+                  </p>
+                  <p className="text-xs text-slate-400 mt-0.5">Auto-added when you create a new month</p>
+                </div>
+              </label>
+            </div>
 
             {/* Error */}
             {error && (

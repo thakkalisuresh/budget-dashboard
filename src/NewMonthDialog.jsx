@@ -1,6 +1,10 @@
 import React, { useState } from 'react';
 import { X, Plus, ChevronRight, ChevronLeft, ChevronDown, ChevronUp } from 'lucide-react';
-import { fetchTotalsForEdit, writeSalary, writeBudgetAmounts } from './sheetsApi.js';
+import {
+  fetchTotalsForEdit, writeSalary, writeBudgetAmounts,
+  addCategoryToTotals, createCategoryDetailSheet, linkCategoryToDetailSheet,
+  addOrUpdateExpense,
+} from './sheetsApi.js';
 
 const TEMPLATE_ID = import.meta.env.VITE_TEMPLATE_SHEET_ID;
 
@@ -15,7 +19,7 @@ const YEARS = [currentYear - 1, currentYear, currentYear + 1];
 // Rows to exclude from budget editing
 const EXCLUDED_ROWS = ['expense', 'total expenses', 'moving exp', ''];
 
-export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessToken }) {
+export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessToken, customCategories = [], recurringExpenses = [] }) {
   // Step 1 state
   const [month, setMonth]   = useState('');
   const [year, setYear]     = useState(String(currentYear));
@@ -26,6 +30,14 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
   const [budgetRows, setBudgetRows] = useState([]);  // [{rowNum, name, amount, modified}]
   const [budgetsOpen, setBudgetsOpen] = useState(false);
   const [loadingBudgets, setLoadingBudgets] = useState(false);
+
+  // Step 3 state — Set of indices into recurringExpenses that are selected
+  const [selectedRecurring, setSelectedRecurring] = useState(() =>
+    new Set(recurringExpenses.map((_, i) => i))
+  );
+
+  const hasRecurring   = recurringExpenses.length > 0;
+  const totalSteps     = hasRecurring ? 3 : 2;
 
   // Shared
   const [saving, setSaving] = useState(false);
@@ -44,6 +56,7 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
       return;
     }
     setStep(2);
+    setSelectedRecurring(new Set(recurringExpenses.map((_, i) => i)));
     setLoadingBudgets(true);
     try {
       // Read budgets from the template sheet as defaults
@@ -52,12 +65,21 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
         const name = String(r.row[0] || '').trim().toLowerCase();
         return name && !EXCLUDED_ROWS.includes(name) && typeof r.row[0] === 'string';
       });
-      setBudgetRows(expenseRows.map(r => ({
+      const builtInRows = expenseRows.map(r => ({
         rowNum: r.rowNum,
         name: String(r.row[0]),
         amount: r.row[2] ?? 0,
         modified: false,
-      })));
+        isCustom: false,
+      }));
+      const customRows = (customCategories || []).map(n => ({
+        rowNum: null,
+        name: n,
+        amount: 0,
+        modified: false,
+        isCustom: true,
+      }));
+      setBudgetRows([...builtInRows, ...customRows]);
     } catch (e) {
       console.warn('Could not load template budgets:', e);
       setBudgetRows([]);
@@ -66,9 +88,11 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
     }
   };
 
-  const updateBudgetRow = (rowNum, value) => {
+  const updateBudgetRow = (rowNum, name, value) => {
     setBudgetRows(prev => prev.map(r =>
-      r.rowNum === rowNum ? { ...r, amount: value, modified: true } : r
+      (r.isCustom ? r.name === name : r.rowNum === rowNum)
+        ? { ...r, amount: value, modified: true }
+        : r
     ));
   };
 
@@ -87,13 +111,31 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
         await writeSalary(newMonth.sheetId, salaryVal, accessToken);
       }
 
-      // Write modified budget amounts
-      const modified = budgetRows.filter(r => r.modified);
+      // Write modified built-in budget amounts
+      const modified = budgetRows.filter(r => r.modified && !r.isCustom);
       if (modified.length > 0) {
         await writeBudgetAmounts(
           newMonth.sheetId,
           modified.map(r => ({ rowNum: r.rowNum, amount: parseFloat(r.amount) || 0 })),
           accessToken
+        );
+      }
+
+      // Recreate custom categories in the new month's sheet
+      const customRows = budgetRows.filter(r => r.isCustom);
+      for (const row of customRows) {
+        const budget = parseFloat(row.amount) || 0;
+        await addCategoryToTotals(newMonth.sheetId, accessToken, { name: row.name, budget });
+        await createCategoryDetailSheet(newMonth.sheetId, accessToken, { categoryName: row.name });
+        await linkCategoryToDetailSheet(newMonth.sheetId, accessToken, { categoryName: row.name });
+      }
+
+      // Write selected recurring expenses into the new month's detail sheets
+      for (const [i, exp] of recurringExpenses.entries()) {
+        if (!selectedRecurring.has(i)) continue;
+        await addOrUpdateExpense(
+          exp.category, exp.vendor, exp.amount,
+          accessToken, newMonth.sheetId, name, 'recurring', false
         );
       }
 
@@ -117,14 +159,17 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
             <div>
               <p className="text-lg font-black text-slate-800 dark:text-slate-100">New Month</p>
               <p className="text-xs text-slate-400 mt-0.5">
-                {step === 1 ? 'Select the month to create' : `Setting up ${month} ${year}`}
+                {step === 1 ? 'Select the month to create'
+                  : step === 2 ? `Setting up ${month} ${year}`
+                  : 'Review recurring expenses'}
               </p>
             </div>
             <div className="flex items-center gap-3">
               {/* Step indicator */}
               <div className="flex gap-1.5">
-                <div className={`w-2 h-2 rounded-full transition-colors ${step === 1 ? 'bg-indigo-500' : 'bg-slate-200 dark:bg-slate-600'}`} />
-                <div className={`w-2 h-2 rounded-full transition-colors ${step === 2 ? 'bg-indigo-500' : 'bg-slate-200 dark:bg-slate-600'}`} />
+                {Array.from({ length: totalSteps }, (_, i) => (
+                  <div key={i} className={`w-2 h-2 rounded-full transition-colors ${step === i + 1 ? 'bg-indigo-500' : 'bg-slate-200 dark:bg-slate-600'}`} />
+                ))}
               </div>
               <button onClick={onClose} className="p-2 rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
                 <X className="w-5 h-5" />
@@ -218,8 +263,15 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
                         return budgetRows.map(r => {
                           const pct = totalBudget > 0 ? ((parseFloat(r.amount) || 0) / totalBudget * 100).toFixed(1) : '0.0';
                           return (
-                            <div key={r.rowNum} className="flex items-center gap-3 px-4 py-2.5">
-                              <span className="flex-1 text-sm text-slate-700 dark:text-slate-200 font-medium truncate">{r.name}</span>
+                            <div key={r.isCustom ? `custom-${r.name}` : r.rowNum} className="flex items-center gap-3 px-4 py-2.5">
+                              <span className="flex-1 flex items-center gap-1.5 min-w-0">
+                                <span className="text-sm text-slate-700 dark:text-slate-200 font-medium truncate">{r.name}</span>
+                                {r.isCustom && (
+                                  <span className="flex-shrink-0 text-[9px] font-black uppercase tracking-wider text-indigo-500 bg-indigo-50 dark:bg-indigo-900/40 px-1.5 py-0.5 rounded-full">
+                                    Custom
+                                  </span>
+                                )}
+                              </span>
                               <span className="text-xs font-bold text-slate-400 w-10 text-right flex-shrink-0">{pct}%</span>
                               <div className="relative w-28 flex-shrink-0">
                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">$</span>
@@ -228,7 +280,7 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
                                   step="0.01"
                                   min="0"
                                   value={r.amount}
-                                  onChange={e => updateBudgetRow(r.rowNum, e.target.value)}
+                                  onChange={e => updateBudgetRow(r.rowNum, r.name, e.target.value)}
                                   className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-xl pl-6 pr-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/40 tabular-nums"
                                 />
                               </div>
@@ -240,6 +292,51 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
                   )}
                 </div>
               </>
+            )}
+
+            {/* ── STEP 3 ── */}
+            {step === 3 && (
+              <div className="space-y-3">
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                  These will be written into {month} {year} automatically. Uncheck anything you want to skip this month.
+                </p>
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-700/50 overflow-hidden">
+                  {recurringExpenses.map((exp, i) => {
+                    const checked = selectedRecurring.has(i);
+                    return (
+                      <label key={i} className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/40 transition-colors">
+                        <div className="relative flex-shrink-0">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              setSelectedRecurring(prev => {
+                                const next = new Set(prev);
+                                next.has(i) ? next.delete(i) : next.add(i);
+                                return next;
+                              });
+                            }}
+                            className="sr-only"
+                          />
+                          <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors ${checked ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700'}`}>
+                            {checked && <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                          </div>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-slate-700 dark:text-slate-200 truncate">{exp.vendor}</p>
+                          <p className="text-xs text-slate-400">{exp.category}</p>
+                        </div>
+                        <span className="text-sm font-black text-slate-700 dark:text-slate-200 flex-shrink-0">
+                          ${exp.amount.toFixed(2)}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <p className="text-[11px] text-slate-400 text-center">
+                  {selectedRecurring.size} of {recurringExpenses.length} selected
+                </p>
+              </div>
             )}
 
             {error && (
@@ -257,6 +354,7 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
 
           {/* Footer buttons */}
           <div className="px-8 pb-8 pt-2 flex gap-3 flex-shrink-0" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 2rem)' }}>
+            {/* Back button */}
             {step === 2 && (
               <button
                 type="button"
@@ -267,7 +365,18 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
                 <ChevronLeft className="w-4 h-4" /> Back
               </button>
             )}
+            {step === 3 && (
+              <button
+                type="button"
+                onClick={() => setStep(2)}
+                disabled={saving}
+                className="flex items-center gap-1 px-4 py-3 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors disabled:opacity-50"
+              >
+                <ChevronLeft className="w-4 h-4" /> Back
+              </button>
+            )}
 
+            {/* Cancel (step 1 only) */}
             {step === 1 && (
               <button
                 type="button"
@@ -278,7 +387,8 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
               </button>
             )}
 
-            {step === 1 ? (
+            {/* Primary action */}
+            {step === 1 && (
               <button
                 type="button"
                 onClick={handleNext}
@@ -286,7 +396,17 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
               >
                 Next <ChevronRight className="w-4 h-4" />
               </button>
-            ) : (
+            )}
+            {step === 2 && hasRecurring && (
+              <button
+                type="button"
+                onClick={() => setStep(3)}
+                className="flex-1 py-3 rounded-2xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-200 dark:shadow-indigo-900/30 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+              >
+                Next <ChevronRight className="w-4 h-4" />
+              </button>
+            )}
+            {(step === 3 || (step === 2 && !hasRecurring)) && (
               <button
                 type="button"
                 onClick={handleCreate}

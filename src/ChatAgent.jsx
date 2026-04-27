@@ -1,7 +1,60 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Send, Zap } from 'lucide-react';
 import { addOrUpdateExpense, CATEGORIES } from './sheetsApi.js';
+import { fetchDetail } from './fetchDetail.js';
 import { LogoSpark } from './FundientLogo.jsx';
+
+// ── Markdown renderer (bold + bullets only) ───────────────────────────────────
+
+function parseInline(text) {
+  const parts = [];
+  const re = /\*\*(.+?)\*\*/g;
+  let last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    parts.push(<strong key={m.index} className="font-semibold">{m[1]}</strong>);
+    last = re.lastIndex;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
+
+function renderMarkdown(text) {
+  const lines  = text.split('\n');
+  const nodes  = [];
+  let bullets  = [];
+
+  const flushBullets = () => {
+    if (!bullets.length) return;
+    nodes.push(
+      <ul key={`ul${nodes.length}`} className="my-1 space-y-0.5">
+        {bullets}
+      </ul>
+    );
+    bullets = [];
+  };
+
+  lines.forEach((line, i) => {
+    const bm = /^[ \t]*[-•]\s+(.*)/.exec(line);
+    if (bm) {
+      bullets.push(
+        <li key={i} className="flex gap-1.5 items-baseline">
+          <span className="flex-shrink-0 text-xs leading-5">•</span>
+          <span>{parseInline(bm[1])}</span>
+        </li>
+      );
+    } else {
+      flushBullets();
+      if (!line.trim()) {
+        if (nodes.length) nodes.push(<div key={`sp${i}`} className="h-1" />);
+      } else {
+        nodes.push(<p key={i}>{parseInline(line)}</p>);
+      }
+    }
+  });
+  flushBullets();
+  return <div className="space-y-0.5">{nodes}</div>;
+}
 
 function buildQuickPrompts({ expenses, overallRemaining, notesString, rulesData }) {
   const prompts = [];
@@ -63,6 +116,8 @@ function buildSystemPrompt({
   Savings (20%): $${Number(rulesData.savings?.total || 0).toFixed(2)} spent / $${Number(rulesData.savings?.target || 0).toFixed(2)} target (${rulesData.savings?.pct || 0}%)`;
   }
 
+  const categoryNames = expenses.length > 0 ? expenses.map(e => e.name).join(', ') : CATEGORIES.join(', ');
+
   return `You are a friendly, concise personal budget assistant for ${monthName || 'this month'}.
 
 Today: ${dateStr} (Day ${dayOfMonth} of ${daysInMonth} — ${daysInMonth - dayOfMonth} days remaining in the month)
@@ -80,14 +135,15 @@ Expense breakdown:
 ${expenseLines || '  (no expense data yet)'}
 ${notesString ? `\nNon-monthly / random expenses note: "${notesString}"` : ''}
 
-Available expense categories (use exactly as written): ${CATEGORIES.join(', ')}
+Available expense categories (use exactly as written): ${categoryNames}
 
 Rules:
 - Answer concisely — 2 to 4 sentences unless more detail is genuinely needed.
 - Always use $ for dollar amounts.
 - Be encouraging but honest about overspending.
 - If asked something unrelated to budgeting, politely redirect.
-- If the user wants to add or log an expense, use the add_expense tool. Confirm with the user if the category or amount is unclear.`;
+- If the user wants to add or log an expense, use the add_expense tool. Confirm with the user if the category or amount is unclear.
+- If the user asks about specific purchases, vendors, or what is in a category, use the get_transactions tool to fetch the line items before answering.`;
 }
 
 export function ChatAgent({
@@ -120,6 +176,8 @@ export function ChatAgent({
 
   // ── Tool definitions ───────────────────────────────────────────────────────
 
+  const allCategoryNames = expenses.length > 0 ? expenses.map(e => e.name) : CATEGORIES;
+
   const tools = [
     {
       name: 'add_expense',
@@ -129,8 +187,8 @@ export function ChatAgent({
         properties: {
           category: {
             type: 'string',
-            description: `Expense category — must be exactly one of: ${CATEGORIES.join(', ')}`,
-            enum: CATEGORIES,
+            description: `Expense category — must be exactly one of: ${allCategoryNames.join(', ')}`,
+            enum: allCategoryNames,
           },
           vendor: {
             type: 'string',
@@ -148,6 +206,21 @@ export function ChatAgent({
         required: ['category', 'vendor', 'amount'],
       },
     },
+    {
+      name: 'get_transactions',
+      description: 'Fetch the individual transaction entries for a specific expense category. Use this when the user asks about specific purchases, vendors, what they spent on, or wants to see what makes up a category.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          category: {
+            type: 'string',
+            description: `The category name to look up — must be one of: ${allCategoryNames.join(', ')}`,
+            enum: allCategoryNames,
+          },
+        },
+        required: ['category'],
+      },
+    },
   ];
 
   // ── Tool executor ─────────────────────────────────────────────────────────
@@ -161,6 +234,16 @@ export function ChatAgent({
       if (onRefresh) onRefresh();
       return `Successfully added $${Number(amount).toFixed(2)} for "${vendor}" under ${category}.`;
     }
+
+    if (toolName === 'get_transactions') {
+      const { category } = toolInput;
+      const items = await fetchDetail(category, sheetId);
+      if (!items.length) return `No transactions found for "${category}" this month.`;
+      const lines = items.map(t => `  - ${t.description}: $${t.amount.toFixed(2)}`).join('\n');
+      const total = items.reduce((s, t) => s + t.amount, 0);
+      return `${category} has ${items.length} transaction(s) totalling $${total.toFixed(2)}:\n${lines}`;
+    }
+
     return 'Unknown tool.';
   };
 
@@ -300,9 +383,12 @@ export function ChatAgent({
         const toolBlock = assistantContent.find(b => b.type === 'tool_use');
         if (toolBlock) {
           // Show a "working…" status bubble
+          const statusMsg = toolBlock.name === 'get_transactions'
+            ? `🔍 Fetching ${toolBlock.input?.category || 'category'} transactions…`
+            : '⚡ Adding expense to your spreadsheet…';
           setMessages(prev => [
             ...prev,
-            { role: 'assistant', content: '⚡ Adding expense to your spreadsheet…', isToolStatus: true },
+            { role: 'assistant', content: statusMsg, isToolStatus: true },
           ]);
 
           let toolResultContent;
@@ -477,13 +563,15 @@ export function ChatAgent({
                         {msg.content}
                       </div>
                     ) : (
-                      <div className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
+                      <div className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
                         msg.role === 'user'
                           ? 'bg-indigo-600 text-white rounded-br-sm'
                           : 'bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-bl-sm'
                       }`}>
                         {msg.content
-                          ? msg.content
+                          ? msg.role === 'user'
+                            ? msg.content
+                            : renderMarkdown(msg.content)
                           : isBusy && i === messages.length - 1
                             ? (
                               <span className="flex gap-1 items-center py-0.5">
