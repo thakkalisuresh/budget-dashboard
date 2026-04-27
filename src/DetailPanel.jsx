@@ -5,7 +5,7 @@ import { updateVendorName, updateVendorAmounts, removeRandomExpenseNote } from '
 /**
  * rows: Array of { rowIndex, description, amounts: number[] }
  */
-export function DetailPanel({ expense, rows, loading, onClose, accessToken, sheetId, onRefresh }) {
+export function DetailPanel({ expense, rows, loading, onClose, accessToken, sheetId, onRefresh, currencySymbol = '$' }) {
   const total = rows ? rows.reduce((s, r) => s + r.amounts.reduce((a, b) => a + b, 0), 0) : 0;
 
   // Editing state
@@ -59,7 +59,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
     if (!window.confirm(
       row.amounts.length === 1
         ? `Delete this transaction and clear the "${row.description}" row entirely?`
-        : `Remove $${row.amounts[amtIndex].toFixed(2)} from "${row.description}"?`
+        : `Remove ${currencySymbol}${row.amounts[amtIndex].toFixed(2)} from "${row.description}"?`
     )) return;
     withSave(async () => {
       const newAmounts = row.amounts.filter((_, i) => i !== amtIndex);
@@ -188,7 +188,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                     {row.description}
                   </span>
                   <span className="text-sm font-black text-slate-500 dark:text-slate-400 tabular-nums ml-2 flex-shrink-0">
-                    ${row.amounts.reduce((a, b) => a + b, 0).toFixed(2)}
+                    {currencySymbol}{row.amounts.reduce((a, b) => a + b, 0).toFixed(2)}
                   </span>
                   <button
                     onClick={() => setEditingVendor({ rowIndex: row.rowIndex, value: row.description })}
@@ -214,7 +214,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
 
                   {editingAmount?.rowIndex === row.rowIndex && editingAmount?.amtIndex === amtIndex ? (
                     <>
-                      <span className="text-slate-400 text-sm">$</span>
+                      <span className="text-slate-400 text-sm">{currencySymbol}</span>
                       <input
                         type="number"
                         step="0.01"
@@ -246,7 +246,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                         {amtIndex + 1}.
                       </span>
                       <span className="text-sm font-medium text-slate-700 dark:text-slate-300 tabular-nums flex-1">
-                        ${amt.toFixed(2)}
+                        {currencySymbol}{amt.toFixed(2)}
                       </span>
                       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
@@ -277,7 +277,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
           >
             <span className="text-xs font-black uppercase tracking-widest text-slate-400">Total</span>
             <span className="text-2xl font-black text-slate-900 dark:text-slate-100 tabular-nums">
-              ${total.toFixed(2)}
+              {currencySymbol}{total.toFixed(2)}
             </span>
           </div>
         )}

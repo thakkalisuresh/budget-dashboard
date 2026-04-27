@@ -1,15 +1,16 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import * as d3 from 'd3';
 import {
-  TrendingDown, TrendingUp, DollarSign, Wallet,
+  TrendingDown, TrendingUp, DollarSign, Wallet, Banknote, Receipt,
   PieChart as PieChartIcon, BarChart3, Plus, Trash2,
   Edit2, Check, X, AlertCircle, Info, ChevronRight,
-  Sun, Moon, RefreshCw, LogOut, Settings as SettingsIcon, ChevronDown, GripVertical,
+  Sun, Moon, RefreshCw, LogOut, Settings as SettingsIcon, ChevronDown, GripVertical, FolderPlus, Pencil, MoreHorizontal, Smile,
 } from 'lucide-react';
 import { useSheetData } from './useSheetData.js';
 import { use503020 } from './use503020.js';
 import { hasDetail } from './fetchDetail.js';
-import { fetchDetailRows } from './sheetsApi.js';
+import { fetchDetailRows, updateCategoryBudget, writeSalary } from './sheetsApi.js';
+import { getCurrencySymbol } from './currency.js';
 import { DetailPanel } from './DetailPanel.jsx';
 import { BudgetRules } from './BudgetRules.jsx';
 import { AddExpenseDialog } from './AddExpenseDialog.jsx';
@@ -22,6 +23,10 @@ import { ReceiptScanButton } from './ReceiptScanner.jsx';
 import { HistoryTab } from './HistoryTab.jsx';
 import { SettingsPanel } from './SettingsPanel.jsx';
 import { useSettings, DEFAULT_CATEGORY_ORDER } from './useSettings.js';
+import { AddCategoryDialog } from './AddCategoryDialog.jsx';
+import { getCategoryIcons, setCategoryIcon, EMOJI_DATA } from './categoryIcons.js';
+import { DeleteCategoryDialog } from './DeleteCategoryDialog.jsx';
+import { RenameCategoryDialog } from './RenameCategoryDialog.jsx';
 
 function App() {
   const { user, denied, loadingAuth, onGoogleSuccess, onGoogleError, signOut } = useAuth();
@@ -70,6 +75,16 @@ function Dashboard({ user, signOut }) {
   const [detail, setDetail] = useState(null);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAddCategory, setShowAddCategory] = useState(false);
+  const [renamingCategory, setRenamingCategory] = useState(null);
+  const [deletingCategory, setDeletingCategory] = useState(null);
+  const [categoryActionFor, setCategoryActionFor] = useState(null); // mobile ⋯ action sheet
+  const [editingBudgetId, setEditingBudgetId] = useState(null);
+  const [budgetDraft, setBudgetDraft] = useState('');
+  const [editingSalary, setEditingSalary] = useState(false);
+  const [salaryDraft, setSalaryDraft] = useState('');
+  const [categoryIcons, setCategoryIconsState] = useState(() => getCategoryIcons());
+  const [iconPickerFor, setIconPickerFor] = useState(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const userMenuRef = useRef(null);
   const tableDragIndex = useRef(null);
@@ -80,6 +95,7 @@ function Dashboard({ user, signOut }) {
 
   // Per-user settings (saved to Google Sheets)
   const { settings, updateSettings } = useSettings(user.email, user.accessToken);
+  const currencySymbol = getCurrencySymbol(settings.currency || 'USD');
 
   // Theme — driven by settings.theme, with a quick-toggle override stored locally
   const [isDark, setIsDark] = useState(() => {
@@ -151,6 +167,29 @@ function Dashboard({ user, signOut }) {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showUserMenu]);
+
+  // Global Escape key — closes the topmost open panel
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key !== 'Escape') return;
+      if (iconPickerFor)          { setIconPickerFor(null);      return; }
+      if (categoryActionFor)      { setCategoryActionFor(null);  return; }
+      if (deletingCategory)       { setDeletingCategory(null);   return; }
+      if (renamingCategory)       { setRenamingCategory(null);   return; }
+      if (editingSalary)          { setEditingSalary(false);     return; }
+      if (editingBudgetId !== null){ setEditingBudgetId(null);   return; }
+      if (showAddCategory)        { setShowAddCategory(false);   return; }
+      if (showAddDialog)          { setShowAddDialog(false);     return; }
+      if (deleteConfirm)          { setDeleteConfirm(null);      return; }
+      if (showNewMonth)           { setShowNewMonth(false);      return; }
+      if (detail)                 { setDetail(null);             return; }
+      if (showSettings)           { setShowSettings(false);      return; }
+      if (showUserMenu)           { setShowUserMenu(false);      return; }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [iconPickerFor, categoryActionFor, deletingCategory, renamingCategory, editingSalary, editingBudgetId,
+      showAddCategory, showAddDialog, deleteConfirm, showNewMonth, detail, showSettings, showUserMenu]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark);
@@ -235,6 +274,42 @@ function Dashboard({ user, signOut }) {
     }
   };
 
+  const handleSaveBudget = async (item) => {
+    const newBudget = parseFloat(budgetDraft);
+    if (isNaN(newBudget) || newBudget < 0) { setEditingBudgetId(null); return; }
+    try {
+      await updateCategoryBudget(selectedSheetId, user.accessToken, {
+        rowNum: item.index_ + 1,
+        budget: newBudget,
+        categoryName: item.name,
+      });
+      refresh();
+    } catch (e) {
+      alert(`Failed to update budget: ${e.message}`);
+    } finally {
+      setEditingBudgetId(null);
+    }
+  };
+
+  const handleSaveSalary = async () => {
+    const newSalary = parseFloat(salaryDraft);
+    if (isNaN(newSalary) || newSalary < 0) { setEditingSalary(false); return; }
+    try {
+      await writeSalary(selectedSheetId, newSalary, user.accessToken);
+      refresh();
+    } catch (e) {
+      alert(`Failed to update salary: ${e.message}`);
+    } finally {
+      setEditingSalary(false);
+    }
+  };
+
+  const handleSetIcon = (categoryName, emoji) => {
+    setCategoryIcon(categoryName, emoji);
+    setCategoryIconsState(getCategoryIcons());
+    setIconPickerFor(null);
+  };
+
   // Sorted by actual desc — shared order for donut + legend so colours always match
   const chartExpenses = useMemo(
     () => [...expenses].filter(d => d.actual > 0).sort((a, b) => b.actual - a.actual),
@@ -280,13 +355,13 @@ function Dashboard({ user, signOut }) {
           {hoveredSlice ? (
             <>
               <span className="text-[9px] uppercase tracking-widest text-slate-400 font-bold text-center leading-tight max-w-[80px] truncate">{hoveredSlice.name}</span>
-              <span className="text-base font-black text-slate-800 dark:text-slate-100 mt-0.5">${hoveredSlice.actual.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+              <span className="text-base font-black text-slate-800 dark:text-slate-100 mt-0.5">{currencySymbol}{hoveredSlice.actual.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
               <span className="text-[10px] font-bold text-slate-400">{pct}%</span>
             </>
           ) : (
             <>
               <span className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Total</span>
-              <span className="text-lg font-black text-slate-800 dark:text-slate-100">${totalActual.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+              <span className="text-lg font-black text-slate-800 dark:text-slate-100">{currencySymbol}{totalActual.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
             </>
           )}
         </div>
@@ -312,7 +387,7 @@ function Dashboard({ user, signOut }) {
               <div className="flex justify-between text-xs mb-1.5">
                 <span className="font-semibold text-slate-700 dark:text-slate-300 group-hover:text-indigo-500 transition-colors">{item.name}</span>
                 <span className="text-slate-400 font-medium">
-                  <span className="text-slate-900 dark:text-slate-100">${item.actual.toFixed(0)}</span> / ${item.budget.toFixed(0)}
+                  <span className="text-slate-900 dark:text-slate-100">{currencySymbol}{item.actual.toFixed(0)}</span> / {currencySymbol}{item.budget.toFixed(0)}
                 </span>
               </div>
               <div className="relative h-2 w-full bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
@@ -590,7 +665,7 @@ function Dashboard({ user, signOut }) {
 
         {/* History tab */}
         {activeTab === 'history' && (
-          <HistoryTab sheetId={selectedSheetId} accessToken={user.accessToken} onRefresh={refresh} />
+          <HistoryTab sheetId={selectedSheetId} accessToken={user.accessToken} onRefresh={refresh} currencySymbol={currencySymbol} />
         )}
 
         {/* Loading skeleton */}
@@ -608,10 +683,10 @@ function Dashboard({ user, signOut }) {
         {/* Stat Cards */}
         {activeTab === 'budget' && settings.visibility.statCards !== false && (!loading || lastUpdated) && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <StatCard title="Total Monthly Salary" value={salaryReceived} icon={<Wallet className="text-blue-500" />} color="blue" />
-            <StatCard title="Actual Expenses" value={totalActual} icon={<TrendingDown className="text-rose-500" />} color="rose" subtext={`Budget: $${totalBudget.toFixed(2)}`} />
-            <StatCard title="Remaining Cashflow" value={salaryReceived - totalActual} icon={<DollarSign className="text-emerald-500" />} color="emerald" subtext={salaryReceived - totalActual > 0 ? 'Surplus Position' : 'Deficit Position'} />
-            <StatCard title="Budget Variance" value={overallRemaining} icon={overallRemaining >= 0 ? <TrendingUp className="text-emerald-500" /> : <TrendingDown className="text-rose-500" />} color={overallRemaining >= 0 ? 'emerald' : 'rose'} subtext={overallRemaining >= 0 ? 'Under Budget' : 'Over Budget'} />
+            <StatCard title="Total Monthly Salary" value={salaryReceived} icon={<Wallet className="text-blue-500" />} color="blue" onEdit={() => { setEditingSalary(true); setSalaryDraft(salaryReceived.toFixed(2)); }} currencySymbol={currencySymbol} />
+            <StatCard title="Actual Expenses" value={totalActual} icon={<Receipt className="text-rose-500" />} color="rose" subtext={`Budget: ${currencySymbol}${totalBudget.toFixed(2)}`} currencySymbol={currencySymbol} />
+            <StatCard title="Remaining Cashflow" value={salaryReceived - totalActual} icon={<Banknote className="text-emerald-500" />} color="emerald" subtext={salaryReceived - totalActual > 0 ? 'Surplus Position' : 'Deficit Position'} currencySymbol={currencySymbol} />
+            <StatCard title="Budget Variance" value={overallRemaining} icon={overallRemaining >= 0 ? <TrendingUp className="text-emerald-500" /> : <TrendingDown className="text-rose-500" />} color={overallRemaining >= 0 ? 'emerald' : 'rose'} subtext={overallRemaining >= 0 ? 'Under Budget' : 'Over Budget'} currencySymbol={currencySymbol} />
           </div>
         )}
 
@@ -631,30 +706,43 @@ function Dashboard({ user, signOut }) {
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <ReceiptScanButton accessToken={user.accessToken} sheetId={selectedSheetId} monthName={selectedMonth?.name} onSuccess={() => refresh()} />
+                    <button
+                      onClick={() => setShowAddCategory(true)}
+                      title="Add a new budget category"
+                      className="flex items-center gap-2 px-4 py-2 sm:px-5 sm:py-2.5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600 rounded-2xl text-sm font-bold hover:bg-slate-200 dark:hover:bg-slate-600 transition-all active:scale-95"
+                    >
+                      <FolderPlus className="w-4 h-4" />
+                      <span className="hidden sm:inline">New Category</span>
+                    </button>
                     <button onClick={() => setShowAddDialog(true)} className="flex items-center gap-2 px-4 py-2 sm:px-5 sm:py-2.5 bg-indigo-600 text-white rounded-2xl text-sm font-bold shadow-lg shadow-indigo-200 dark:shadow-indigo-900/30 hover:bg-indigo-700 transition-all active:scale-95">
                       <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Add</span> Expense
                     </button>
                   </div>
                 </div>
-                <table className="w-full text-left border-collapse">
+                <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
+                <table className="w-full text-left border-collapse min-w-[480px] sm:min-w-0">
                   <thead>
                     <tr className="text-slate-400 text-[11px] font-black uppercase tracking-[0.1em]">
                       <th className="px-3 py-4 sm:px-8 sm:py-5">Expense Category</th>
+                      <th className="px-3 py-4 sm:px-8 sm:py-5 hidden sm:table-cell">Budget</th>
                       <th className="px-3 py-4 sm:px-8 sm:py-5">Actual</th>
                       <th className="px-3 py-4 sm:px-8 sm:py-5">Remaining</th>
                       <th className="px-3 py-4 sm:px-8 sm:py-5 hidden sm:table-cell">Status</th>
+                      <th className="px-2 py-4 sm:px-4 sm:py-5" />
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50 dark:divide-slate-700/50">
                     {isAdding && (
                       <tr className="bg-indigo-50/40 dark:bg-indigo-900/20">
                         <td className="px-3 py-4 sm:px-8 sm:py-6"><input className={`w-full ${inputCls}`} placeholder="e.g. Subscriptions" value={newItem.name} onChange={(e) => setNewItem({...newItem, name: e.target.value})} autoFocus /></td>
+                        <td className="hidden sm:table-cell px-3 py-4 sm:px-8 sm:py-6" />
                         <td className="px-3 py-4 sm:px-8 sm:py-6"><input type="number" className={`w-20 sm:w-28 ${inputCls}`} placeholder="0.00" value={newItem.amount} onChange={(e) => setNewItem({...newItem, amount: e.target.value})} /></td>
                         <td className="px-3 py-4 sm:px-8 sm:py-6 text-right space-x-2">
                           <button onClick={handleInsert} className="text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 p-2 rounded-xl transition-colors"><Check className="w-5 h-5"/></button>
                           <button onClick={() => setIsAdding(false)} className="text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 p-2 rounded-xl transition-colors"><X className="w-5 h-5"/></button>
                         </td>
                         <td className="hidden sm:table-cell px-8 py-6"><span className="text-xs text-indigo-500 font-bold bg-indigo-100/50 dark:bg-indigo-900/40 px-3 py-1 rounded-full">New Entry</span></td>
+                        <td />
                       </tr>
                     )}
                     {expenses.map((item, rowIdx) => (
@@ -674,17 +762,51 @@ function Dashboard({ user, signOut }) {
                           ) : (
                             <div className="flex items-center gap-2 sm:gap-3">
                               <GripVertical onTouchStart={e => handleGripTouchStart(e, rowIdx)} className="w-3.5 h-3.5 text-slate-300 dark:text-slate-600 flex-shrink-0 touch-none select-none opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity" />
-                              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${item.remaining < 0 ? 'bg-rose-400' : item.remaining === 0 ? 'bg-amber-400' : 'bg-emerald-400'}`} />
+                              <button
+                                onClick={e => { e.stopPropagation(); setIconPickerFor(item.name); }}
+                                title="Change icon"
+                                className="text-lg leading-none flex-shrink-0 hover:scale-125 transition-transform select-none"
+                              >
+                                {categoryIcons[item.name] || '📁'}
+                              </button>
+                              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${item.remaining < 0 ? 'bg-rose-400' : item.remaining === 0 ? 'bg-amber-400' : 'bg-emerald-400'}`} />
                               <span className={`font-bold text-slate-700 dark:text-slate-200 text-sm sm:text-base ${hasDetail(item.name) ? 'cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 underline underline-offset-4 decoration-slate-200 dark:decoration-slate-600' : ''}`} onClick={() => handleExpenseClick(item.name)}>{item.name}</span>
                             </div>
                           )}
                         </td>
-                        <td className="px-3 py-4 sm:px-8 sm:py-5 text-slate-600 dark:text-slate-300 font-medium tabular-nums text-sm sm:text-base">
-                          {editingId === item.index_ ? <input type="number" className={`w-20 sm:w-28 ${inputCls}`} defaultValue={item.actual} id={`edit-amt-${item.index_}`} /> : `$${item.actual.toLocaleString(undefined, {minimumFractionDigits: 2})}`}
+                        <td className="px-3 py-4 sm:px-8 sm:py-5 hidden sm:table-cell">
+                          {editingBudgetId === item.index_ ? (
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                value={budgetDraft}
+                                onChange={e => setBudgetDraft(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') handleSaveBudget(item); if (e.key === 'Escape') setEditingBudgetId(null); }}
+                                autoFocus
+                                className={`w-24 ${inputCls}`}
+                              />
+                              <button onClick={() => handleSaveBudget(item)} className="text-emerald-500 hover:text-emerald-600 p-1"><Check className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => setEditingBudgetId(null)} className="text-slate-400 hover:text-slate-500 p-1"><X className="w-3.5 h-3.5" /></button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold tabular-nums bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">{currencySymbol}{item.budget.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                              <button
+                                onClick={e => { e.stopPropagation(); setEditingBudgetId(item.index_); setBudgetDraft(item.budget.toFixed(2)); }}
+                                title="Edit budget"
+                                className="p-1 text-slate-300 dark:text-slate-600 hover:text-indigo-500 transition-colors opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-3 py-4 sm:px-8 sm:py-5 tabular-nums text-sm sm:text-base font-black text-slate-800 dark:text-slate-100">
+                          {editingId === item.index_ ? <input type="number" className={`w-20 sm:w-28 ${inputCls}`} defaultValue={item.actual} id={`edit-amt-${item.index_}`} /> : `${currencySymbol}${item.actual.toLocaleString(undefined, {minimumFractionDigits: 2})}`}
                         </td>
                         <td className="px-3 py-4 sm:px-8 sm:py-5 tabular-nums">
                           {editingId === item.index_ ? <input type="number" className={`w-20 sm:w-28 ${inputCls}`} defaultValue={item.remaining} id={`edit-rem-${item.index_}`} /> : (
-                            <span className={`font-bold text-sm sm:text-base ${item.remaining < 0 ? 'text-rose-500' : item.remaining === 0 ? 'text-amber-400' : 'text-emerald-500'}`}>{item.remaining < 0 ? '' : '+'}${item.remaining.toFixed(2)}</span>
+                            <span className={`font-bold text-sm sm:text-base ${item.remaining < 0 ? 'text-rose-500' : item.remaining === 0 ? 'text-amber-400' : 'text-emerald-500'}`}>{item.remaining < 0 ? '' : '+'}{currencySymbol}{item.remaining.toFixed(2)}</span>
                           )}
                         </td>
                         <td className="px-3 py-4 sm:px-8 sm:py-5 hidden sm:table-cell">
@@ -692,18 +814,48 @@ function Dashboard({ user, signOut }) {
                             {item.remaining < 0 ? 'Over' : item.remaining === 0 ? 'Exact' : 'Under'}
                           </span>
                         </td>
+                        {/* Row actions */}
+                        <td className="px-2 py-4 sm:px-4 sm:py-5">
+                          {/* Desktop: hover-reveal pencil + trash */}
+                          <div className="hidden sm:flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={e => { e.stopPropagation(); setRenamingCategory(item); }}
+                              title="Rename category"
+                              className="p-1.5 rounded-lg text-slate-300 dark:text-slate-600 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={e => { e.stopPropagation(); setDeletingCategory(item); }}
+                              title="Delete category"
+                              className="p-1.5 rounded-lg text-slate-300 dark:text-slate-600 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                          {/* Mobile: always-visible ⋯ button */}
+                          <button
+                            onClick={e => { e.stopPropagation(); setCategoryActionFor(item); }}
+                            className="sm:hidden p-2 rounded-xl text-slate-400 dark:text-slate-500 active:bg-slate-100 dark:active:bg-slate-700 transition-colors"
+                          >
+                            <MoreHorizontal className="w-4 h-4" />
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr className="border-t-2 border-slate-200 dark:border-slate-600 bg-slate-50/80 dark:bg-slate-700/40">
                       <td className="px-3 py-4 sm:px-8 sm:py-5"><span className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-100 uppercase tracking-wide">Monthly Total</span></td>
-                      <td className="px-3 py-4 sm:px-8 sm:py-5 tabular-nums"><span className="text-sm sm:text-base font-black text-slate-900 dark:text-slate-100">${totalActual.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></td>
-                      <td className="px-3 py-4 sm:px-8 sm:py-5 tabular-nums"><span className={`text-sm sm:text-base font-black ${overallRemaining < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>{overallRemaining < 0 ? '' : '+'}${overallRemaining.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></td>
+                      <td className="px-3 py-4 sm:px-8 sm:py-5 tabular-nums hidden sm:table-cell"><span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold tabular-nums bg-slate-200 dark:bg-slate-600 text-slate-500 dark:text-slate-400">{currencySymbol}{totalBudget.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></td>
+                      <td className="px-3 py-4 sm:px-8 sm:py-5 tabular-nums"><span className="text-sm sm:text-base font-black text-slate-900 dark:text-slate-100">{currencySymbol}{totalActual.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></td>
+                      <td className="px-3 py-4 sm:px-8 sm:py-5 tabular-nums"><span className={`text-sm sm:text-base font-black ${overallRemaining < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>{overallRemaining < 0 ? '' : '+'}{currencySymbol}{overallRemaining.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span></td>
                       <td className="px-3 py-4 sm:px-8 sm:py-5 hidden sm:table-cell"><span className={`inline-flex items-center px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${overallRemaining < 0 ? 'bg-rose-50 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400' : 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'}`}>{overallRemaining < 0 ? 'Over' : 'Under'}</span></td>
+                      <td />
                     </tr>
                   </tfoot>
                 </table>
+                </div>
               </div>
 
               {/* Insight cards */}
@@ -715,7 +867,7 @@ function Dashboard({ user, signOut }) {
                       <h3 className="text-base sm:text-lg font-bold mb-2 sm:mb-3">Balance without random non-monthly expenses</h3>
                       <p className="text-slate-400 text-sm leading-relaxed mb-4 sm:mb-6">
                         If we remove those expenses, we would have had this much left for the month
-                        <span className="text-white font-black block text-xl sm:text-2xl mt-2">${nonRecurringRemaining.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        <span className="text-white font-black block text-xl sm:text-2xl mt-2">{currencySymbol}{nonRecurringRemaining.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                       </p>
                     </div>
                     <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full -mr-16 -mt-16 blur-2xl" />
@@ -726,7 +878,7 @@ function Dashboard({ user, signOut }) {
                       <h3 className="text-base sm:text-lg font-bold mb-2 sm:mb-3">Difference between budgeted and actual spent</h3>
                       <p className="text-indigo-100 text-sm leading-relaxed mb-4 sm:mb-6">
                         Calculated difference between what we budgeted and what we spent
-                        <span className="text-white font-black block text-xl sm:text-2xl mt-2">${potentialDifference.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                        <span className="text-white font-black block text-xl sm:text-2xl mt-2">{currencySymbol}{potentialDifference.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                       </p>
                       <div className="h-1 w-full bg-white/20 rounded-full overflow-hidden mt-2"><div className="h-full bg-white w-3/4 rounded-full" /></div>
                     </div>
@@ -765,7 +917,7 @@ function Dashboard({ user, signOut }) {
                           <div className="w-3 h-3 rounded-sm flex-shrink-0 ring-1 ring-black/10" style={{ backgroundColor: getCategoryColor(d.name, i) }} />
                           <span className="font-bold text-slate-800 dark:text-slate-200 truncate max-w-[130px]">{d.name}</span>
                         </div>
-                        <span className="font-black text-slate-900 dark:text-slate-100 ml-2">${d.actual.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                        <span className="font-black text-slate-900 dark:text-slate-100 ml-2">{currencySymbol}{d.actual.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
                       </div>
                     ))}
                   </div>
@@ -790,7 +942,7 @@ function Dashboard({ user, signOut }) {
                         <div>
                           <h4 className="text-sm font-black text-rose-900 dark:text-rose-300 uppercase tracking-tight">Spending Alert</h4>
                           <p className="text-xs text-rose-700/80 dark:text-rose-400/80 mt-1.5 leading-relaxed font-medium">
-                            We are currently <span className="font-bold underline decoration-rose-300 underline-offset-4">${Math.abs(overallRemaining).toFixed(2)}</span> over our aggregate monthly budget.
+                            We are currently <span className="font-bold underline decoration-rose-300 underline-offset-4">{currencySymbol}{Math.abs(overallRemaining).toFixed(2)}</span> over our aggregate monthly budget.
                           </p>
                         </div>
                       </div>
@@ -805,7 +957,7 @@ function Dashboard({ user, signOut }) {
 
         {/* Budget rules */}
         {activeTab === 'budget' && settings.visibility.budgetRules !== false && (!loading || lastUpdated) && (
-          <BudgetRules data={rulesData} loading={rulesLoading} />
+          <BudgetRules data={rulesData} loading={rulesLoading} currencySymbol={currencySymbol} />
         )}
 
       </div>
@@ -819,6 +971,7 @@ function Dashboard({ user, signOut }) {
           accessToken={user.accessToken}
           sheetId={selectedSheetId}
           onRefresh={handleDetailRefresh}
+          currencySymbol={currencySymbol}
         />
       )}
 
@@ -827,6 +980,7 @@ function Dashboard({ user, signOut }) {
           accessToken={user.accessToken}
           sheetId={selectedSheetId}
           monthName={selectedMonth?.name}
+          categories={expenses.map(e => e.name)}
           onClose={() => setShowAddDialog(false)}
           onSuccess={() => refresh()}
         />
@@ -835,16 +989,17 @@ function Dashboard({ user, signOut }) {
       {deleteConfirm && (
         <>
           <div className="fixed inset-0 bg-black/40 dark:bg-black/60 z-40 backdrop-blur-sm" onClick={() => setDeleteConfirm(null)} />
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl w-full max-w-sm border border-rose-100 dark:border-rose-900/40 overflow-hidden">
-              <div className="px-8 pt-8 pb-6 border-b border-slate-100 dark:border-slate-700">
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
+            <div className="bg-white dark:bg-slate-800 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl w-full sm:max-w-sm border border-rose-100 dark:border-rose-900/40 overflow-hidden max-h-[90vh] flex flex-col">
+              <div className="w-10 h-1 bg-slate-200 dark:bg-slate-600 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" />
+              <div className="px-8 pt-8 pb-6 border-b border-slate-100 dark:border-slate-700 flex-shrink-0">
                 <div className="w-12 h-12 bg-rose-50 dark:bg-rose-900/30 rounded-2xl flex items-center justify-center mb-4">
                   <Trash2 className="w-6 h-6 text-rose-500" />
                 </div>
                 <p className="text-lg font-black text-slate-800 dark:text-slate-100">Remove Month</p>
                 <p className="text-xs text-slate-400 mt-1">This removes it from the list. The Google Sheet will <span className="font-bold text-slate-600 dark:text-slate-300">not</span> be deleted.</p>
               </div>
-              <div className="px-8 py-6 space-y-4">
+              <div className="px-8 py-6 space-y-4 overflow-y-auto flex-1">
                 <p className="text-sm text-slate-600 dark:text-slate-300">
                   Type <span className="font-black text-rose-500">{deleteConfirm.name}</span> to confirm:
                 </p>
@@ -856,27 +1011,27 @@ function Dashboard({ user, signOut }) {
                   className="w-full bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-rose-500/40 focus:border-rose-400 placeholder:text-slate-300"
                   autoFocus
                 />
-                <div className="flex gap-3 pt-1">
-                  <button
-                    onClick={() => setDeleteConfirm(null)}
-                    className="flex-1 py-3 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    disabled={deleteInput !== deleteConfirm.name}
-                    onClick={async () => {
-                      const fallback = months.find(m => m.sheetId !== deleteConfirm.sheetId);
-                      setSelectedSheetId(fallback.sheetId);
-                      await deleteMonth(deleteConfirm.name);
-                      setDeleteConfirm(null);
-                      setDeleteInput('');
-                    }}
-                    className="flex-1 py-3 rounded-2xl text-sm font-bold text-white bg-rose-500 hover:bg-rose-600 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    Remove
-                  </button>
-                </div>
+              </div>
+              <div className="px-8 pb-8 pt-2 flex gap-3 flex-shrink-0" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 2rem)' }}>
+                <button
+                  onClick={() => setDeleteConfirm(null)}
+                  className="flex-1 py-3 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  disabled={deleteInput !== deleteConfirm.name}
+                  onClick={async () => {
+                    const fallback = months.find(m => m.sheetId !== deleteConfirm.sheetId);
+                    setSelectedSheetId(fallback.sheetId);
+                    await deleteMonth(deleteConfirm.name);
+                    setDeleteConfirm(null);
+                    setDeleteInput('');
+                  }}
+                  className="flex-1 py-3 rounded-2xl text-sm font-bold text-white bg-rose-500 hover:bg-rose-600 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Remove
+                </button>
               </div>
             </div>
           </div>
@@ -918,13 +1073,162 @@ function Dashboard({ user, signOut }) {
           updateSettings={updateSettings}
           expenses={expenses}
           onClose={() => setShowSettings(false)}
+          currencySymbol={currencySymbol}
+        />
+      )}
+
+      {iconPickerFor && (
+        <IconPickerModal
+          categoryName={iconPickerFor}
+          currentIcon={categoryIcons[iconPickerFor] || '📁'}
+          onPick={emoji => handleSetIcon(iconPickerFor, emoji)}
+          onClose={() => setIconPickerFor(null)}
+        />
+      )}
+
+      {editingSalary && (
+        <>
+          <div className="fixed inset-0 bg-black/40 dark:bg-black/60 z-40 backdrop-blur-sm" onClick={() => setEditingSalary(false)} />
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
+            <div className="bg-white dark:bg-slate-800 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl w-full sm:max-w-sm border border-slate-100 dark:border-slate-700 overflow-hidden">
+              <div className="w-10 h-1 bg-slate-200 dark:bg-slate-600 rounded-full mx-auto mt-3 mb-1 sm:hidden" />
+              <div className="px-8 pt-6 pb-6 border-b border-slate-100 dark:border-slate-700">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-blue-50 dark:bg-blue-900/30 rounded-2xl flex items-center justify-center">
+                    <Wallet className="w-5 h-5 text-blue-500" />
+                  </div>
+                  <div>
+                    <p className="text-base font-black text-slate-800 dark:text-slate-100">Monthly Salary</p>
+                    <p className="text-xs text-slate-400 mt-0.5">Update your take-home pay for this month</p>
+                  </div>
+                </div>
+              </div>
+              <div className="px-8 py-6">
+                <input
+                  type="number"
+                  value={salaryDraft}
+                  onChange={e => setSalaryDraft(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSaveSalary()}
+                  autoFocus
+                  placeholder="0.00"
+                  className="w-full bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 placeholder:text-slate-300"
+                />
+              </div>
+              <div className="px-8 flex gap-3" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 2rem)' }}>
+                <button onClick={() => setEditingSalary(false)} className="flex-1 py-3 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">Cancel</button>
+                <button onClick={handleSaveSalary} className="flex-1 py-3 rounded-2xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-all shadow-lg">Save</button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {showAddCategory && (
+        <AddCategoryDialog
+          accessToken={user.accessToken}
+          sheetId={selectedSheetId}
+          onClose={() => setShowAddCategory(false)}
+          onSuccess={() => refresh()}
+        />
+      )}
+
+      {/* Mobile category action sheet */}
+      {categoryActionFor && (
+        <>
+          <div className="fixed inset-0 bg-black/40 dark:bg-black/60 z-40 backdrop-blur-sm" onClick={() => setCategoryActionFor(null)} />
+          <div className="fixed inset-0 z-50 flex items-end justify-center">
+            <div className="bg-white dark:bg-slate-800 rounded-t-[2rem] w-full shadow-2xl border border-slate-100 dark:border-slate-700 overflow-hidden">
+              <div className="w-10 h-1 bg-slate-200 dark:bg-slate-600 rounded-full mx-auto mt-3 mb-4" />
+
+              {/* Category label */}
+              <div className="px-6 pb-3 flex items-center gap-3">
+                <span className="text-2xl">{categoryIcons[categoryActionFor.name] || '📁'}</span>
+                <div>
+                  <p className="text-base font-black text-slate-800 dark:text-slate-100">{categoryActionFor.name}</p>
+                  <p className="text-xs text-slate-400">Choose an action</p>
+                </div>
+              </div>
+
+              <div className="px-4 pb-4 space-y-2" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 1rem)' }}>
+                {/* Change icon */}
+                <button
+                  onClick={() => { setCategoryActionFor(null); setIconPickerFor(categoryActionFor.name); }}
+                  className="w-full flex items-center gap-4 px-5 py-4 rounded-2xl text-left bg-slate-50 dark:bg-slate-700/60 hover:bg-slate-100 dark:hover:bg-slate-700 active:scale-[0.98] transition-all"
+                >
+                  <div className="w-9 h-9 bg-amber-50 dark:bg-amber-900/30 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <Smile className="w-5 h-5 text-amber-500" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-slate-700 dark:text-slate-200">Change Icon</p>
+                    <p className="text-xs text-slate-400">Pick a new emoji</p>
+                  </div>
+                </button>
+
+                {/* Rename */}
+                <button
+                  onClick={() => { setCategoryActionFor(null); setRenamingCategory(categoryActionFor); }}
+                  className="w-full flex items-center gap-4 px-5 py-4 rounded-2xl text-left bg-slate-50 dark:bg-slate-700/60 hover:bg-slate-100 dark:hover:bg-slate-700 active:scale-[0.98] transition-all"
+                >
+                  <div className="w-9 h-9 bg-indigo-50 dark:bg-indigo-900/30 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <Pencil className="w-5 h-5 text-indigo-500" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-slate-700 dark:text-slate-200">Rename Category</p>
+                    <p className="text-xs text-slate-400">Change the display name</p>
+                  </div>
+                </button>
+
+                {/* Delete */}
+                <button
+                  onClick={() => { setCategoryActionFor(null); setDeletingCategory(categoryActionFor); }}
+                  className="w-full flex items-center gap-4 px-5 py-4 rounded-2xl text-left bg-rose-50 dark:bg-rose-900/20 hover:bg-rose-100 dark:hover:bg-rose-900/30 active:scale-[0.98] transition-all"
+                >
+                  <div className="w-9 h-9 bg-rose-100 dark:bg-rose-900/40 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <Trash2 className="w-5 h-5 text-rose-500" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-rose-600 dark:text-rose-400">Delete Category</p>
+                    <p className="text-xs text-rose-400/70 dark:text-rose-500/60">Permanently remove</p>
+                  </div>
+                </button>
+
+                {/* Cancel */}
+                <button
+                  onClick={() => setCategoryActionFor(null)}
+                  className="w-full py-4 rounded-2xl text-sm font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors mt-1"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {renamingCategory && (
+        <RenameCategoryDialog
+          accessToken={user.accessToken}
+          sheetId={selectedSheetId}
+          category={renamingCategory}
+          onClose={() => setRenamingCategory(null)}
+          onSuccess={() => { refresh(); setRenamingCategory(null); }}
+        />
+      )}
+
+      {deletingCategory && (
+        <DeleteCategoryDialog
+          accessToken={user.accessToken}
+          sheetId={selectedSheetId}
+          category={deletingCategory}
+          onClose={() => setDeletingCategory(null)}
+          onSuccess={() => { refresh(); setDeletingCategory(null); }}
         />
       )}
     </div>
   );
 }
 
-function StatCard({ title, value, icon, color, subtext }) {
+function StatCard({ title, value, icon, color, subtext, onEdit, currencySymbol = '$' }) {
   const colorClasses = {
     blue: "bg-blue-50/50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border-blue-100/50 dark:border-blue-800/40",
     rose: "bg-rose-50/50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400 border-rose-100/50 dark:border-rose-800/40",
@@ -938,8 +1242,19 @@ function StatCard({ title, value, icon, color, subtext }) {
           {React.cloneElement(icon, { className: "w-5 h-5 sm:w-7 sm:h-7" })}
         </div>
         <div className="text-right">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">{title}</p>
-          <p className="text-2xl sm:text-4xl font-black text-slate-900 dark:text-slate-100 tabular-nums leading-none">${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          <div className="flex items-center justify-end gap-1.5 mb-2">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{title}</p>
+            {onEdit && (
+              <button
+                onClick={onEdit}
+                title="Edit"
+                className="p-1 rounded-lg text-slate-300 dark:text-slate-600 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-all flex-shrink-0"
+              >
+                <Pencil className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+          <p className="text-2xl sm:text-4xl font-black text-slate-900 dark:text-slate-100 tabular-nums leading-none">{currencySymbol}{value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
         </div>
       </div>
       {subtext && (
@@ -949,6 +1264,72 @@ function StatCard({ title, value, icon, color, subtext }) {
         </div>
       )}
     </div>
+  );
+}
+
+function IconPickerModal({ categoryName, currentIcon, onPick, onClose }) {
+  const [search, setSearch] = React.useState('');
+  const q = search.toLowerCase().trim();
+  const filtered = q
+    ? EMOJI_DATA.filter(({ k }) => k.some(kw => kw.includes(q))).map(({ e }) => e)
+    : EMOJI_DATA.map(({ e }) => e);
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/40 dark:bg-black/60 z-40 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl w-full max-w-sm border border-slate-100 dark:border-slate-700 overflow-hidden flex flex-col max-h-[85vh]">
+
+          {/* Header */}
+          <div className="px-6 pt-6 pb-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between flex-shrink-0">
+            <div>
+              <p className="text-sm font-black text-slate-800 dark:text-slate-100">Choose an icon</p>
+              <p className="text-xs text-slate-400 mt-0.5">{categoryName}</p>
+            </div>
+            <span className="text-3xl leading-none">{currentIcon}</span>
+          </div>
+
+          {/* Search */}
+          <div className="px-4 pt-4 pb-2 flex-shrink-0">
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search  (e.g. food, car, home…)"
+              autoFocus
+              className="w-full bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-2xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 placeholder:text-slate-300 dark:placeholder:text-slate-500"
+            />
+          </div>
+
+          {/* Grid */}
+          <div className="flex-1 overflow-y-auto p-3">
+            {filtered.length === 0 ? (
+              <p className="text-center text-sm text-slate-400 py-8">No results for "{search}"</p>
+            ) : (
+              <div className="grid grid-cols-8 gap-0.5">
+                {filtered.map(emoji => (
+                  <button
+                    key={emoji}
+                    onClick={() => onPick(emoji)}
+                    className={`text-xl p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${currentIcon === emoji ? 'bg-indigo-50 dark:bg-indigo-900/30 ring-2 ring-inset ring-indigo-400' : ''}`}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="px-6 pb-6 pt-2 flex-shrink-0">
+            <button onClick={onClose} className="w-full py-2.5 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">
+              Cancel
+            </button>
+          </div>
+
+        </div>
+      </div>
+    </>
   );
 }
 

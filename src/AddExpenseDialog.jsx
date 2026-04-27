@@ -19,7 +19,9 @@ const VENDOR_EXAMPLES = {
   'Wi-Fi':         'e.g. Comcast, AT&T…',
 };
 
-export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess }) {
+export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess, categories: categoriesProp }) {
+  // Use live categories from parent (includes new ones) falling back to static list
+  const categoryList = categoriesProp?.length ? categoriesProp : CATEGORIES;
   const [category, setCategory]         = useState('');
   const [vendor, setVendor]             = useState('');
   const [amount, setAmount]             = useState('');
@@ -107,8 +109,9 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
       />
 
       {/* Dialog */}
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl w-full max-w-md border border-slate-100 dark:border-slate-700 overflow-hidden">
+      <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
+        <div className="bg-white dark:bg-slate-800 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl w-full sm:max-w-md border border-slate-100 dark:border-slate-700 overflow-hidden max-h-[90vh] flex flex-col">
+          <div className="w-10 h-1 bg-slate-200 dark:bg-slate-600 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" />
 
           {/* Header */}
           <div className="px-8 pt-8 pb-6 flex items-center justify-between border-b border-slate-100 dark:border-slate-700">
@@ -122,7 +125,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
           </div>
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="px-8 py-6 space-y-5">
+          <form onSubmit={handleSubmit} className="px-8 py-6 space-y-5 overflow-y-auto flex-1">
 
             {/* Category */}
             <div className="space-y-1.5">
@@ -135,7 +138,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                 className={`${inputCls} cursor-pointer`}
               >
                 <option value="">Select a category…</option>
-                {CATEGORIES.map(c => (
+                {categoryList.map(c => (
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>
@@ -236,7 +239,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
             )}
 
             {/* Actions */}
-            <div className="flex gap-3 pt-2">
+            <div className="flex gap-3 pt-2" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
               <button
                 type="button"
                 onClick={onClose}

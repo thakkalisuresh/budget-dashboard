@@ -1,6 +1,7 @@
-import React from 'react';
-import { X, RotateCcw } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, RotateCcw, Search } from 'lucide-react';
 import { DEFAULT_SETTINGS } from './useSettings.js';
+import { CURRENCIES } from './currency.js';
 import * as d3 from 'd3';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -73,8 +74,9 @@ function Toggle({ on, onToggle, label, desc }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export function SettingsPanel({ settings, updateSettings, expenses, onClose }) {
+export function SettingsPanel({ settings, updateSettings, expenses, onClose, currencySymbol }) {
   const vis = settings.visibility;
+  const [currencySearch, setCurrencySearch] = useState('');
 
   const toggleVis = (key) =>
     updateSettings(prev => ({
@@ -104,7 +106,10 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose }) {
       />
 
       {/* Drawer */}
-      <div className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-sm bg-white dark:bg-slate-900 shadow-2xl flex flex-col border-l border-slate-100 dark:border-slate-700">
+      <div
+        className="fixed right-0 top-0 bottom-0 z-50 w-[85vw] max-w-sm bg-white dark:bg-slate-900 shadow-2xl flex flex-col border-l border-slate-100 dark:border-slate-700"
+        style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
+      >
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-slate-100 dark:border-slate-700 flex-shrink-0">
@@ -123,7 +128,77 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose }) {
         {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto px-6 py-6 space-y-8">
 
-            {/* ── Appearance ──────────────────────────────────────────────── */}
+            {/* ── Currency ────────────────────────────────────────────────── */}
+          <div>
+            <SectionLabel>Currency</SectionLabel>
+            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl overflow-hidden">
+              {/* Selected currency display */}
+              <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-700 flex items-center gap-3">
+                <span className="text-xl">{CURRENCIES.find(c => c.code === (settings.currency || 'USD'))?.flag}</span>
+                <div>
+                  <p className="text-sm font-black text-slate-800 dark:text-slate-100">
+                    {CURRENCIES.find(c => c.code === (settings.currency || 'USD'))?.label}
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    {settings.currency || 'USD'} · {CURRENCIES.find(c => c.code === (settings.currency || 'USD'))?.symbol}
+                  </p>
+                </div>
+              </div>
+
+              {/* Search */}
+              <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-700">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search currency…"
+                    value={currencySearch}
+                    onChange={e => setCurrencySearch(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-700/60 rounded-xl pl-8 pr-3 py-2 text-xs outline-none focus:ring-2 focus:ring-indigo-500/30 text-slate-700 dark:text-slate-200 placeholder:text-slate-400"
+                  />
+                </div>
+              </div>
+
+              {/* Currency list */}
+              <div className="max-h-48 overflow-y-auto divide-y divide-slate-50 dark:divide-slate-700/40">
+                {CURRENCIES
+                  .filter(c => {
+                    const q = currencySearch.toLowerCase();
+                    return !q || c.label.toLowerCase().includes(q) || c.code.toLowerCase().includes(q) || c.symbol.includes(q);
+                  })
+                  .map(c => {
+                    const selected = (settings.currency || 'USD') === c.code;
+                    return (
+                      <button
+                        key={c.code}
+                        onClick={() => updateSettings(prev => ({ ...prev, currency: c.code }))}
+                        className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
+                          selected
+                            ? 'bg-indigo-50 dark:bg-indigo-900/30'
+                            : 'hover:bg-slate-50 dark:hover:bg-slate-700/30'
+                        }`}
+                      >
+                        <span className="text-base w-6 flex-shrink-0">{c.flag}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-xs font-bold truncate ${selected ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-700 dark:text-slate-200'}`}>
+                            {c.label}
+                          </p>
+                          <p className="text-[10px] text-slate-400">{c.code}</p>
+                        </div>
+                        <span className={`text-sm font-black flex-shrink-0 ${selected ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'}`}>
+                          {c.symbol}
+                        </span>
+                        {selected && (
+                          <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 flex-shrink-0" />
+                        )}
+                      </button>
+                    );
+                  })}
+              </div>
+            </div>
+          </div>
+
+          {/* ── Appearance ──────────────────────────────────────────────── */}
           <div>
             <SectionLabel>Appearance</SectionLabel>
             <div className="space-y-4">
@@ -287,7 +362,7 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose }) {
                       {exp.name}
                     </span>
                     <span className="text-xs text-slate-400 tabular-nums">
-                      ${exp.actual.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      {currencySymbol}{exp.actual.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                     </span>
                     <span className="text-[10px] text-slate-300 dark:text-slate-600 group-hover:text-slate-400 transition-colors">
                       Edit ›

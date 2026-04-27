@@ -15,7 +15,7 @@ const CATS = [
 // Target marker sits at this % of the bar width; overflow spills into the remaining portion
 const TARGET_MARKER = 72;
 
-export function BudgetRules({ data, loading }) {
+export function BudgetRules({ data, loading, currencySymbol = '$' }) {
   if (loading) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -55,7 +55,7 @@ export function BudgetRules({ data, loading }) {
                   <span className="text-xl mr-2">{cat.icon}</span>
                   <span className={`text-xs font-black uppercase tracking-widest ${cat.theme.label}`}>{cat.label}</span>
                   <p className="text-3xl font-black text-slate-900 dark:text-slate-100 mt-2 tabular-nums">
-                    ${d.total.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    {currencySymbol}{d.total.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                   </p>
                 </div>
                 <span className={`text-[10px] font-black px-3 py-1.5 rounded-full uppercase tracking-wider mt-1 ${
@@ -100,7 +100,7 @@ export function BudgetRules({ data, loading }) {
                   <div key={i} className="flex justify-between items-center">
                     <span className="text-xs font-medium text-slate-600 dark:text-slate-300">{item.name}</span>
                     <span className="text-xs font-black text-slate-800 dark:text-slate-200 tabular-nums">
-                      ${item.amount.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      {currencySymbol}{item.amount.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                     </span>
                   </div>
                 ))}
@@ -111,13 +111,13 @@ export function BudgetRules({ data, loading }) {
                 <div className="flex justify-between text-xs">
                   <span className="text-slate-500 dark:text-slate-400">Target amount</span>
                   <span className="font-bold text-slate-600 dark:text-slate-300 tabular-nums">
-                    ${d.target.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    {currencySymbol}{d.target.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                   </span>
                 </div>
                 <div className="flex justify-between text-xs items-center">
                   <span className="font-black text-slate-700 dark:text-slate-200">How much is left to use</span>
                   <span className={`font-black tabular-nums ${d.diff < 0 ? 'text-rose-500' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                    {d.diff < 0 ? '-' : '+'}${Math.abs(d.diff).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    {d.diff < 0 ? '-' : '+'}{currencySymbol}{Math.abs(d.diff).toLocaleString(undefined, { maximumFractionDigits: 2 })}
                   </span>
                 </div>
                 <div className="flex justify-between text-xs items-center pt-1">

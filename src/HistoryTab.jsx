@@ -3,13 +3,17 @@ import { RefreshCw, Clock, Inbox, Undo2 } from 'lucide-react';
 import { fetchHistory, undoHistoryEntry } from './sheetsApi.js';
 
 const ACTION_STYLES = {
-  'Added':         { bg: 'bg-emerald-50 dark:bg-emerald-900/30', text: 'text-emerald-700 dark:text-emerald-300' },
-  'Receipt Scan':  { bg: 'bg-indigo-50 dark:bg-indigo-900/30',   text: 'text-indigo-700 dark:text-indigo-300'  },
-  'Updated':       { bg: 'bg-blue-50 dark:bg-blue-900/30',       text: 'text-blue-700 dark:text-blue-300'      },
-  'Edited':        { bg: 'bg-amber-50 dark:bg-amber-900/30',     text: 'text-amber-700 dark:text-amber-300'    },
-  'Deleted':       { bg: 'bg-rose-50 dark:bg-rose-900/30',       text: 'text-rose-700 dark:text-rose-300'      },
-  'Renamed':       { bg: 'bg-violet-50 dark:bg-violet-900/30',   text: 'text-violet-700 dark:text-violet-300'  },
-  'Undo':          { bg: 'bg-slate-100 dark:bg-slate-700',       text: 'text-slate-500 dark:text-slate-400'    },
+  'Added':           { bg: 'bg-emerald-50 dark:bg-emerald-900/30', text: 'text-emerald-700 dark:text-emerald-300' },
+  'Receipt Scan':    { bg: 'bg-indigo-50 dark:bg-indigo-900/30',   text: 'text-indigo-700 dark:text-indigo-300'  },
+  'Updated':         { bg: 'bg-blue-50 dark:bg-blue-900/30',       text: 'text-blue-700 dark:text-blue-300'      },
+  'Edited':          { bg: 'bg-amber-50 dark:bg-amber-900/30',     text: 'text-amber-700 dark:text-amber-300'    },
+  'Deleted':         { bg: 'bg-rose-50 dark:bg-rose-900/30',       text: 'text-rose-700 dark:text-rose-300'      },
+  'Renamed':         { bg: 'bg-violet-50 dark:bg-violet-900/30',   text: 'text-violet-700 dark:text-violet-300'  },
+  'Undo':            { bg: 'bg-slate-100 dark:bg-slate-700',       text: 'text-slate-500 dark:text-slate-400'    },
+  'Category Added':   { bg: 'bg-teal-50 dark:bg-teal-900/30',       text: 'text-teal-700 dark:text-teal-300'      },
+  'Category Deleted': { bg: 'bg-rose-50 dark:bg-rose-900/30',        text: 'text-rose-700 dark:text-rose-300'       },
+  'Category Renamed': { bg: 'bg-violet-50 dark:bg-violet-900/30',    text: 'text-violet-700 dark:text-violet-300'   },
+  'Budget Updated':   { bg: 'bg-sky-50 dark:bg-sky-900/30',          text: 'text-sky-700 dark:text-sky-300'         },
 };
 
 // Amount colour per action — Deleted = rose, Renamed = muted, others = normal
@@ -29,7 +33,7 @@ function formatTimestamp(iso) {
   } catch { return iso; }
 }
 
-export function HistoryTab({ sheetId, accessToken, onRefresh }) {
+export function HistoryTab({ sheetId, accessToken, onRefresh, currencySymbol = '$' }) {
   const [entries, setEntries]     = useState([]);
   const [loading, setLoading]     = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -108,7 +112,8 @@ export function HistoryTab({ sheetId, accessToken, onRefresh }) {
           {entries.map((entry) => {
             const style = ACTION_STYLES[entry.action] ?? ACTION_STYLES['Edited'];
             const isUndoing = undoing === entry.id;
-            const canUndo = !entry.action.startsWith('Undo');
+            const NO_UNDO = new Set(['Category Added', 'Category Deleted']);
+            const canUndo = !entry.action.startsWith('Undo') && !NO_UNDO.has(entry.action);
 
             return (
               <div key={entry.id} className="flex items-center gap-3 px-5 py-4 hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors group">
@@ -140,12 +145,15 @@ export function HistoryTab({ sheetId, accessToken, onRefresh }) {
                   )}
                 </div>
 
-                {/* Amount + timestamp */}
+                {/* Amount + timestamp + user */}
                 <div className="text-right flex-shrink-0 min-w-[70px]">
                   <span className={`text-sm font-black tabular-nums ${amountColor(entry.action)}`}>
-                    {entry.amount != null ? `$${Number(entry.amount).toFixed(2)}` : '—'}
+                    {entry.amount != null ? `${currencySymbol}${Number(entry.amount).toFixed(2)}` : '—'}
                   </span>
                   <p className="text-[10px] text-slate-400 mt-0.5">{formatTimestamp(entry.timestamp)}</p>
+                  {entry.user && (
+                    <p className="text-[10px] font-bold text-slate-400 mt-0.5">{entry.user}</p>
+                  )}
                 </div>
 
                 {/* Undo button */}

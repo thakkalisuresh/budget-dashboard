@@ -36,6 +36,7 @@ export const DEFAULT_SETTINGS = {
   categoryColors:  {},
   categoryOrder:   DEFAULT_CATEGORY_ORDER,
   layout:          null, // null = use DEFAULT_LAYOUT from DashboardGrid
+  currency:        'USD',
 };
 
 // ─── Sheets helpers ───────────────────────────────────────────────────────────
@@ -113,6 +114,7 @@ export async function loadUserSettings(userId, accessToken) {
       categoryColors: { ...(parsed.categoryColors || {}) },
       categoryOrder:  parsed.categoryOrder || DEFAULT_CATEGORY_ORDER,
       layout:         parsed.layout || null,
+      currency:       parsed.currency || 'USD',
     };
   } catch {
     return { ...DEFAULT_SETTINGS, visibility: { ...DEFAULT_SETTINGS.visibility } };

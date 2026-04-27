@@ -1,3 +1,5 @@
+import { getCustomCategories } from './customCategories.js';
+
 const SHEET_ID = import.meta.env.VITE_SHEET_ID;
 const API_KEY = import.meta.env.VITE_SHEETS_API_KEY;
 
@@ -20,10 +22,14 @@ const SHEET_MAP = {
   'Wi-Fi':         { sheet: 'Wi-Fi',                      descCol: 2, amtCol: 3 },
 };
 
-export const hasDetail = (name) => !!SHEET_MAP[name];
+function getEffectiveSheetMap() {
+  return { ...SHEET_MAP, ...getCustomCategories() };
+}
+
+export const hasDetail = (name) => !!getEffectiveSheetMap()[name];
 
 export async function fetchDetail(name) {
-  const config = SHEET_MAP[name];
+  const config = getEffectiveSheetMap()[name];
   if (!config) return [];
 
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(config.sheet)}?key=${API_KEY}`;
