@@ -38,7 +38,7 @@ const TYPES = [
   },
 ];
 
-export function AddCategoryDialog({ accessToken, sheetId, onClose, onSuccess }) {
+export function AddCategoryDialog({ accessToken, sheetId, onClose, onSuccess, onAddCustomCategory }) {
   const [name, setName]     = useState('');
   const [budget, setBudget] = useState('');
   const [type, setType]     = useState('need');
@@ -73,8 +73,9 @@ export function AddCategoryDialog({ accessToken, sheetId, onClose, onSuccess }) 
       setStep(3);
       await addCategoryTo503020(sheetId, accessToken, { categoryName: trimmedName, type });
 
-      // Register in localStorage so SHEET_MAP picks it up this session
+      // Register in localStorage (sync) and persist to settings (cross-device)
       addCustomCategory(trimmedName);
+      onAddCustomCategory?.(trimmedName);
 
       // Log to history
       const typeLabel = TYPES.find(t => t.key === type)?.label ?? type;

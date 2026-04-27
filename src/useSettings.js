@@ -31,12 +31,14 @@ export const DEFAULT_SETTINGS = {
     nonMonthlyTile: true,
     budgetRules:    true,
   },
-  donutLegendCount: 5,
-  barSortOrder:    'amount',
-  categoryColors:  {},
-  categoryOrder:   DEFAULT_CATEGORY_ORDER,
-  layout:          null, // null = use DEFAULT_LAYOUT from DashboardGrid
-  currency:        'USD',
+  donutLegendCount:  5,
+  barSortOrder:     'amount',
+  categoryColors:   {},
+  categoryOrder:    DEFAULT_CATEGORY_ORDER,
+  layout:           null,
+  currency:         'USD',
+  categoryIcons:    {},   // { categoryName: emoji }
+  customCategories: [],   // [categoryName, ...]
 };
 
 // ─── Sheets helpers ───────────────────────────────────────────────────────────
@@ -107,15 +109,25 @@ export async function loadUserSettings(userId, accessToken) {
     const row = rows.find(r => r[0] === userId);
     if (!row || !row[1]) return { ...DEFAULT_SETTINGS, visibility: { ...DEFAULT_SETTINGS.visibility } };
     const parsed = JSON.parse(row[1]);
-    return {
+    const merged = {
       ...DEFAULT_SETTINGS,
       ...parsed,
-      visibility:    { ...DEFAULT_SETTINGS.visibility, ...(parsed.visibility || {}) },
-      categoryColors: { ...(parsed.categoryColors || {}) },
-      categoryOrder:  parsed.categoryOrder || DEFAULT_CATEGORY_ORDER,
-      layout:         parsed.layout || null,
-      currency:       parsed.currency || 'USD',
+      visibility:       { ...DEFAULT_SETTINGS.visibility, ...(parsed.visibility || {}) },
+      categoryColors:   { ...(parsed.categoryColors || {}) },
+      categoryOrder:    parsed.categoryOrder || DEFAULT_CATEGORY_ORDER,
+      layout:           parsed.layout || null,
+      currency:         parsed.currency || 'USD',
+      categoryIcons:    { ...(parsed.categoryIcons || {}) },
+      customCategories: parsed.customCategories || [],
     };
+    // Hydrate localStorage so synchronous callers (fetchDetail, dialogs) stay in sync
+    try {
+      localStorage.setItem('budget_category_icons', JSON.stringify(merged.categoryIcons));
+      const customMap = {};
+      (merged.customCategories || []).forEach(n => { customMap[n] = true; });
+      localStorage.setItem('budget_custom_categories', JSON.stringify(customMap));
+    } catch {}
+    return merged;
   } catch {
     return { ...DEFAULT_SETTINGS, visibility: { ...DEFAULT_SETTINGS.visibility } };
   }
@@ -163,6 +175,13 @@ export function useSettings(userId, accessToken) {
   const updateSettings = useCallback((updater) => {
     setSettings(prev => {
       const next = typeof updater === 'function' ? updater(prev) : { ...prev, ...updater };
+      // Keep localStorage in sync so synchronous callers stay up to date
+      try {
+        localStorage.setItem('budget_category_icons', JSON.stringify(next.categoryIcons || {}));
+        const customMap = {};
+        (next.customCategories || []).forEach(n => { customMap[n] = true; });
+        localStorage.setItem('budget_custom_categories', JSON.stringify(customMap));
+      } catch {}
       saveUserSettings(userId, next, accessToken); // fire-and-forget
       return next;
     });

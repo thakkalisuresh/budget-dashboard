@@ -24,7 +24,7 @@ import { HistoryTab } from './HistoryTab.jsx';
 import { SettingsPanel } from './SettingsPanel.jsx';
 import { useSettings, DEFAULT_CATEGORY_ORDER } from './useSettings.js';
 import { AddCategoryDialog } from './AddCategoryDialog.jsx';
-import { getCategoryIcons, setCategoryIcon, EMOJI_DATA } from './categoryIcons.js';
+import { DEFAULT_ICONS, EMOJI_DATA } from './categoryIcons.js';
 import { DeleteCategoryDialog } from './DeleteCategoryDialog.jsx';
 import { RenameCategoryDialog } from './RenameCategoryDialog.jsx';
 
@@ -83,7 +83,6 @@ function Dashboard({ user, signOut }) {
   const [budgetDraft, setBudgetDraft] = useState('');
   const [editingSalary, setEditingSalary] = useState(false);
   const [salaryDraft, setSalaryDraft] = useState('');
-  const [categoryIcons, setCategoryIconsState] = useState(() => getCategoryIcons());
   const [iconPickerFor, setIconPickerFor] = useState(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const userMenuRef = useRef(null);
@@ -96,6 +95,7 @@ function Dashboard({ user, signOut }) {
   // Per-user settings (saved to Google Sheets)
   const { settings, updateSettings } = useSettings(user.email, user.accessToken);
   const currencySymbol = getCurrencySymbol(settings.currency || 'USD');
+  const categoryIcons  = { ...DEFAULT_ICONS, ...(settings.categoryIcons || {}) };
 
   // Theme — driven by settings.theme, with a quick-toggle override stored locally
   const [isDark, setIsDark] = useState(() => {
@@ -305,8 +305,10 @@ function Dashboard({ user, signOut }) {
   };
 
   const handleSetIcon = (categoryName, emoji) => {
-    setCategoryIcon(categoryName, emoji);
-    setCategoryIconsState(getCategoryIcons());
+    updateSettings(prev => ({
+      ...prev,
+      categoryIcons: { ...(prev.categoryIcons || {}), [categoryName]: emoji },
+    }));
     setIconPickerFor(null);
   };
 
@@ -1129,6 +1131,10 @@ function Dashboard({ user, signOut }) {
           sheetId={selectedSheetId}
           onClose={() => setShowAddCategory(false)}
           onSuccess={() => refresh()}
+          onAddCustomCategory={name => updateSettings(prev => ({
+            ...prev,
+            customCategories: [...new Set([...(prev.customCategories || []), name])],
+          }))}
         />
       )}
 
