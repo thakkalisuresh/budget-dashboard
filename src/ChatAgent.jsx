@@ -160,9 +160,12 @@ export function ChatAgent({
   const inputRef        = useRef(null);
   const apiHistoryRef   = useRef([]); // full API conversation (includes tool_use / tool_result)
 
-  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY;
-  const hasKey = apiKey && apiKey !== 'your_api_key_here';
-  const isBusy = streaming || toolRunning;
+  // In dev, call Anthropic directly with the VITE key.
+  // In production, proxy through the Netlify Edge Function (key stays server-side).
+  const devKey  = import.meta.env.VITE_ANTHROPIC_API_KEY;
+  const isDev   = import.meta.env.DEV;
+  const hasKey  = isDev ? (devKey && devKey !== 'your_api_key_here') : true;
+  const isBusy  = streaming || toolRunning;
 
   // Scroll to bottom on new messages
   useEffect(() => {
@@ -262,14 +265,17 @@ export function ChatAgent({
   });
 
   const callApi = async (history, stream = true) => {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
+    const url     = isDev ? 'https://api.anthropic.com/v1/messages' : '/api/claude';
+    const headers = {
+      'content-type': 'application/json',
+      ...(isDev && devKey ? {
+        'x-api-key': devKey,
         'anthropic-dangerous-direct-browser-access': 'true',
-      },
+      } : {}),
+    };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
       body: JSON.stringify(buildBody(history, stream)),
     });
     if (!res.ok) {

@@ -2,7 +2,9 @@ import React, { useState, useRef } from 'react';
 import { Camera, X, Plus, AlertCircle } from 'lucide-react';
 import { CATEGORIES, addOrUpdateExpense, appendRandomExpenseNote } from './sheetsApi.js';
 
-const API_KEY     = import.meta.env.VITE_ANTHROPIC_API_KEY;
+const DEV_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY;
+const IS_DEV      = import.meta.env.DEV;
+const CLAUDE_URL  = IS_DEV ? 'https://api.anthropic.com/v1/messages' : '/api/claude';
 const MAX_PX      = 1600;   // max dimension after resize
 const JPEG_Q      = 0.85;   // jpeg quality
 const MAX_PDF_MB  = 5;
@@ -73,13 +75,14 @@ Rules:
 - vendor is the business name only, or null if unreadable
 - If the receipt is too blurry or unreadable, return {"vendor":null,"amount":null,"category":null}`;
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const res = await fetch(CLAUDE_URL, {
     method: 'POST',
     headers: {
-      'x-api-key': API_KEY,
-      'anthropic-version': '2023-06-01',
       'content-type': 'application/json',
-      'anthropic-dangerous-direct-browser-access': 'true',
+      ...(IS_DEV && DEV_API_KEY ? {
+        'x-api-key': DEV_API_KEY,
+        'anthropic-dangerous-direct-browser-access': 'true',
+      } : {}),
     },
     body: JSON.stringify({
       model: 'claude-haiku-4-5',
