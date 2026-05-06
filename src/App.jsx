@@ -25,8 +25,8 @@ const DetailPanel      = lazy(() => import('./DetailPanel.jsx').then(m => ({ def
 const AddExpenseDialog = lazy(() => import('./AddExpenseDialog.jsx').then(m => ({ default: m.AddExpenseDialog })));
 const NewMonthDialog   = lazy(() => import('./NewMonthDialog.jsx').then(m => ({ default: m.NewMonthDialog })));
 const ChatAgent        = lazy(() => import('./ChatAgent.jsx').then(m => ({ default: m.ChatAgent })));
-const HistoryTab       = lazy(() => import('./HistoryTab.jsx').then(m => ({ default: m.HistoryTab })));
-const LedgerTab        = lazy(() => import('./LedgerTab.jsx').then(m => ({ default: m.LedgerTab })));
+import { HistoryTab } from './HistoryTab.jsx';
+import { LedgerTab } from './LedgerTab.jsx';
 const SettingsPanel    = lazy(() => import('./SettingsPanel.jsx').then(m => ({ default: m.SettingsPanel })));
 const AddCategoryDialog    = lazy(() => import('./AddCategoryDialog.jsx').then(m => ({ default: m.AddCategoryDialog })));
 const ReconcileDialog      = lazy(() => import('./ReconcileDialog.jsx').then(m => ({ default: m.ReconcileDialog })));
@@ -383,7 +383,6 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
 
 
   return (
-    <Suspense fallback={null}>
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans p-4 lg:p-8 transition-colors duration-300"
       style={{
         paddingTop: 'calc(env(safe-area-inset-top) + 1rem)',
@@ -651,7 +650,7 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
       </div>
 
       {detail && (
-        <DetailPanel
+        <Suspense fallback={null}><DetailPanel
           expense={detail.expense}
           rows={detail.rows}
           loading={detail.loading}
@@ -668,11 +667,11 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
           }))}
           nonMonthlyVendors={nonMonthlyItems.map(i => i.vendor.toLowerCase())}
           onNonMonthlyChanged={refreshNonMonthly}
-        />
+        /></Suspense>
       )}
 
       {showAddDialog && (
-        <AddExpenseDialog
+        <Suspense fallback={null}><AddExpenseDialog
           accessToken={user.accessToken}
           sheetId={selectedSheetId}
           monthName={selectedMonth?.name}
@@ -708,7 +707,7 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
             ...prev,
             transactionNotes: { ...(prev.transactionNotes || {}), [key]: data },
           }))}
-        />
+        /></Suspense>
       )}
 
       <DeleteMonthDialog
@@ -722,7 +721,7 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
       />
 
       {showNewMonth && (
-        <NewMonthDialog
+        <Suspense fallback={null}><NewMonthDialog
           existingMonths={months}
           accessToken={user.accessToken}
           customCategories={settings.customCategories || []}
@@ -733,10 +732,10 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
             setSelectedSheetId(newMonth.sheetId);
             return newMonth;
           }}
-        />
+        /></Suspense>
       )}
 
-      <ChatAgent
+      <Suspense fallback={null}><ChatAgent
         hideButton={!!detail}
         expenses={expenses}
         salaryReceived={salaryReceived}
@@ -752,18 +751,18 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
         rulesData={rulesData}
         open={chatOpen}
         onOpenChange={setChatOpen}
-      />
+      /></Suspense>
 
       {/* Reconcile dialog */}
       {showReconcile && (
-        <ReconcileDialog
+        <Suspense fallback={null}><ReconcileDialog
           monthName={selectedMonth?.name}
           sheetId={selectedSheetId}
           accessToken={user.accessToken}
           onClose={() => setShowReconcile(false)}
           onComplete={() => refresh()}
           smartRules={settings.smartRules || []}
-        />
+        /></Suspense>
       )}
 
       {/* PIN lock overlay */}
@@ -783,7 +782,7 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
       />
 
       {showSettings && (
-        <SettingsPanel
+        <Suspense fallback={null}><SettingsPanel
           settings={settings}
           updateSettings={updateSettings}
           expenses={expenses}
@@ -793,7 +792,7 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
           onSetPin={() => { setShowSettings(false); pinLock.setSetting(true); }}
           onClearPin={pinLock.clearPin}
           pushHook={pushHook}
-        />
+        /></Suspense>
       )}
 
       {iconPickerFor && (
@@ -843,7 +842,7 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
       )}
 
       {showAddCategory && (
-        <AddCategoryDialog
+        <Suspense fallback={null}><AddCategoryDialog
           accessToken={user.accessToken}
           sheetId={selectedSheetId}
           onClose={() => setShowAddCategory(false)}
@@ -854,7 +853,7 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
             ...prev,
             customCategories: [...new Set([...(prev.customCategories || []), name])],
           }))}
-        />
+        /></Suspense>
       )}
 
       <CategoryActionSheet
@@ -867,23 +866,23 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
       />
 
       {renamingCategory && (
-        <RenameCategoryDialog
+        <Suspense fallback={null}><RenameCategoryDialog
           accessToken={user.accessToken}
           sheetId={selectedSheetId}
           category={renamingCategory}
           onClose={() => setRenamingCategory(null)}
           onSuccess={() => { refresh(); setRenamingCategory(null); }}
-        />
+        /></Suspense>
       )}
 
       {deletingCategory && (
-        <DeleteCategoryDialog
+        <Suspense fallback={null}><DeleteCategoryDialog
           accessToken={user.accessToken}
           sheetId={selectedSheetId}
           category={deletingCategory}
           onClose={() => setDeletingCategory(null)}
           onSuccess={() => { refresh(); setDeletingCategory(null); }}
-        />
+        /></Suspense>
       )}
 
       <SpeedDial
@@ -895,7 +894,6 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
         onOpenChat={() => setChatOpen(true)}
       />
     </div>
-    </Suspense>
   );
 }
 
