@@ -1,8 +1,11 @@
 import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { X, Upload, FileText, AlertCircle, CheckCircle2, ShieldCheck, ChevronDown, ChevronUp, RefreshCw, Check, SkipForward, HelpCircle } from 'lucide-react';
 import { parseStatementFile } from './csvParsers.js';
-import { parsePdfStatement } from './pdfParsers.js';
-import { parsePdfWithClaude } from './claudePdfParser.js';
+// PDF parsers are dynamically imported — only loaded when a PDF is actually dropped
+const getPdfParsers = () => Promise.all([
+  import('./pdfParsers.js'),
+  import('./claudePdfParser.js'),
+]);
 import { runDeduplication } from './reconcileDedup.js';
 import { getAllCategoryNames, fetchDetailRows, updateVendorAmounts, fuzzyNamesMatch } from './sheetsApi.js';
 import { addOrUpdateExpense } from './useExpense.js';
@@ -445,6 +448,9 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
         let result;
 
         if (isPdf) {
+          // Dynamically load PDF parsers only when needed
+          const [{ parsePdfStatement }, { parsePdfWithClaude }] = await getPdfParsers();
+
           // Stage 1 — PDF.js text extraction + bank-specific parsers
           const pdfResult = await parsePdfStatement(file);
 

@@ -2,7 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 
 const API_KEY = import.meta.env.VITE_SHEETS_API_KEY;
 const RANGE = 'Totals!A1:J30';
-const POLL_MS = 30000;
+const POLL_MS = 60000; // 60s — reduces quota pressure
+
+const dataCacheKey = (sheetId) => `budget_data_cache_${sheetId}`;
 
 function parseCell(cell) {
   if (cell === undefined || cell === '') return null;
@@ -23,6 +25,7 @@ export function useSheetData(sheetId, accessToken) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [isFromCache, setIsFromCache] = useState(false);
 
   const fetchData = useCallback(async () => {
     if (!sheetId) return;
@@ -37,22 +40,48 @@ export function useSheetData(sheetId, accessToken) {
         throw new Error(err.error?.message || `HTTP ${res.status}`);
       }
       const json = await res.json();
-      setData(parseValues(json.values || []));
+      const parsed = parseValues(json.values || []);
+      try { localStorage.setItem(dataCacheKey(sheetId), JSON.stringify(parsed)); } catch { /* ignore quota errors */ }
+      setData(parsed);
+      setIsFromCache(false);
       setLastUpdated(new Date());
       setError(null);
     } catch (e) {
+      // Fall back to cached data when offline or fetch fails
+      try {
+        const cached = localStorage.getItem(dataCacheKey(sheetId));
+        if (cached) {
+          setData(JSON.parse(cached));
+          setIsFromCache(true);
+        }
+      } catch { /* ignore */ }
       setError(e.message);
     } finally {
       setLoading(false);
     }
   }, [sheetId, accessToken]);
 
-  // Reset loading state when sheet changes
+  // When sheet changes: show cached data immediately, fetch fresh in background
   useEffect(() => {
     setLoading(true);
-    setData(null);
     setLastUpdated(null);
     setError(null);
+
+    // Warm-start: render from cache instantly so the UI isn't blank while fetching
+    try {
+      const cached = localStorage.getItem(dataCacheKey(sheetId));
+      if (cached) {
+        setData(JSON.parse(cached));
+        setIsFromCache(true);
+        setLoading(false); // cache is good enough to stop spinner
+      } else {
+        setData(null);
+        setIsFromCache(false);
+      }
+    } catch {
+      setData(null);
+      setIsFromCache(false);
+    }
   }, [sheetId]);
 
   useEffect(() => {
@@ -61,5 +90,5 @@ export function useSheetData(sheetId, accessToken) {
     return () => clearInterval(id);
   }, [fetchData]);
 
-  return { data, loading, error, lastUpdated, refresh: fetchData };
+  return { data, loading, error, lastUpdated, isFromCache, refresh: fetchData };
 }

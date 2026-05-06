@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import {
   TrendingDown, TrendingUp, Wallet, Banknote, Receipt,
 } from 'lucide-react';
@@ -7,29 +7,31 @@ import { use503020 } from './use503020.js';
 import { hasDetail } from './fetchDetail.js';
 import { fetchDetailRows, updateCategoryBudget, writeSalary, fetchNonMonthlyItems, migrateNonMonthlyFromI4 } from './sheetsApi.js';
 import { getCurrencySymbol } from './currency.js';
-import { DetailPanel } from './DetailPanel.jsx';
-import { BudgetRules } from './BudgetRules.jsx';
-import { AddExpenseDialog } from './AddExpenseDialog.jsx';
 import { useAuth } from './useAuth.js';
 import { useOfflineSync } from './useOfflineSync.js';
 import { useDragSort } from './useDragSort.js';
-import { LoginScreen } from './LoginScreen.jsx';
 import { useMonths } from './useMonths.js';
-import { NewMonthDialog } from './NewMonthDialog.jsx';
-import { ChatAgent } from './ChatAgent.jsx';
-import { usePinLock, PinLockScreen } from './PinLock.jsx';
-import { ReceiptScanButton } from './ReceiptScanner.jsx';
-import { HistoryTab } from './HistoryTab.jsx';
-import { LedgerTab } from './LedgerTab.jsx';
-import { SettingsPanel } from './SettingsPanel.jsx';
 import { useSettings, DEFAULT_CATEGORY_ORDER } from './useSettings.js';
-import { AddCategoryDialog } from './AddCategoryDialog.jsx';
-import { ReconcileDialog } from './ReconcileDialog.jsx';
 import { useMessages } from './useMessages.js';
 import { usePush } from './usePush.js';
 import { DEFAULT_ICONS, EMOJI_DATA } from './categoryIcons.js';
-import { DeleteCategoryDialog } from './DeleteCategoryDialog.jsx';
-import { RenameCategoryDialog } from './RenameCategoryDialog.jsx';
+import { usePinLock, PinLockScreen } from './PinLock.jsx';
+import { LoginScreen } from './LoginScreen.jsx';
+import { ReceiptScanButton } from './ReceiptScanner.jsx';
+import { BudgetRules } from './BudgetRules.jsx';
+
+// Heavy components — loaded only when first rendered
+const DetailPanel      = lazy(() => import('./DetailPanel.jsx').then(m => ({ default: m.DetailPanel })));
+const AddExpenseDialog = lazy(() => import('./AddExpenseDialog.jsx').then(m => ({ default: m.AddExpenseDialog })));
+const NewMonthDialog   = lazy(() => import('./NewMonthDialog.jsx').then(m => ({ default: m.NewMonthDialog })));
+const ChatAgent        = lazy(() => import('./ChatAgent.jsx').then(m => ({ default: m.ChatAgent })));
+const HistoryTab       = lazy(() => import('./HistoryTab.jsx').then(m => ({ default: m.HistoryTab })));
+const LedgerTab        = lazy(() => import('./LedgerTab.jsx').then(m => ({ default: m.LedgerTab })));
+const SettingsPanel    = lazy(() => import('./SettingsPanel.jsx').then(m => ({ default: m.SettingsPanel })));
+const AddCategoryDialog    = lazy(() => import('./AddCategoryDialog.jsx').then(m => ({ default: m.AddCategoryDialog })));
+const ReconcileDialog      = lazy(() => import('./ReconcileDialog.jsx').then(m => ({ default: m.ReconcileDialog })));
+const DeleteCategoryDialog = lazy(() => import('./DeleteCategoryDialog.jsx').then(m => ({ default: m.DeleteCategoryDialog })));
+const RenameCategoryDialog = lazy(() => import('./RenameCategoryDialog.jsx').then(m => ({ default: m.RenameCategoryDialog })));
 import { StatCard } from './StatCard.jsx';
 import { IconPickerModal } from './IconPickerModal.jsx';
 import { CategoryActionSheet } from './CategoryActionSheet.jsx';
@@ -381,6 +383,7 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
 
 
   return (
+    <Suspense fallback={null}>
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans p-4 lg:p-8 transition-colors duration-300"
       style={{
         paddingTop: 'calc(env(safe-area-inset-top) + 1rem)',
@@ -892,6 +895,7 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
         onOpenChat={() => setChatOpen(true)}
       />
     </div>
+    </Suspense>
   );
 }
 

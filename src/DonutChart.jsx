@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import * as d3 from 'd3';
+import { pie, arc } from 'd3-shape';
+import { schemeTableau10 } from 'd3-scale-chromatic';
 import { PieChart as PieChartIcon } from 'lucide-react';
 
 export function DonutChart({ expenses, totalActual, currencySymbol, isDark, categoryColors, donutLegendCount }) {
@@ -11,14 +12,14 @@ export function DonutChart({ expenses, totalActual, currencySymbol, isDark, cate
   );
 
   const getCategoryColor = (name, idx) =>
-    categoryColors?.[name] || d3.schemeTableau10[idx % 10];
+    categoryColors?.[name] || schemeTableau10[idx % 10];
 
   const width = 200, height = 200;
   const radius = Math.min(width, height) / 2;
-  const pie = d3.pie().value(d => d.actual).sort(null);
-  const arc      = d3.arc().innerRadius(radius * 0.65).outerRadius(radius);
-  const arcHover = d3.arc().innerRadius(radius * 0.62).outerRadius(radius * 1.05);
-  const arcs = pie(chartExpenses);
+  const pieFn    = pie().value(d => d.actual).sort(null);
+  const arcFn    = arc().innerRadius(radius * 0.65).outerRadius(radius);
+  const arcHover = arc().innerRadius(radius * 0.62).outerRadius(radius * 1.05);
+  const arcs = pieFn(chartExpenses);
   const pct = hoveredSlice
     ? ((hoveredSlice.actual / totalActual) * 100).toFixed(1)
     : null;
@@ -37,7 +38,7 @@ export function DonutChart({ expenses, totalActual, currencySymbol, isDark, cate
               return (
                 <path
                   key={i}
-                  d={isHovered ? arcHover(d) : arc(d)}
+                  d={isHovered ? arcHover(d) : arcFn(d)}
                   fill={getCategoryColor(d.data.name, i)}
                   stroke={isDark ? '#1e293b' : '#fff'}
                   strokeWidth="2"
