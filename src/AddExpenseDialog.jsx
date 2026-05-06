@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Plus } from 'lucide-react';
-import { CATEGORIES, addOrUpdateExpense, fetchDetailRows, appendRandomExpenseNote } from './sheetsApi.js';
+import { X, Plus, Zap } from 'lucide-react';
+import { CATEGORIES, fetchDetailRows, checkExistingExpense, markNonMonthly } from './sheetsApi.js';
+import { addOrUpdateExpense } from './useExpense.js';
+import { applySmartRules } from './smartRules.js';
 
 const VENDOR_EXAMPLES = {
   'Grocery':       "e.g. Walmart, Costco, Trader Joe's…",
@@ -19,16 +21,29 @@ const VENDOR_EXAMPLES = {
   'Wi-Fi':         'e.g. Comcast, AT&T…',
 };
 
-export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess, categories: categoriesProp, onSaveRecurring }) {
-  // Use live categories from parent (includes new ones) falling back to static list
+export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess, categories: categoriesProp, onSaveRecurring, onSaveTransactionNote, smartRules = [] }) {
   const categoryList = categoriesProp?.length ? categoriesProp : CATEGORIES;
   const [category, setCategory]         = useState('');
   const [vendor, setVendor]             = useState('');
+  const [ruleHint, setRuleHint]         = useState(''); // category auto-filled by a rule
   const [amount, setAmount]             = useState('');
-  const [isRandom, setIsRandom]         = useState(false);
+  const [isNonMonthly, setIsNonMonthly] = useState(false);
   const [isRecurring, setIsRecurring]   = useState(false);
   const [saving, setSaving]             = useState(false);
   const [error, setError]               = useState('');
+  const [dupWarning, setDupWarning]     = useState(false);
+  const [queued, setQueued]             = useState(false);
+  // Note / tag
+  const [showNote, setShowNote]         = useState(false);
+  const [txNote, setTxNote]             = useState('');
+  const [txTagInput, setTxTagInput]     = useState('');
+  const [txTags, setTxTags]             = useState([]);
+
+  const addTxTag = () => {
+    const tag = txTagInput.trim().replace(/^#/, '');
+    if (tag && !txTags.includes(tag)) setTxTags(prev => [...prev, tag]);
+    setTxTagInput('');
+  };
 
   // Autocomplete state
   const [allVendors, setAllVendors]     = useState([]);
@@ -46,7 +61,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
     setLoadingVendors(true);
     setVendor('');
     setSuggestions([]);
-    fetchDetailRows(category, accessToken)
+    fetchDetailRows(category, accessToken, sheetId)
       .then(rows => setAllVendors(rows.map(r => r.description)))
       .catch(() => setAllVendors([]))
       .finally(() => setLoadingVendors(false));
@@ -59,7 +74,16 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
     if (val.trim().length === 0) {
       setSuggestions([]);
       setShowSuggestions(false);
+      setRuleHint('');
       return;
+    }
+    // Auto-fill category from smart rules
+    const matched = applySmartRules(val, smartRules);
+    if (matched && categoryList.includes(matched)) {
+      setCategory(matched);
+      setRuleHint(matched);
+    } else {
+      setRuleHint('');
     }
     const filtered = allVendors.filter(v =>
       v.toLowerCase().startsWith(val.trim().toLowerCase())
@@ -78,22 +102,26 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
     }, 50);
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
-    if (!category) { setError('Please select a category.'); return; }
-    if (!vendor.trim()) { setError('Please enter a vendor name.'); return; }
+  const doSave = async () => {
     const amt = parseFloat(amount);
-    if (!amt || amt <= 0) { setError('Please enter a valid amount greater than 0.'); return; }
-
     setSaving(true);
+    setDupWarning(false);
     try {
-      await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'manual', isRandom);
-      if (isRandom) {
-        await appendRandomExpenseNote(sheetId, vendor.trim(), amt, accessToken);
+      const result = await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'manual');
+      if (result?.queued) {
+        if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
+        setQueued(true);
+        setSaving(false);
+        onSuccess?.({ queued: true, category, vendor: vendor.trim(), amount: amt });
+        setTimeout(onClose, 1800);
+        return;
       }
-      if (isRecurring) {
-        onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
+      if (isNonMonthly) await markNonMonthly(sheetId, accessToken, vendor.trim(), amt);
+      if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
+      // Save transaction note/tags if provided
+      if ((txNote.trim() || txTags.length > 0) && onSaveTransactionNote) {
+        const key = `${sheetId}_${category}_${vendor.trim().toLowerCase()}_${amt.toFixed(2)}`;
+        onSaveTransactionNote(key, { note: txNote.trim(), tags: txTags });
       }
       onSuccess?.();
       onClose();
@@ -102,6 +130,24 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setDupWarning(false);
+    if (!category)      { setError('Please select a category.');                    return; }
+    if (!vendor.trim()) { setError('Please enter a vendor name.');                  return; }
+    const amt = parseFloat(amount);
+    if (!amt || amt <= 0) { setError('Please enter a valid amount greater than 0.'); return; }
+
+    // Duplicate check
+    setSaving(true);
+    const isDuplicate = await checkExistingExpense(category, vendor.trim(), amt, accessToken, sheetId);
+    setSaving(false);
+    if (isDuplicate) { setDupWarning(true); return; }
+
+    await doSave();
   };
 
   return (
@@ -133,12 +179,19 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
 
             {/* Category */}
             <div className="space-y-1.5">
-              <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">
-                What expense is this?
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+                  What expense is this?
+                </label>
+                {ruleHint && (
+                  <span className="flex items-center gap-1 text-[10px] font-bold text-indigo-500 dark:text-indigo-400">
+                    <Zap className="w-2.5 h-2.5" /> Auto-filled by rule
+                  </span>
+                )}
+              </div>
               <select
                 value={category}
-                onChange={e => setCategory(e.target.value)}
+                onChange={e => { setCategory(e.target.value); setRuleHint(''); }}
                 className={`${inputCls} cursor-pointer`}
               >
                 <option value="">Select a category…</option>
@@ -214,24 +267,24 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
 
             {/* Toggles row */}
             <div className="space-y-2.5">
-              {/* One-time toggle */}
+              {/* One-time / non-monthly toggle */}
               <label className="flex items-start gap-3 cursor-pointer group">
                 <div className="relative flex-shrink-0 mt-0.5">
                   <input
                     type="checkbox"
-                    checked={isRandom}
-                    onChange={e => { setIsRandom(e.target.checked); if (e.target.checked) setIsRecurring(false); }}
+                    checked={isNonMonthly}
+                    onChange={e => { setIsNonMonthly(e.target.checked); if (e.target.checked) setIsRecurring(false); }}
                     className="sr-only"
                   />
-                  <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors ${isRandom ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700'}`}>
-                    {isRandom && <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                  <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors ${isNonMonthly ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700'}`}>
+                    {isNonMonthly && <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                   </div>
                 </div>
                 <div>
                   <p className="text-sm font-bold text-slate-700 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-                    One-time / random expense
+                    One-time / non-monthly expense
                   </p>
-                  <p className="text-xs text-slate-400 mt-0.5">Marks this as non-monthly in the dashboard</p>
+                  <p className="text-xs text-slate-400 mt-0.5">Tracks this separately for your balance calculation</p>
                 </div>
               </label>
 
@@ -241,7 +294,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                   <input
                     type="checkbox"
                     checked={isRecurring}
-                    onChange={e => { setIsRecurring(e.target.checked); if (e.target.checked) setIsRandom(false); }}
+                    onChange={e => setIsRecurring(e.target.checked)}
                     className="sr-only"
                   />
                   <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors ${isRecurring ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700'}`}>
@@ -257,6 +310,49 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
               </label>
             </div>
 
+            {/* Note / Tag (optional) */}
+            <div>
+              <button type="button" onClick={() => setShowNote(v => !v)}
+                className="text-xs font-bold text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors flex items-center gap-1">
+                {showNote ? '− Hide note / tag' : '+ Add note / tag (optional)'}
+              </button>
+              {showNote && (
+                <div className="mt-3 space-y-2">
+                  <textarea rows={2} placeholder="Add a note…" value={txNote}
+                    onChange={e => setTxNote(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-2xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/40 resize-none placeholder:text-slate-400" />
+                  <div className="flex gap-2">
+                    <input type="text" placeholder="Add tag (press Enter)"
+                      value={txTagInput} onChange={e => setTxTagInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTxTag(); } }}
+                      className="flex-1 bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-2xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500/40 placeholder:text-slate-400" />
+                    <button type="button" onClick={addTxTag}
+                      className="px-3 py-2 bg-indigo-600 text-white text-xs font-bold rounded-2xl hover:bg-indigo-700 transition-colors">Add</button>
+                  </div>
+                  {txTags.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {txTags.map(tag => (
+                        <span key={tag} onClick={() => setTxTags(prev => prev.filter(t => t !== tag))}
+                          className="flex items-center gap-1 text-xs font-bold px-2.5 py-1 bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 rounded-full cursor-pointer">
+                          #{tag} ×
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Queued offline message */}
+            {queued && (
+              <div className="flex items-center gap-3 px-4 py-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded-2xl">
+                <span className="text-base">📶</span>
+                <p className="text-xs font-bold text-amber-800 dark:text-amber-300">
+                  Saved offline — will sync when reconnected
+                </p>
+              </div>
+            )}
+
             {/* Error */}
             {error && (
               <p className="text-xs text-rose-500 font-medium bg-rose-50 dark:bg-rose-900/20 px-4 py-2.5 rounded-xl">
@@ -264,19 +360,34 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
               </p>
             )}
 
+            {/* Duplicate warning */}
+            {dupWarning && (
+              <div className="flex items-start gap-3 px-4 py-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded-2xl">
+                <svg className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                <p className="text-xs font-medium text-amber-800 dark:text-amber-300 leading-relaxed">
+                  <span className="font-black">{vendor.trim()} ${parseFloat(amount).toFixed(2)}</span> is already logged in <span className="font-black">{category}</span> this month. Add it again?
+                </p>
+              </div>
+            )}
+
             {/* Actions */}
             <div className="flex gap-3 pt-2" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
               <button
                 type="button"
-                onClick={onClose}
+                onClick={dupWarning ? () => setDupWarning(false) : onClose}
                 className="flex-1 py-3 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
               >
-                Cancel
+                {dupWarning ? 'Go Back' : 'Cancel'}
               </button>
               <button
-                type="submit"
+                type={dupWarning ? 'button' : 'submit'}
+                onClick={dupWarning ? doSave : undefined}
                 disabled={saving}
-                className="flex-1 py-3 rounded-2xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-200 dark:shadow-indigo-900/30 transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className={`flex-1 py-3 rounded-2xl text-sm font-bold text-white shadow-lg transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${
+                  dupWarning
+                    ? 'bg-amber-500 hover:bg-amber-600 shadow-amber-200 dark:shadow-amber-900/30'
+                    : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-200 dark:shadow-indigo-900/30'
+                }`}
               >
                 {saving ? (
                   <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
@@ -286,7 +397,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                 ) : (
                   <Plus className="w-4 h-4" />
                 )}
-                {saving ? 'Saving…' : 'Add Expense'}
+                {saving ? 'Saving…' : dupWarning ? 'Add Anyway' : 'Add Expense'}
               </button>
             </div>
           </form>

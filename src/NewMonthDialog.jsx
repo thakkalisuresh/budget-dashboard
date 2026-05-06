@@ -3,8 +3,8 @@ import { X, Plus, ChevronRight, ChevronLeft, ChevronDown, ChevronUp } from 'luci
 import {
   fetchTotalsForEdit, writeSalary, writeBudgetAmounts,
   addCategoryToTotals, createCategoryDetailSheet, linkCategoryToDetailSheet,
-  addOrUpdateExpense,
 } from './sheetsApi.js';
+import { addOrUpdateExpense } from './useExpense.js';
 
 const TEMPLATE_ID = import.meta.env.VITE_TEMPLATE_SHEET_ID;
 
