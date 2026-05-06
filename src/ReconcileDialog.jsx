@@ -1,6 +1,8 @@
 import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { X, Upload, FileText, AlertCircle, CheckCircle2, ShieldCheck, ChevronDown, ChevronUp, RefreshCw, Check, SkipForward, HelpCircle } from 'lucide-react';
 import { parseStatementFile } from './csvParsers.js';
+import { parsePdfStatement } from './pdfParsers.js';
+import { parsePdfWithClaude } from './claudePdfParser.js';
 import { runDeduplication } from './reconcileDedup.js';
 import { getAllCategoryNames, fetchDetailRows, updateVendorAmounts, fuzzyNamesMatch } from './sheetsApi.js';
 import { addOrUpdateExpense } from './useExpense.js';
@@ -48,6 +50,8 @@ function FileRow({ file, result, onRemove }) {
               <span className="text-[10px] text-slate-400">{result.transactions.length} transactions</span>
               {counts.credit > 0   && <span className="text-[10px] text-amber-500">{counts.credit} credit{counts.credit > 1 ? 's' : ''}</span>}
               {counts.transfer > 0 && <span className="text-[10px] text-violet-500">{counts.transfer} transfer{counts.transfer > 1 ? 's' : ''}</span>}
+              {result.via === 'claude' && <span className="text-[10px] font-bold text-violet-500 bg-violet-50 dark:bg-violet-900/30 px-1.5 py-0.5 rounded-full">✦ Claude AI</span>}
+              {result.via === 'pdfjs'  && <span className="text-[10px] text-slate-400">PDF</span>}
             </div>
           )}
           {result?.error && (
@@ -437,8 +441,27 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
     setParsing(true);
     const parsed = await Promise.all(
       Array.from(newFiles).map(async file => {
-        const text = await file.text();
-        const result = parseStatementFile(text, file.name);
+        const isPdf = file.name.toLowerCase().endsWith('.pdf');
+        let result;
+
+        if (isPdf) {
+          // Stage 1 — PDF.js text extraction + bank-specific parsers
+          const pdfResult = await parsePdfStatement(file);
+
+          if (pdfResult.transactions.length > 0) {
+            result = pdfResult;
+          } else {
+            // Stage 2 — Claude API fallback (scanned or unparseable PDF)
+            result = await parsePdfWithClaude(file, pdfResult.lines || []);
+            if (!result.error) result.via = 'claude';
+          }
+
+          if (!result.error && pdfResult.transactions.length > 0) result.via = 'pdfjs';
+        } else {
+          const text = await file.text();
+          result = parseStatementFile(text, file.name);
+        }
+
         return { file, result };
       })
     );
@@ -459,10 +482,11 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
   const handleDrop = (e) => {
     e.preventDefault();
     setDragging(false);
-    const csvFiles = Array.from(e.dataTransfer.files).filter(f =>
-      f.name.toLowerCase().endsWith('.csv') || f.type === 'text/csv'
+    const supported = Array.from(e.dataTransfer.files).filter(f =>
+      f.name.toLowerCase().endsWith('.csv') || f.type === 'text/csv' ||
+      f.name.toLowerCase().endsWith('.pdf') || f.type === 'application/pdf'
     );
-    if (csvFiles.length) processFiles(csvFiles);
+    if (supported.length) processFiles(supported);
   };
 
   const removeFile = (fileName) =>
@@ -774,12 +798,12 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
                       : 'border-slate-200 dark:border-slate-600 hover:border-indigo-300 dark:hover:border-indigo-600 hover:bg-slate-50 dark:hover:bg-slate-700/30'
                   }`}
                 >
-                  <input ref={fileInputRef} type="file" accept=".csv,text/csv" multiple onChange={handleFileInput} className="sr-only" />
+                  <input ref={fileInputRef} type="file" accept=".csv,text/csv,.pdf,application/pdf" multiple onChange={handleFileInput} className="sr-only" />
                   <Upload className={`w-8 h-8 mx-auto mb-3 transition-colors ${dragging ? 'text-indigo-500' : 'text-slate-300 dark:text-slate-600'}`} />
                   <p className="text-sm font-bold text-slate-600 dark:text-slate-300">
-                    Drop CSV files here, or <span className="text-indigo-500">browse</span>
+                    Drop CSV or PDF files here, or <span className="text-indigo-500">browse</span>
                   </p>
-                  <p className="text-xs text-slate-400 mt-1.5">Chase, Amex, or any bank CSV · Multiple files supported</p>
+                  <p className="text-xs text-slate-400 mt-1.5">Chase · Amex · Any bank CSV or PDF · Multiple files supported</p>
                   {parsing && (
                     <div className="absolute inset-0 bg-white/70 dark:bg-slate-800/70 rounded-2xl flex items-center justify-center">
                       <p className="text-sm font-bold text-indigo-500 animate-pulse">Parsing…</p>
