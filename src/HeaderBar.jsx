@@ -76,14 +76,34 @@ export function HeaderBar({
             )}
           </button>
           {showMessages && (
-            <MessagesPanel
-              messages={messages}
-              unreadCount={unreadCount}
-              onMarkAllRead={markAllRead}
-              onDismiss={dismissMessage}
-              onClearAll={clearMessages}
-              onClose={() => { setShowMessages(false); markAllRead(); }}
-            />
+            <>
+              {/* Backdrop — closes panel on outside click */}
+              <div className="fixed inset-0 z-40" onClick={() => { setShowMessages(false); markAllRead(); }} />
+
+              {/* Desktop: dropdown anchored below bell button */}
+              <div className="hidden sm:block absolute right-0 top-full mt-2 w-96 z-50">
+                <MessagesPanel
+                  messages={messages}
+                  unreadCount={unreadCount}
+                  onMarkAllRead={markAllRead}
+                  onDismiss={dismissMessage}
+                  onClearAll={clearMessages}
+                  onClose={() => { setShowMessages(false); markAllRead(); }}
+                />
+              </div>
+
+              {/* Mobile: fixed bottom sheet */}
+              <div className="sm:hidden fixed bottom-0 left-0 right-0 z-50">
+                <MessagesPanel
+                  messages={messages}
+                  unreadCount={unreadCount}
+                  onMarkAllRead={markAllRead}
+                  onDismiss={dismissMessage}
+                  onClearAll={clearMessages}
+                  onClose={() => { setShowMessages(false); markAllRead(); }}
+                />
+              </div>
+            </>
           )}
         </div>
 

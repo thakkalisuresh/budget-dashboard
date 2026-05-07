@@ -31,17 +31,10 @@ function formatTimestamp(iso) {
 
 export function MessagesPanel({ messages, unreadCount, onMarkAllRead, onDismiss, onClearAll, onClose }) {
   return (
-    <>
-      <div className="fixed inset-0 z-40" onClick={onClose} />
-
-      {/* Desktop: dropdown anchored to bell button
-          Mobile: bottom sheet fixed to screen bottom */}
-      <div className="
-        sm:absolute sm:right-0 sm:top-full sm:mt-2 sm:w-96 sm:rounded-2xl sm:max-h-[70vh] sm:bottom-auto sm:left-auto
-        fixed bottom-0 left-0 right-0 rounded-t-[2rem] max-h-[80vh]
-        bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xl overflow-hidden z-50 flex flex-col"
-        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
-      >
+    <div
+      className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xl overflow-hidden flex flex-col rounded-t-[2rem] sm:rounded-2xl max-h-[80vh] sm:max-h-[70vh]"
+      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+    >
         {/* Mobile drag handle */}
         <div className="w-10 h-1 bg-slate-200 dark:bg-slate-600 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" />
 
@@ -117,7 +110,6 @@ export function MessagesPanel({ messages, unreadCount, onMarkAllRead, onDismiss,
             </div>
           )}
         </div>
-      </div>
-    </>
+    </div>
   );
 }
