@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Local secrets — use .env.local for dev credentials, never commit .env
+.env
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

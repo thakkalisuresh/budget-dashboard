@@ -1,27 +1,20 @@
 import { useState, useEffect } from 'react';
 
-const ALLOWED_EMAILS = [
-  'nair.sabarish97@gmail.com',
-  'anupamaramesh26@gmail.com',
-  'anupamaramesh2697@gmail.com',
-];
+const STORAGE_KEY    = 'budget_auth';
+const AUTH_CACHE_KEY = 'budget_auth_cache';
 
-const NAME_MAP = {
-  'nair.sabarish97@gmail.com':    'Sabarish',
-  'anupamaramesh26@gmail.com':    'Anupama',
-  'anupamaramesh2697@gmail.com':  'Anupama',
-};
-
-const STORAGE_KEY = 'budget_auth';
+// Edge function endpoint — email allowlist lives server-side only
+const VERIFY_URL = import.meta.env.DEV
+  ? 'http://localhost:8888/api/verify-user'  // netlify dev port
+  : '/api/verify-user';
 
 function loadStored() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    // Invalidate if token has expired
     if (parsed.expiresAt && Date.now() > parsed.expiresAt) {
-      localStorage.removeItem(STORAGE_KEY);
+      sessionStorage.removeItem(STORAGE_KEY);
       return null;
     }
     return parsed;
@@ -30,41 +23,75 @@ function loadStored() {
   }
 }
 
-export function useAuth() {
-  const [user, setUser]           = useState(() => loadStored());
-  const [denied, setDenied]       = useState(false);
-  const [loadingAuth, setLoading] = useState(false);
+function loadOfflineCache() {
+  try {
+    const raw = localStorage.getItem(AUTH_CACHE_KEY);
+    if (!raw) return null;
+    return { ...JSON.parse(raw), isOfflineSession: true };
+  } catch {
+    return null;
+  }
+}
 
-  // Handle the token response from @react-oauth/google
+export function useAuth() {
+  const [user, setUser]         = useState(() => {
+    const stored = loadStored();
+    if (stored) return stored;
+    if (!navigator.onLine) return loadOfflineCache();
+    return null;
+  });
+  const [denied, setDenied]     = useState(false);
+  const [loadingAuth, setLoading] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
+
   const onGoogleSuccess = async (tokenResponse) => {
     setLoading(true);
     setDenied(false);
     try {
-      // Fetch the user's profile with the access token
-      const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-        headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
-      });
-      const profile = await res.json();
-      const email = profile.email?.toLowerCase();
+      let email, name, picture;
 
-      if (!ALLOWED_EMAILS.includes(email)) {
-        setDenied(true);
-        setLoading(false);
-        return;
+      if (import.meta.env.DEV) {
+        // Dev mode: verify with Google directly — edge function not available without netlify dev
+        const profileRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+        });
+        const profile = await profileRes.json();
+        email   = profile.email?.toLowerCase();
+        name    = profile.given_name || 'User';
+        picture = profile.picture;
+
+        // Check against VITE_ALLOWED_EMAILS in .env (dev only — never in production bundle)
+        const devAllowed = new Set(
+          (import.meta.env.VITE_ALLOWED_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
+        );
+        if (!devAllowed.has(email)) { setDenied(true); setLoading(false); return; }
+      } else {
+        // Production: verify server-side via edge function — emails never in client bundle
+        const res  = await fetch(VERIFY_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accessToken: tokenResponse.access_token }),
+        });
+        const data = await res.json();
+        if (!data.allowed) { setDenied(true); setLoading(false); return; }
+        email   = data.email;
+        name    = data.name || 'User';
+        picture = data.picture;
       }
 
       const auth = {
-        email,
-        name:        NAME_MAP[email] || profile.given_name || 'User',
-        picture:     profile.picture,
+        email, name, picture,
         accessToken: tokenResponse.access_token,
         expiresAt:   Date.now() + (tokenResponse.expires_in ?? 3600) * 1000,
       };
-
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(auth));
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(auth));
+      // Store only non-sensitive profile data in localStorage — no access token
+      const { accessToken: _drop, ...profileOnly } = auth;
+      localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify(profileOnly));
+      setSessionExpired(false);
       setUser(auth);
-    } catch (e) {
-      console.error('Auth error:', e);
+    } catch {
+      setDenied(true);
     } finally {
       setLoading(false);
     }
@@ -72,13 +99,19 @@ export function useAuth() {
 
   const onGoogleError = () => {
     setLoading(false);
-    console.error('Google sign-in failed');
+    setDenied(true);
   };
 
   const signOut = () => {
-    localStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem(STORAGE_KEY);
+    // Clear all app localStorage on sign-out (security hygiene)
+    ['budget_custom_categories', 'budget_category_icons', 'budget_vendor_domains',
+     'theme', AUTH_CACHE_KEY,
+     'budget_pin_hash', 'budget_pin_salt', 'budget_biometric_id',
+    ].forEach(k => localStorage.removeItem(k));
     setUser(null);
     setDenied(false);
+    setSessionExpired(false);
   };
 
   // Auto-clear expired sessions
@@ -90,7 +123,7 @@ export function useAuth() {
     return () => clearTimeout(t);
   }, [user?.expiresAt]);
 
-  // Silent token refresh — fires 5 min before expiry, no UI shown
+  // Silent token refresh — fires 5 min before expiry
   useEffect(() => {
     if (!user?.expiresAt) return;
     const refreshIn = user.expiresAt - Date.now() - 5 * 60 * 1000;
@@ -105,21 +138,21 @@ export function useAuth() {
             'https://www.googleapis.com/auth/spreadsheets',
             'https://www.googleapis.com/auth/drive',
           ].join(' '),
-          prompt: '',  // silent — no popup if already authorised
+          prompt: '',
           callback: (tokenResponse) => {
             if (tokenResponse?.access_token) {
               onGoogleSuccess(tokenResponse);
+            } else {
+              setSessionExpired(true);
             }
           },
         });
         client?.requestAccessToken({ prompt: '' });
-      } catch (e) {
-        console.warn('Silent token refresh failed:', e);
-      }
+      } catch { /* silent refresh failed — user will re-auth on expiry */ }
     }, refreshIn);
 
     return () => clearTimeout(t);
   }, [user?.expiresAt]);
 
-  return { user, denied, loadingAuth, onGoogleSuccess, onGoogleError, signOut };
+  return { user, denied, loadingAuth, onGoogleSuccess, onGoogleError, signOut, sessionExpired, setSessionExpired };
 }

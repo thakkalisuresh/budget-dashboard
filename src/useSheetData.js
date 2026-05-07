@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 
-const API_KEY = import.meta.env.VITE_SHEETS_API_KEY;
 const RANGE = 'Totals!A1:J30';
 const POLL_MS = 60000; // 60s — reduces quota pressure
 
@@ -30,10 +29,8 @@ export function useSheetData(sheetId, accessToken) {
   const fetchData = useCallback(async () => {
     if (!sheetId) return;
     try {
-      const url = accessToken
-        ? `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${RANGE}`
-        : `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${RANGE}?key=${API_KEY}`;
-      const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${RANGE}`;
+      const headers = { Authorization: `Bearer ${accessToken}` };
       const res = await fetch(url, { headers });
       if (!res.ok) {
         const err = await res.json();

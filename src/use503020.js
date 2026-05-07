@@ -1,7 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 
-const API_KEY = import.meta.env.VITE_SHEETS_API_KEY;
-
 function parseCell(cell) {
   if (cell === undefined || cell === '') return null;
   const cleaned = String(cell).replace(/[$,%]/g, '');
@@ -17,10 +15,8 @@ export function use503020(sheetId, accessToken) {
     if (!sheetId) return;
     try {
       const range = encodeURIComponent("'50/30/20'!A1:K20");
-      const url = accessToken
-        ? `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}`
-        : `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}?key=${API_KEY}`;
-      const headers = accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${range}`;
+      const headers = { Authorization: `Bearer ${accessToken}` };
       const res = await fetch(url, { headers });
       const json = await res.json();
       const rows = (json.values || []).map(row =>
@@ -54,7 +50,7 @@ export function use503020(sheetId, accessToken) {
 
   useEffect(() => {
     fetchData();
-    const id = setInterval(fetchData, 30000);
+    const id = setInterval(fetchData, 60000); // 60s — reduces quota pressure
     return () => clearInterval(id);
   }, [fetchData]);
 

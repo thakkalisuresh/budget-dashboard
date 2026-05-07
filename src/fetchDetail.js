@@ -1,25 +1,24 @@
 import { getCustomCategories } from './customCategories.js';
 
 const SHEET_ID = import.meta.env.VITE_SHEET_ID;
-const API_KEY = import.meta.env.VITE_SHEETS_API_KEY;
 
 export const BUILT_IN_SHEET_MAP = {
-  'Grocery':       { sheet: 'Grocery',                    descCol: 2, amtCol: 3 },
-  'Misc':          { sheet: 'Misc',                       descCol: 2, amtCol: 3 },
-  'Eating Out':    { sheet: 'Eating Out',                  descCol: 2, amtCol: 3 },
-  'Travel':        { sheet: 'Travel',                     descCol: 2, amtCol: 3 },
-  'Entertainment': { sheet: 'Entertainment',              descCol: 2, amtCol: 3 },
-  'Thakkali':      { sheet: 'Thakkali',                   descCol: 2, amtCol: 3 },
-  'Investment':    { sheet: 'Investment',                 descCol: 2, amtCol: 3 },
-  'Car Payments':  { sheet: 'Car Payments',               descCol: 2, amtCol: 3 },
-  'Utilities':     { sheet: 'Utilities',                  descCol: 2, amtCol: 3 },
-  'Utilties':      { sheet: 'Utilities',                  descCol: 2, amtCol: 3 },
-  'Rent':          { sheet: 'Rent',                       descCol: 2, amtCol: 3 },
-  'Health':        { sheet: 'Health',                     descCol: 2, amtCol: 3 },
-  'Moving Exp':    { sheet: 'Moving Expenses+Furniture',  descCol: 2, amtCol: 3 },
-  'Furniture':     { sheet: 'Moving Expenses+Furniture',  descCol: 10, amtCol: 11 },
-  'Holiday':       { sheet: 'Holiday',                    descCol: 2, amtCol: 3 },
-  'Wi-Fi':         { sheet: 'Wi-Fi',                      descCol: 2, amtCol: 3 },
+  'Grocery':       { sheet: 'Grocery',                    descCol: 2, amtCol: 3,  uuidStartCol: 4  },
+  'Misc':          { sheet: 'Misc',                       descCol: 2, amtCol: 3,  uuidStartCol: 4  },
+  'Eating Out':    { sheet: 'Eating Out',                 descCol: 2, amtCol: 3,  uuidStartCol: 4  },
+  'Travel':        { sheet: 'Travel',                     descCol: 2, amtCol: 3,  uuidStartCol: 4  },
+  'Entertainment': { sheet: 'Entertainment',              descCol: 2, amtCol: 3,  uuidStartCol: 4  },
+  'Thakkali':      { sheet: 'Thakkali',                   descCol: 2, amtCol: 3,  uuidStartCol: 4  },
+  'Investment':    { sheet: 'Investment',                 descCol: 2, amtCol: 3,  uuidStartCol: 4  },
+  'Car Payments':  { sheet: 'Car Payments',               descCol: 2, amtCol: 3,  uuidStartCol: 4  },
+  'Utilities':     { sheet: 'Utilities',                  descCol: 2, amtCol: 3,  uuidStartCol: 4  },
+  'Utilties':      { sheet: 'Utilities',                  descCol: 2, amtCol: 3,  uuidStartCol: 4  },
+  'Rent':          { sheet: 'Rent',                       descCol: 2, amtCol: 3,  uuidStartCol: 4  },
+  'Health':        { sheet: 'Health',                     descCol: 2, amtCol: 3,  uuidStartCol: 4  },
+  'Moving Exp':    { sheet: 'Moving Expenses+Furniture',  descCol: 2, amtCol: 3,  uuidStartCol: 4  },
+  'Furniture':     { sheet: 'Moving Expenses+Furniture',  descCol: 10, amtCol: 11, uuidStartCol: 12 },
+  'Holiday':       { sheet: 'Holiday',                    descCol: 2, amtCol: 3,  uuidStartCol: 4  },
+  'Wi-Fi':         { sheet: 'Wi-Fi',                      descCol: 2, amtCol: 3,  uuidStartCol: 4  },
 };
 
 function getEffectiveSheetMap() {
@@ -33,7 +32,7 @@ export async function fetchDetail(name, overrideSheetId) {
   if (!config) return [];
 
   const id  = overrideSheetId || SHEET_ID;
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(config.sheet)}?key=${API_KEY}`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(config.sheet)}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const { values = [] } = await res.json();
