@@ -6,7 +6,7 @@ const getPdfParsers = () => Promise.all([
   import('./pdfParsers.js'),
   import('./claudePdfParser.js'),
 ]);
-import { runDeduplication } from './reconcileDedup.js';
+import { runDeduplication, reconcileFingerprint } from './reconcileDedup.js';
 import { getAllCategoryNames, fetchDetailRows, updateVendorAmounts, fuzzyNamesMatch } from './sheetsApi.js';
 import { addOrUpdateExpense } from './useExpense.js';
 
@@ -31,13 +31,25 @@ function formatDate(iso) {
 
 // ── File row in upload list ───────────────────────────────────────────────────
 
-function FileRow({ file, result, onRemove }) {
-  const [expanded, setExpanded] = useState(false);
-  const counts = result ? {
+function FileRow({ file, result, onRemove, onRetryWithPassword }) {
+  const [expanded, setExpanded]     = useState(false);
+  const [pwInput, setPwInput]       = useState('');
+  const [pwRetrying, setPwRetrying] = useState(false);
+
+  const needsPassword = result?.needsPassword;
+  const counts = result && !needsPassword ? {
     purchase: result.transactions.filter(t => t.type === 'purchase').length,
     credit:   result.transactions.filter(t => t.type === 'credit').length,
     transfer: result.transactions.filter(t => t.type === 'transfer').length,
   } : null;
+
+  const handlePasswordRetry = async () => {
+    if (!pwInput.trim()) return;
+    setPwRetrying(true);
+    await onRetryWithPassword(file, pwInput.trim());
+    setPwRetrying(false);
+    setPwInput('');
+  };
 
   return (
     <div className="bg-slate-50 dark:bg-slate-700/50 rounded-2xl overflow-hidden">
@@ -45,7 +57,7 @@ function FileRow({ file, result, onRemove }) {
         <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold text-slate-700 dark:text-slate-200 truncate">{file.name}</p>
-          {result && !result.error && (
+          {result && !result.error && !needsPassword && (
             <div className="flex items-center gap-2 mt-1 flex-wrap">
               <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${BANK_COLORS[result.bank] || BANK_COLORS.generic}`}>
                 {BANK_LABELS[result.bank] || 'Generic'}
@@ -62,9 +74,14 @@ function FileRow({ file, result, onRemove }) {
               <AlertCircle className="w-3 h-3" /> {result.error}
             </p>
           )}
+          {needsPassword && (
+            <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5 font-medium">
+              {result.wrongPassword ? 'Wrong password — try again' : 'Password protected'}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
-          {result && !result.error && (
+          {result && !result.error && !needsPassword && (
             <button onClick={() => setExpanded(v => !v)}
               className="p-1.5 rounded-xl text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">
               {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
@@ -76,6 +93,29 @@ function FileRow({ file, result, onRemove }) {
           </button>
         </div>
       </div>
+
+      {/* Password input — shown when PDF needs a password */}
+      {needsPassword && (
+        <div className="border-t border-slate-200 dark:border-slate-600 px-4 pb-3 pt-2 flex gap-2">
+          <input
+            type="password"
+            placeholder="Enter PDF password…"
+            value={pwInput}
+            onChange={e => setPwInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handlePasswordRetry()}
+            autoFocus
+            className="flex-1 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-xl px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-indigo-500/30 placeholder:text-slate-400"
+          />
+          <button
+            onClick={handlePasswordRetry}
+            disabled={!pwInput.trim() || pwRetrying}
+            className="px-3 py-1.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors disabled:opacity-40"
+          >
+            {pwRetrying ? '…' : 'Unlock'}
+          </button>
+        </div>
+      )}
+
 
       {/* Expanded transaction preview */}
       {expanded && result && !result.error && (
@@ -409,6 +449,14 @@ function applyCredit(amounts, creditAmount) {
 function initDecisions(annotated) {
   const d = {};
   for (const tx of annotated) {
+    // Net-zero pairs default to skip regardless of underlying status
+    if (tx.netZeroPair) {
+      if (tx.status === 'new')
+        d[tx.id] = { action: 'skip', vendor: tx.vendor, category: tx.suggestedCategory || 'Misc' };
+      else
+        d[tx.id] = { action: 'ignore' };
+      continue;
+    }
     if (tx.status === 'new')
       d[tx.id] = { action: 'import', vendor: tx.vendor, category: tx.suggestedCategory || 'Misc' };
     else if (tx.status === 'credit')
@@ -421,7 +469,7 @@ function initDecisions(annotated) {
   return d;
 }
 
-export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onComplete, smartRules = [] }) {
+export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onComplete, smartRules = [], reconciledFingerprints = [], onAddFingerprints }) {
   const [step, setStep]             = useState('upload'); // 'upload'|'deduping'|'deduped'|'review'|'importing'|'done'
   const [files, setFiles]           = useState([]);
   const [dragging, setDragging]     = useState(false);
@@ -438,47 +486,50 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
   const allTransactions = files.flatMap(f => f.result?.transactions || []);
   const hasAnyError     = files.some(f => f.result?.error);
   const hasFiles        = files.length > 0;
-  const hasResults      = files.some(f => f.result && !f.result.error);
+  const hasResults      = files.some(f => f.result && !f.result.error && !f.result.needsPassword);
+
+  const parseSingleFile = useCallback(async (file, password) => {
+    const isPdf = file.name.toLowerCase().endsWith('.pdf');
+    let result;
+
+    if (isPdf) {
+      const [{ parsePdfStatement }, { parsePdfWithClaude }] = await getPdfParsers();
+      const pdfResult = await parsePdfStatement(file, password);
+
+      // Password required — surface immediately, don't attempt Claude fallback
+      if (pdfResult.needsPassword) return pdfResult;
+
+      if (pdfResult.transactions.length > 0) {
+        result = { ...pdfResult, via: 'pdfjs' };
+      } else {
+        result = await parsePdfWithClaude(file, pdfResult.lines || []);
+        if (!result.error) result.via = 'claude';
+      }
+    } else {
+      const text = await file.text();
+      result = parseStatementFile(text, file.name);
+    }
+
+    return result;
+  }, []);
 
   const processFiles = useCallback(async (newFiles) => {
     setParsing(true);
     const parsed = await Promise.all(
-      Array.from(newFiles).map(async file => {
-        const isPdf = file.name.toLowerCase().endsWith('.pdf');
-        let result;
-
-        if (isPdf) {
-          // Dynamically load PDF parsers only when needed
-          const [{ parsePdfStatement }, { parsePdfWithClaude }] = await getPdfParsers();
-
-          // Stage 1 — PDF.js text extraction + bank-specific parsers
-          const pdfResult = await parsePdfStatement(file);
-
-          if (pdfResult.transactions.length > 0) {
-            result = pdfResult;
-          } else {
-            // Stage 2 — Claude API fallback (scanned or unparseable PDF)
-            result = await parsePdfWithClaude(file, pdfResult.lines || []);
-            if (!result.error) result.via = 'claude';
-          }
-
-          if (!result.error && pdfResult.transactions.length > 0) result.via = 'pdfjs';
-        } else {
-          const text = await file.text();
-          result = parseStatementFile(text, file.name);
-        }
-
-        return { file, result };
-      })
+      Array.from(newFiles).map(async file => ({ file, result: await parseSingleFile(file) }))
     );
     setFiles(prev => {
-      // Deduplicate by filename
       const existing = new Set(prev.map(f => f.file.name));
       const fresh = parsed.filter(p => !existing.has(p.file.name));
       return [...prev, ...fresh];
     });
     setParsing(false);
-  }, []);
+  }, [parseSingleFile]);
+
+  const handleRetryWithPassword = useCallback(async (file, password) => {
+    const result = await parseSingleFile(file, password);
+    setFiles(prev => prev.map(f => f.file.name === file.name ? { ...f, result } : f));
+  }, [parseSingleFile]);
 
   const handleFileInput = (e) => {
     if (e.target.files?.length) processFiles(e.target.files);
@@ -502,7 +553,7 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
     setStep('deduping');
     setDedupError('');
     try {
-      const result = await runDeduplication(allTransactions, sheetId, accessToken, monthName, smartRules);
+      const result = await runDeduplication(allTransactions, sheetId, accessToken, monthName, smartRules, reconciledFingerprints);
       setAnnotated(result);
       setStep('deduped');
     } catch (e) {
@@ -567,6 +618,15 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
       setImportProgress(prev => ({ ...prev, current: prev.current + 1 }));
     }
 
+    // Persist fingerprints for all successfully imported transactions
+    const newFingerprints = annotated
+      .filter(tx => {
+        const d = decisions[tx.id];
+        return d?.action === 'import' || d?.action === 'apply';
+      })
+      .map(tx => reconcileFingerprint(tx.vendor, tx.amount));
+    if (newFingerprints.length > 0) onAddFingerprints?.(newFingerprints);
+
     setImportSummary({ imported, creditsApplied, skipped, failed });
     setStep('done');
   };
@@ -584,10 +644,11 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
   );
 
   // Review step groups
-  const newTxs        = annotated.filter(t => t.status === 'new');
-  const creditTxs     = annotated.filter(t => t.status === 'credit');
-  const transferTxs   = annotated.filter(t => t.status === 'transfer');
-  const crossTxs      = annotated.filter(t => t.status === 'cross_month');
+  const netZeroPairs  = annotated.filter(t => t.netZeroPair);
+  const newTxs        = annotated.filter(t => t.status === 'new'          && !t.netZeroPair);
+  const creditTxs     = annotated.filter(t => t.status === 'credit'       && !t.netZeroPair);
+  const transferTxs   = annotated.filter(t => t.status === 'transfer'     && !t.netZeroPair);
+  const crossTxs      = annotated.filter(t => t.status === 'cross_month'  && !t.netZeroPair);
   const loggedTxs     = annotated.filter(t => t.status === 'already_logged');
 
   const importCount = Object.values(decisions).filter(d =>
@@ -721,6 +782,48 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
                   )}
                 </div>
 
+                {/* Net-zero pairs */}
+                {netZeroPairs.length > 0 && (
+                  <ReviewSection title="Net-zero pairs" count={netZeroPairs.length} dot="bg-slate-400" defaultOpen
+                    onSelectAll={() => {
+                      setDecisions(prev => {
+                        const next = { ...prev };
+                        netZeroPairs.forEach(tx => {
+                          next[tx.id] = tx.status === 'new'
+                            ? { ...next[tx.id], action: 'import' }
+                            : { ...next[tx.id], action: tx.matchedVendor ? 'apply' : 'ignore' };
+                        });
+                        return next;
+                      });
+                    }}
+                    onSkipAll={() => {
+                      setDecisions(prev => {
+                        const next = { ...prev };
+                        netZeroPairs.forEach(tx => {
+                          next[tx.id] = tx.status === 'new'
+                            ? { ...next[tx.id], action: 'skip' }
+                            : { ...next[tx.id], action: 'ignore' };
+                        });
+                        return next;
+                      });
+                    }}
+                  >
+                    <div className="px-4 py-2.5 bg-slate-50 dark:bg-slate-700/30">
+                      <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                        These purchase/refund pairs net to <span className="font-black text-slate-700 dark:text-slate-200">$0</span> with no match in your dashboard. Defaulted to skip — import both if this was a real exchange.
+                      </p>
+                    </div>
+                    {netZeroPairs.filter(t => t.status === 'new').map(tx => (
+                      <NewRow key={tx.id} tx={tx} decision={decisions[tx.id]}
+                        onChange={p => updateDecision(tx.id, p)} categories={categories} />
+                    ))}
+                    {netZeroPairs.filter(t => t.status === 'credit').map(tx => (
+                      <CreditRow key={tx.id} tx={tx} decision={decisions[tx.id]}
+                        onChange={p => updateDecision(tx.id, p)} />
+                    ))}
+                  </ReviewSection>
+                )}
+
                 {/* New transactions */}
                 <ReviewSection
                   title="New transactions" count={newTxs.length} dot="bg-emerald-500" defaultOpen
@@ -826,6 +929,7 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
                         file={file}
                         result={result}
                         onRemove={() => removeFile(file.name)}
+                        onRetryWithPassword={handleRetryWithPassword}
                       />
                     ))}
                   </div>

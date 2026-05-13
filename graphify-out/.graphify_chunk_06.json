@@ -1,0 +1,158 @@
+{
+  "nodes": [
+    {
+      "id": "icon_appicon",
+      "label": "App Icon (SVG)",
+      "file_type": "image",
+      "source_file": "public/icons/icon.svg",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "icon_walletshape",
+      "label": "Wallet Shape",
+      "file_type": "image",
+      "source_file": "public/icons/icon.svg",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "icon_indigobackground",
+      "label": "Indigo Rounded Background",
+      "file_type": "image",
+      "source_file": "public/icons/icon.svg",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "icon_coinslot",
+      "label": "Coin Slot Element",
+      "file_type": "image",
+      "source_file": "public/icons/icon.svg",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "icon_moneylines",
+      "label": "Money / Card Lines",
+      "file_type": "image",
+      "source_file": "public/icons/icon.svg",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "concept_financeapp",
+      "label": "Finance / Budget Application",
+      "file_type": "image",
+      "source_file": "public/icons/icon.svg",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "color_indigo4f46e5",
+      "label": "Indigo Brand Color #4f46e5",
+      "file_type": "image",
+      "source_file": "public/icons/icon.svg",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "from": "icon_appicon",
+      "to": "icon_indigobackground",
+      "relationship": "HAS_ELEMENT",
+      "type": "EXTRACTED",
+      "confidence_score": 1.0,
+      "note": "SVG root contains a rect element (512x512, rx=112) filled with #4f46e5 as the background"
+    },
+    {
+      "from": "icon_appicon",
+      "to": "icon_walletshape",
+      "relationship": "HAS_ELEMENT",
+      "type": "EXTRACTED",
+      "confidence_score": 1.0,
+      "note": "SVG contains wallet body rect and wallet flap rect explicitly commented as such"
+    },
+    {
+      "from": "icon_appicon",
+      "to": "icon_coinslot",
+      "relationship": "HAS_ELEMENT",
+      "type": "EXTRACTED",
+      "confidence_score": 1.0,
+      "note": "SVG contains a rounded rect and circle explicitly commented as 'coin slot'"
+    },
+    {
+      "from": "icon_appicon",
+      "to": "icon_moneylines",
+      "relationship": "HAS_ELEMENT",
+      "type": "EXTRACTED",
+      "confidence_score": 1.0,
+      "note": "SVG contains two pill-shaped rects explicitly commented as 'lines suggesting money'"
+    },
+    {
+      "from": "icon_indigobackground",
+      "to": "color_indigo4f46e5",
+      "relationship": "USES_COLOR",
+      "type": "EXTRACTED",
+      "confidence_score": 1.0,
+      "note": "Background fill is #4f46e5 (Tailwind indigo-600)"
+    },
+    {
+      "from": "icon_walletshape",
+      "to": "color_indigo4f46e5",
+      "relationship": "USES_COLOR",
+      "type": "EXTRACTED",
+      "confidence_score": 1.0,
+      "note": "Wallet body is white; coin slot and money lines use #4f46e5 with opacity overlays"
+    },
+    {
+      "from": "icon_appicon",
+      "to": "concept_financeapp",
+      "relationship": "REPRESENTS",
+      "type": "INFERRED",
+      "confidence_score": 0.95,
+      "note": "Wallet icon with coin slot and money lines strongly implies a personal finance or budgeting application"
+    },
+    {
+      "from": "icon_appicon",
+      "to": "color_indigo4f46e5",
+      "relationship": "HAS_BRAND_COLOR",
+      "type": "INFERRED",
+      "confidence_score": 0.95,
+      "note": "Indigo #4f46e5 is used for background and accent elements, indicating it is the primary brand color"
+    },
+    {
+      "from": "concept_financeapp",
+      "to": "icon_walletshape",
+      "relationship": "SYMBOLIZED_BY",
+      "type": "INFERRED",
+      "confidence_score": 0.95,
+      "note": "Wallet is a standard symbol for personal finance and money management applications"
+    }
+  ],
+  "hyperedges": [],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

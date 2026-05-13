@@ -169,7 +169,7 @@ export function HeaderBar({
                 Sign out
               </button>
               <div className="px-4 py-2 text-[10px] text-slate-400 font-mono border-t border-slate-100 dark:border-slate-700">
-                v{__APP_VERSION__} · {new Date(__BUILD_TIME__).toLocaleDateString()}
+                v{__APP_VERSION__} · {__COMMIT_SHA__} · {new Date(__BUILD_TIME__).toLocaleDateString()}
               </div>
             </div>
           )}

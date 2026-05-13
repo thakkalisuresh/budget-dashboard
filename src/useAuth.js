@@ -79,8 +79,12 @@ export function useAuth() {
         picture = data.picture;
       }
 
+      const role = import.meta.env.DEV
+        ? ((import.meta.env.VITE_VIEWER_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).includes(email) ? 'viewer' : 'owner')
+        : (data?.role ?? 'owner');
+
       const auth = {
-        email, name, picture,
+        email, name, picture, role,
         accessToken: tokenResponse.access_token,
         expiresAt:   Date.now() + (tokenResponse.expires_in ?? 3600) * 1000,
       };

@@ -40,6 +40,19 @@ export const DEFAULT_SETTINGS = {
   categoryIcons:     {},  // { categoryName: emoji }
   customCategories:  [],  // [categoryName, ...]
   recurringExpenses: [],  // [{ category, vendor, amount }]
+  nonMonthlyItems:   {},  // { 'April 2026': ['Vendor1', 'Vendor2', ...] }
+  transactionNotes:  {},  // { 'sheetId_category_vendor': { note: '', tags: [] } }
+  smartRules:              [],  // [{ id, pattern, category }]
+  messages:                [],  // [{ id, type, title, body, timestamp, read }]
+  pushHour:                20,  // preferred local hour for daily push (18-22)
+  reconciledFingerprints:  [],  // ["vendor_amount", ...] — tracks imported reconciliation tx
+  hasSeenOnboarding:       false,
+  keyboardShortcuts: {
+    addExpense:   'alt+n',
+    scanReceipt:  'alt+r',
+    openSettings: 'alt+,',
+    openChat:     'alt+.',
+  },
 };
 
 // ─── Sheets helpers ───────────────────────────────────────────────────────────
@@ -121,12 +134,32 @@ export async function loadUserSettings(userId, accessToken) {
       categoryIcons:     { ...(parsed.categoryIcons || {}) },
       customCategories:  parsed.customCategories || [],
       recurringExpenses: parsed.recurringExpenses || [],
+      nonMonthlyItems:   parsed.nonMonthlyItems   || {},
+      transactionNotes:  parsed.transactionNotes  || {},
+      smartRules:              parsed.smartRules              || [],
+      messages:                parsed.messages                || [],
+      reconciledFingerprints:  parsed.reconciledFingerprints  || [],
+      hasSeenOnboarding:       parsed.hasSeenOnboarding       ?? false,
+      keyboardShortcuts: (() => {
+        const saved = parsed.keyboardShortcuts || {};
+        // Migrate any ctrl+ defaults to alt+ if the user never customised them
+        const defaults = DEFAULT_SETTINGS.keyboardShortcuts;
+        const OLD_DEFAULTS = { addExpense: 'ctrl+n', scanReceipt: 'ctrl+r', openSettings: 'ctrl+,', openChat: 'ctrl+.' };
+        const migrated = {};
+        for (const [k, newDefault] of Object.entries(defaults)) {
+          const stored = saved[k];
+          migrated[k] = (!stored || stored === OLD_DEFAULTS[k]) ? newDefault : stored;
+        }
+        return migrated;
+      })(),
     };
     // Hydrate localStorage so synchronous callers (fetchDetail, dialogs) stay in sync
     try {
       localStorage.setItem('budget_category_icons', JSON.stringify(merged.categoryIcons));
       const customMap = {};
-      (merged.customCategories || []).forEach(n => { customMap[n] = true; });
+      (merged.customCategories || []).forEach(n => {
+        customMap[n] = { sheet: n, descCol: 2, amtCol: 3, uuidStartCol: 4 };
+      });
       localStorage.setItem('budget_custom_categories', JSON.stringify(customMap));
     } catch {}
     return merged;
@@ -181,7 +214,9 @@ export function useSettings(userId, accessToken) {
       try {
         localStorage.setItem('budget_category_icons', JSON.stringify(next.categoryIcons || {}));
         const customMap = {};
-        (next.customCategories || []).forEach(n => { customMap[n] = true; });
+        (next.customCategories || []).forEach(n => {
+          customMap[n] = { sheet: n, descCol: 2, amtCol: 3, uuidStartCol: 4 };
+        });
         localStorage.setItem('budget_custom_categories', JSON.stringify(customMap));
       } catch {}
       saveUserSettings(userId, next, accessToken); // fire-and-forget

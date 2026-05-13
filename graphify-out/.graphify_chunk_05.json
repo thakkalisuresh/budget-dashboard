@@ -1,0 +1,239 @@
+{
+  "nodes": [
+    {
+      "id": "icon512_app_icon",
+      "label": "App Icon 512px",
+      "file_type": "image",
+      "source_file": "public/icons/icon-512.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "color_indigo_blue",
+      "label": "Indigo Blue Background Color",
+      "hex": "#5C5CE0",
+      "color_family": "indigo",
+      "role": "background"
+    },
+    {
+      "id": "color_white",
+      "label": "White Card Color",
+      "hex": "#FFFFFF",
+      "color_family": "white",
+      "role": "foreground_card"
+    },
+    {
+      "id": "color_light_periwinkle",
+      "label": "Light Periwinkle Accent Color",
+      "hex": "#C5C5F0",
+      "color_family": "periwinkle",
+      "role": "accent_lines"
+    },
+    {
+      "id": "color_dark_indigo",
+      "label": "Dark Indigo Dot Color",
+      "hex": "#3A3AAA",
+      "color_family": "indigo",
+      "role": "stamp_dot"
+    },
+    {
+      "id": "shape_background_square",
+      "label": "Square Indigo Background",
+      "shape_type": "square",
+      "description": "Full 512x512 solid indigo/violet square forming the icon background"
+    },
+    {
+      "id": "shape_white_card",
+      "label": "White Rounded Rectangle Card",
+      "shape_type": "rounded_rectangle",
+      "description": "Central white card occupying roughly 60% of icon area, representing a postcard or dashboard card"
+    },
+    {
+      "id": "shape_stamp_box",
+      "label": "Stamp Placeholder Box",
+      "shape_type": "rectangle",
+      "description": "Light periwinkle square in the upper-right of the card, representing a postage stamp area, containing a dark indigo circle"
+    },
+    {
+      "id": "shape_stamp_dot",
+      "label": "Stamp Center Dot",
+      "shape_type": "circle",
+      "description": "Dark indigo circle centered inside the stamp box, representing a postage stamp motif or logo mark"
+    },
+    {
+      "id": "shape_text_lines",
+      "label": "Abstract Text Lines",
+      "shape_type": "horizontal_bars",
+      "description": "Two horizontal periwinkle bars in the lower-left of the card, representing text or address lines on a postcard"
+    },
+    {
+      "id": "visual_concept_postcard",
+      "label": "Postcard Visual Metaphor",
+      "concept": "postcard",
+      "description": "The overall icon depicts a postcard: white card with stamp in upper-right and address lines in lower-left, on a solid indigo background"
+    },
+    {
+      "id": "design_style_flat",
+      "label": "Flat Design Style",
+      "style": "flat",
+      "description": "Minimalist flat design with no gradients, shadows, or textures; solid colors and simple geometric shapes"
+    },
+    {
+      "id": "pwa_icon_purpose",
+      "label": "PWA App Icon Purpose",
+      "purpose": "progressive_web_app_icon",
+      "size_px": 512,
+      "description": "Standard 512x512 PWA icon used for home screen, splash screen, and app store display"
+    }
+  ],
+  "edges": [
+    {
+      "from": "icon512_app_icon",
+      "to": "color_indigo_blue",
+      "relation": "has_primary_color",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "icon512_app_icon",
+      "to": "color_white",
+      "relation": "has_secondary_color",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "icon512_app_icon",
+      "to": "color_light_periwinkle",
+      "relation": "has_accent_color",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "icon512_app_icon",
+      "to": "color_dark_indigo",
+      "relation": "has_accent_color",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "icon512_app_icon",
+      "to": "shape_background_square",
+      "relation": "contains_shape",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "icon512_app_icon",
+      "to": "shape_white_card",
+      "relation": "contains_shape",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "icon512_app_icon",
+      "to": "shape_stamp_box",
+      "relation": "contains_shape",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "icon512_app_icon",
+      "to": "shape_stamp_dot",
+      "relation": "contains_shape",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "icon512_app_icon",
+      "to": "shape_text_lines",
+      "relation": "contains_shape",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "shape_background_square",
+      "to": "color_indigo_blue",
+      "relation": "filled_with",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "shape_white_card",
+      "to": "color_white",
+      "relation": "filled_with",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "shape_stamp_box",
+      "to": "color_light_periwinkle",
+      "relation": "filled_with",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "shape_stamp_dot",
+      "to": "color_dark_indigo",
+      "relation": "filled_with",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "shape_text_lines",
+      "to": "color_light_periwinkle",
+      "relation": "filled_with",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "shape_stamp_dot",
+      "to": "shape_stamp_box",
+      "relation": "contained_within",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "shape_stamp_box",
+      "to": "shape_white_card",
+      "relation": "positioned_on",
+      "spatial_hint": "upper-right",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "shape_text_lines",
+      "to": "shape_white_card",
+      "relation": "positioned_on",
+      "spatial_hint": "lower-left",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "shape_white_card",
+      "to": "shape_background_square",
+      "relation": "positioned_on",
+      "spatial_hint": "center",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "icon512_app_icon",
+      "to": "visual_concept_postcard",
+      "relation": "depicts",
+      "confidence_score": 0.95
+    },
+    {
+      "from": "icon512_app_icon",
+      "to": "design_style_flat",
+      "relation": "uses_design_style",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "icon512_app_icon",
+      "to": "pwa_icon_purpose",
+      "relation": "serves_purpose",
+      "confidence_score": 1.0
+    },
+    {
+      "from": "visual_concept_postcard",
+      "to": "shape_stamp_box",
+      "relation": "symbolized_by",
+      "confidence_score": 0.95
+    },
+    {
+      "from": "visual_concept_postcard",
+      "to": "shape_text_lines",
+      "relation": "symbolized_by",
+      "description": "Horizontal bars represent address lines on a postcard",
+      "confidence_score": 0.85
+    }
+  ],
+  "hyperedges": [],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

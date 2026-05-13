@@ -11,7 +11,7 @@ export function getCustomCategories() {
 
 export function addCustomCategory(name) {
   const cats = getCustomCategories();
-  cats[name] = { sheet: name, descCol: 2, amtCol: 3 };
+  cats[name] = { sheet: name, descCol: 2, amtCol: 3, uuidStartCol: 4 };
   localStorage.setItem(KEY, JSON.stringify(cats));
 }
 

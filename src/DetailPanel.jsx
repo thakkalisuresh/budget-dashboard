@@ -1,19 +1,159 @@
 import React, { useState } from 'react';
-import { X, Edit2, Check, Trash2, AlertTriangle } from 'lucide-react';
-import { updateVendorName, updateVendorAmounts, removeRandomExpenseNote } from './sheetsApi.js';
+import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Repeat } from 'lucide-react';
+import { updateVendorName, updateVendorAmounts, unmarkNonMonthly, renameNonMonthly, markNonMonthly } from './sheetsApi.js';
+
+// ── Vendor logo helpers ───────────────────────────────────────────────────────
+
+/** Common vendor name → domain mappings */
+const VENDOR_DOMAINS = {
+  'walmart':        'walmart.com',
+  'safeway':        'safeway.com',
+  'whole foods':    'wholefoodsmarket.com',
+  'wfm':            'wholefoodsmarket.com',
+  'costco':         'costco.com',
+  'target':         'target.com',
+  'amazon':         'amazon.com',
+  'amazon prime':   'amazon.com',
+  'netflix':        'netflix.com',
+  'spotify':        'spotify.com',
+  'walgreens':      'walgreens.com',
+  'cvs':            'cvs.com',
+  'trader joe':     'traderjoes.com',
+  'kroger':         'kroger.com',
+  'instacart':      'instacart.com',
+  'doordash':       'doordash.com',
+  'uber':           'uber.com',
+  'lyft':           'lyft.com',
+  'airbnb':         'airbnb.com',
+  'delta':          'delta.com',
+  'southwest':      'southwest.com',
+  'chipotle':       'chipotle.com',
+  'starbucks':      'starbucks.com',
+  'mcdonald':       'mcdonalds.com',
+  'comcast':        'comcast.com',
+  'at&t':           'att.com',
+  'verizon':        'verizon.com',
+  'pg&e':           'pge.com',
+  'robinhood':      'robinhood.com',
+  'apple':          'apple.com',
+  'google':         'google.com',
+  'microsoft':      'microsoft.com',
+  'ikea':           'ikea.com',
+  'wayfair':        'wayfair.com',
+  'mayuri':         'mayurifoods.com',
+  'yellow cab':     'yellowcab.com',
+  'seattle yellow': 'yellowcab.com',
+};
+
+function vendorDomain(name) {
+  if (!name) return null;
+  const lower = name.toLowerCase().trim();
+  for (const [key, domain] of Object.entries(VENDOR_DOMAINS)) {
+    if (lower.includes(key)) return domain;
+  }
+  return null;
+}
+
+const CUSTOM_VENDOR_DOMAINS_KEY = 'budget_vendor_domains';
+
+function getCustomVendorDomains() {
+  try { return JSON.parse(localStorage.getItem(CUSTOM_VENDOR_DOMAINS_KEY) || '{}'); } catch { return {}; }
+}
+
+function setCustomVendorDomain(vendorName, domain) {
+  const map = getCustomVendorDomains();
+  map[vendorName.toLowerCase()] = domain;
+  localStorage.setItem(CUSTOM_VENDOR_DOMAINS_KEY, JSON.stringify(map));
+}
+
+function resolveVendorDomain(name) {
+  if (!name) return null;
+  const lower = name.toLowerCase().trim();
+  // Check custom overrides first
+  const custom = getCustomVendorDomains();
+  if (custom[lower]) return custom[lower];
+  // Fall back to built-in map
+  return vendorDomain(name);
+}
+
+function VendorLogo({ name, size = 22, onEditDomain }) {
+  const [failed, setFailed] = useState(false);
+  const domain = resolveVendorDomain(name);
+  const letter = (name || '?')[0].toUpperCase();
+
+  const avatar = (
+    <div
+      onClick={onEditDomain}
+      className={`rounded-lg flex items-center justify-center text-white font-black flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity ${['bg-indigo-500','bg-emerald-500','bg-amber-500','bg-rose-500','bg-violet-500','bg-sky-500'][letter.charCodeAt(0) % 6]}`}
+      style={{ width: size, height: size, fontSize: size * 0.5 }}
+      title="Tap to set vendor logo"
+    >
+      {letter}
+    </div>
+  );
+
+  if (!domain || failed) return avatar;
+
+  return (
+    <img
+      src={`https://www.google.com/s2/favicons?domain=${domain}&sz=64`}
+      alt={name}
+      onError={() => setFailed(true)}
+      onClick={onEditDomain}
+      className="rounded-md object-contain flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+      style={{ width: size, height: size }}
+      title="Tap to change vendor logo"
+    />
+  );
+}
 
 /**
  * rows: Array of { rowIndex, description, amounts: number[] }
  */
-export function DetailPanel({ expense, rows, loading, onClose, accessToken, sheetId, onRefresh, currencySymbol = '$' }) {
+export function DetailPanel({ expense, rows, loading, onClose, accessToken, sheetId, onRefresh, currencySymbol = '$', onVendorRenamed, monthName, transactionNotes = {}, onUpdateNote, nonMonthlyVendors = [], onNonMonthlyChanged }) {
   const total = rows ? rows.reduce((s, r) => s + r.amounts.reduce((a, b) => a + b, 0), 0) : 0;
 
   // Editing state
-  const [editingVendor, setEditingVendor]   = useState(null); // { rowIndex, value }
-  const [editingAmount, setEditingAmount]   = useState(null); // { rowIndex, amtIndex, value }
-  const [deletingVendor, setDeletingVendor] = useState(null); // rowIndex of vendor pending full delete
+  const [editingVendor, setEditingVendor]   = useState(null);
+  const [editingAmount, setEditingAmount]   = useState(null);
+  const [deletingVendor, setDeletingVendor] = useState(null);
   const [saving, setSaving]                 = useState(false);
   const [error, setError]                   = useState('');
+  const [editingDomain, setEditingDomain]   = useState(null);
+  const [, forceLogoRefresh]               = useState(0);
+  // Transaction-level note dialog
+  const [noteDialog, setNoteDialog]         = useState(null); // { key, vendor, amount, data }
+  const [noteDraft, setNoteDraft]           = useState({ note: '', tags: [] });
+  const [noteTagInput, setNoteTagInput]     = useState('');
+
+  const txNoteKey = (vendor, amt) =>
+    `${sheetId}_${expense}_${(vendor || '').toLowerCase()}_${Number(amt).toFixed(2)}`;
+
+  const openNoteDialog = (vendor, amt) => {
+    const key  = txNoteKey(vendor, amt);
+    const data = transactionNotes[key] || { note: '', tags: [] };
+    setNoteDraft({ ...data });
+    setNoteTagInput('');
+    setNoteDialog({ key, vendor, amount: amt, data });
+  };
+
+  const saveNoteDialog = () => {
+    if (!noteDialog) return;
+    onUpdateNote?.(noteDialog.key, { ...noteDraft });
+    setNoteDialog(null);
+  };
+
+  const deleteNoteDialog = () => {
+    if (!noteDialog) return;
+    onUpdateNote?.(noteDialog.key, { note: '', tags: [] });
+    setNoteDialog(null);
+  };
+
+  const addNoteTag = () => {
+    const tag = noteTagInput.trim().replace(/^#/, '');
+    if (tag && !noteDraft.tags.includes(tag)) setNoteDraft(d => ({ ...d, tags: [...d.tags, tag] }));
+    setNoteTagInput('');
+  };
 
   const inputCls = "bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-xl px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/40 w-full";
 
@@ -32,10 +172,23 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
 
   // ── Vendor name edit ────────────────────────────────────────────────────
   const saveVendorName = (row) => {
-    const newName = editingVendor?.value?.trim();
-    if (!newName || newName === row.description) { setEditingVendor(null); return; }
+    const newName  = editingVendor?.value?.trim();
+    const wasNonMonthly = editingVendor?.wasNonMonthly ?? false;
+    const isNonMonthly  = editingVendor?.isNonMonthly  ?? false;
+    if (!newName) { setEditingVendor(null); return; }
     withSave(async () => {
-      await updateVendorName(expense, row.rowIndex, newName, accessToken, sheetId, row.description);
+      if (newName !== row.description) {
+        await updateVendorName(expense, row.rowIndex, newName, accessToken, sheetId, row.description);
+        await renameNonMonthly(sheetId, accessToken, row.description, newName);
+        onVendorRenamed?.(row.description, newName);
+      }
+      // Handle non-monthly toggle change
+      if (isNonMonthly !== wasNonMonthly) {
+        const total = row.amounts.reduce((a, b) => a + b, 0);
+        if (isNonMonthly) await markNonMonthly(sheetId, accessToken, newName, total);
+        else              await unmarkNonMonthly(sheetId, accessToken, newName);
+        onNonMonthlyChanged?.();
+      }
       setEditingVendor(null);
     });
   };
@@ -49,7 +202,8 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
         i === editingAmount.amtIndex ? newVal : a
       );
       const prevTotal = row.amounts.reduce((a, b) => a + b, 0);
-      await updateVendorAmounts(expense, row.rowIndex, newAmounts, accessToken, sheetId, row.description, prevTotal);
+      // UUIDs stay the same when editing a value — same transaction, corrected amount
+      await updateVendorAmounts(expense, row.rowIndex, newAmounts, accessToken, sheetId, row.description, prevTotal, row.uuids || []);
       setEditingAmount(null);
     });
   };
@@ -63,11 +217,10 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
     )) return;
     withSave(async () => {
       const newAmounts = row.amounts.filter((_, i) => i !== amtIndex);
-      const prevTotal = row.amounts.reduce((a, b) => a + b, 0);
-      await updateVendorAmounts(expense, row.rowIndex, newAmounts, accessToken, sheetId, row.description, prevTotal);
-      if (newAmounts.length === 0) {
-        await removeRandomExpenseNote(sheetId, row.description, accessToken);
-      }
+      const newUuids   = (row.uuids || []).filter((_, i) => i !== amtIndex);
+      const prevTotal  = row.amounts.reduce((a, b) => a + b, 0);
+      await updateVendorAmounts(expense, row.rowIndex, newAmounts, accessToken, sheetId, row.description, prevTotal, newUuids);
+      if (newAmounts.length === 0) await unmarkNonMonthly(sheetId, accessToken, row.description);
     });
   };
 
@@ -75,8 +228,8 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
   const deleteAllAmounts = (row) => {
     withSave(async () => {
       const prevTotal = row.amounts.reduce((a, b) => a + b, 0);
-      await updateVendorAmounts(expense, row.rowIndex, [], accessToken, sheetId, row.description, prevTotal);
-      await removeRandomExpenseNote(sheetId, row.description, accessToken);
+      await updateVendorAmounts(expense, row.rowIndex, [], accessToken, sheetId, row.description, prevTotal, []);
+      await unmarkNonMonthly(sheetId, accessToken, row.description);
       setDeletingVendor(null);
     });
   };
@@ -85,12 +238,12 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/30 dark:bg-black/50 z-40 backdrop-blur-sm"
+        className="fixed inset-0 bg-black/30 dark:bg-black/50 z-[55] backdrop-blur-sm"
         onClick={onClose}
       />
 
       {/* Panel */}
-      <div className="fixed right-0 top-0 h-full w-full max-w-sm bg-white dark:bg-slate-800 z-50 shadow-2xl flex flex-col">
+      <div className="fixed right-0 top-0 h-full w-full max-w-sm bg-white dark:bg-slate-800 z-[60] shadow-2xl flex flex-col">
 
         {/* Header — padded below notch */}
         <div className="p-6 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center flex-shrink-0"
@@ -158,40 +311,83 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                 </div>
               ) : editingVendor?.rowIndex === row.rowIndex ? (
                 // Editing vendor name
-                <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-100 dark:border-slate-700/50">
-                  <input
-                    className={inputCls}
-                    value={editingVendor.value}
-                    onChange={e => setEditingVendor(ev => ({ ...ev, value: e.target.value }))}
-                    onKeyDown={e => e.key === 'Enter' && saveVendorName(row)}
-                    autoFocus
-                    disabled={saving}
-                  />
-                  <button
-                    onClick={() => saveVendorName(row)}
-                    disabled={saving}
-                    className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex-shrink-0"
-                  >
-                    <Check className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => setEditingVendor(null)}
-                    className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex-shrink-0"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
+                <div className="flex flex-col border-b border-slate-100 dark:border-slate-700/50">
+                  <div className="flex items-center gap-2 px-4 py-2.5">
+                    <input
+                      className={inputCls}
+                      value={editingVendor.value}
+                      onChange={e => setEditingVendor(ev => ({ ...ev, value: e.target.value }))}
+                      onKeyDown={e => e.key === 'Enter' && saveVendorName(row)}
+                      autoFocus
+                      disabled={saving}
+                    />
+                    <button
+                      onClick={() => saveVendorName(row)}
+                      disabled={saving}
+                      className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex-shrink-0"
+                    >
+                      <Check className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setEditingVendor(null)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex-shrink-0"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  {/* Non-monthly toggle */}
+                  <label className="flex items-center gap-2.5 px-4 pb-3 cursor-pointer group">
+                    <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${editingVendor.isNonMonthly ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700'}`}
+                      onClick={() => setEditingVendor(ev => ({ ...ev, isNonMonthly: !ev.isNonMonthly }))}>
+                      {editingVendor.isNonMonthly && <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                    </div>
+                    <span
+                      onClick={() => setEditingVendor(ev => ({ ...ev, isNonMonthly: !ev.isNonMonthly }))}
+                      className="text-xs font-bold text-slate-500 dark:text-slate-400 group-hover:text-indigo-500 dark:group-hover:text-indigo-400 transition-colors select-none">
+                      One-time / non-monthly expense
+                    </span>
+                  </label>
                 </div>
               ) : (
                 // Normal vendor row
                 <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-100 dark:border-slate-700/50">
+                  <VendorLogo
+                    name={row.description}
+                    size={22}
+                    onEditDomain={() => setEditingDomain({ vendorName: row.description, draft: resolveVendorDomain(row.description) || '' })}
+                  />
                   <span className="text-sm font-black text-slate-700 dark:text-slate-200 flex-1 truncate">
                     {row.description}
                   </span>
                   <span className="text-sm font-black text-slate-500 dark:text-slate-400 tabular-nums ml-2 flex-shrink-0">
                     {currencySymbol}{row.amounts.reduce((a, b) => a + b, 0).toFixed(2)}
                   </span>
+                  {/* Non-monthly quick-tap toggle */}
                   <button
-                    onClick={() => setEditingVendor({ rowIndex: row.rowIndex, value: row.description })}
+                    onClick={() => {
+                      const isNm = nonMonthlyVendors.includes(row.description.toLowerCase());
+                      const total = row.amounts.reduce((a, b) => a + b, 0);
+                      withSave(async () => {
+                        if (isNm) await unmarkNonMonthly(sheetId, accessToken, row.description);
+                        else      await markNonMonthly(sheetId, accessToken, row.description, total);
+                        onNonMonthlyChanged?.();
+                      });
+                    }}
+                    disabled={saving}
+                    title={nonMonthlyVendors.includes(row.description.toLowerCase()) ? 'Remove one-time flag' : 'Mark as one-time expense'}
+                    className={`p-1.5 rounded-lg transition-colors flex-shrink-0 ${
+                      nonMonthlyVendors.includes(row.description.toLowerCase())
+                        ? 'text-indigo-500 bg-indigo-50 dark:bg-indigo-900/30'
+                        : 'text-slate-300 dark:text-slate-600 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30'
+                    }`}
+                  >
+                    <Repeat className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      const nm = nonMonthlyVendors.includes(row.description.toLowerCase());
+                      setEditingVendor({ rowIndex: row.rowIndex, value: row.description, isNonMonthly: nm, wasNonMonthly: nm });
+                    }}
                     className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors flex-shrink-0"
                     title="Rename vendor"
                   >
@@ -248,7 +444,22 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                       <span className="text-sm font-medium text-slate-700 dark:text-slate-300 tabular-nums flex-1">
                         {currencySymbol}{amt.toFixed(2)}
                       </span>
-                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex gap-1 items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        {/* Note icon — always visible if note exists */}
+                        {(() => {
+                          const key  = txNoteKey(row.description, amt);
+                          const data = transactionNotes[key];
+                          const has  = data?.note || data?.tags?.length > 0;
+                          return (
+                            <button
+                              onClick={() => openNoteDialog(row.description, amt)}
+                              className={`p-1.5 rounded-lg transition-colors ${has ? 'text-violet-500 opacity-100' : 'text-slate-400 hover:text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-900/30'}`}
+                              title={has ? 'View/edit note' : 'Add note / tag'}
+                            >
+                              <MessageSquare className="w-3.5 h-3.5" />
+                            </button>
+                          );
+                        })()}
                         <button
                           onClick={() => setEditingAmount({ rowIndex: row.rowIndex, amtIndex, value: String(amt) })}
                           className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
@@ -282,6 +493,120 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
           </div>
         )}
       </div>
+      {/* Transaction note dialog */}
+      {noteDialog && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-[60] backdrop-blur-sm" onClick={() => setNoteDialog(null)} />
+          <div className="fixed inset-0 z-[61] flex items-end sm:items-center justify-center sm:p-4">
+            <div className="bg-white dark:bg-slate-800 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl w-full sm:max-w-sm border border-slate-100 dark:border-slate-700">
+              <div className="w-10 h-1 bg-slate-200 dark:bg-slate-600 rounded-full mx-auto mt-3 mb-1 sm:hidden" />
+              <div className="px-6 pt-5 pb-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-black text-slate-800 dark:text-slate-100">Note / Tags</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{noteDialog.vendor} · {currencySymbol}{Number(noteDialog.amount).toFixed(2)}</p>
+                </div>
+                <button onClick={() => setNoteDialog(null)} className="p-1.5 rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="px-6 py-4 space-y-3">
+                <textarea rows={3} placeholder="Add a note…" value={noteDraft.note}
+                  onChange={e => setNoteDraft(d => ({ ...d, note: e.target.value }))}
+                  className="w-full bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-2xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/30 resize-none placeholder:text-slate-400" />
+                <div className="flex gap-2">
+                  <input type="text" placeholder="Add tag (Enter)"
+                    value={noteTagInput} onChange={e => setNoteTagInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addNoteTag(); } }}
+                    className="flex-1 bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-2xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500/30 placeholder:text-slate-400" />
+                  <button onClick={addNoteTag} className="px-3 py-2 bg-indigo-600 text-white text-xs font-bold rounded-2xl hover:bg-indigo-700 transition-colors">Add</button>
+                </div>
+                {noteDraft.tags.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {noteDraft.tags.map(tag => (
+                      <span key={tag} onClick={() => setNoteDraft(d => ({ ...d, tags: d.tags.filter(t => t !== tag) }))}
+                        className="flex items-center gap-1 text-xs font-bold px-2.5 py-1 bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 rounded-full cursor-pointer">
+                        #{tag} ×
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="px-6 pb-6 flex gap-2" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)' }}>
+                {(noteDialog.data?.note || noteDialog.data?.tags?.length > 0) && (
+                  <button onClick={deleteNoteDialog} className="px-4 py-3 rounded-2xl text-sm font-bold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-900/20 hover:bg-rose-100 dark:hover:bg-rose-900/30 transition-colors">
+                    Delete
+                  </button>
+                )}
+                <button onClick={() => setNoteDialog(null)} className="flex-1 py-3 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">
+                  Cancel
+                </button>
+                <button onClick={saveNoteDialog} className="flex-1 py-3 rounded-2xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-all">
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Domain edit modal */}
+      {editingDomain && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-[60] backdrop-blur-sm" onClick={() => setEditingDomain(null)} />
+          <div className="fixed inset-0 z-[61] flex items-end sm:items-center justify-center sm:p-4">
+            <div className="bg-white dark:bg-slate-800 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl w-full sm:max-w-sm border border-slate-100 dark:border-slate-700">
+              <div className="w-10 h-1 bg-slate-200 dark:bg-slate-600 rounded-full mx-auto mt-3 mb-1 sm:hidden" />
+              <div className="px-6 pt-5 pb-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-black text-slate-800 dark:text-slate-100">Vendor Logo</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{editingDomain.vendorName}</p>
+                </div>
+                <button onClick={() => setEditingDomain(null)} className="p-1.5 rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="px-6 py-5 space-y-3">
+                <p className="text-xs text-slate-500 dark:text-slate-400">Enter the website domain to use for the logo:</p>
+                <input
+                  type="text"
+                  value={editingDomain.draft}
+                  onChange={e => setEditingDomain(d => ({ ...d, draft: e.target.value }))}
+                  placeholder="e.g. walmart.com"
+                  autoFocus
+                  className={inputCls}
+                />
+                {editingDomain.draft && (
+                  <div className="flex items-center gap-2 text-xs text-slate-400">
+                    <span>Preview:</span>
+                    <img
+                      src={`https://www.google.com/s2/favicons?domain=${editingDomain.draft}&sz=64`}
+                      alt=""
+                      className="w-5 h-5 rounded object-contain"
+                      onError={e => e.target.style.display = 'none'}
+                    />
+                    <span>{editingDomain.draft}</span>
+                  </div>
+                )}
+              </div>
+              <div className="px-6 pb-6 flex gap-3" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)' }}>
+                <button onClick={() => setEditingDomain(null)} className="flex-1 py-3 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setCustomVendorDomain(editingDomain.vendorName, editingDomain.draft.trim());
+                    setEditingDomain(null);
+                    forceLogoRefresh(n => n + 1);
+                  }}
+                  className="flex-1 py-3 rounded-2xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-all"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </>
   );
 }

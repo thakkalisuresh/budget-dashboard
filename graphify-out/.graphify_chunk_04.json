@@ -1,0 +1,148 @@
+{
+  "nodes": [
+    {
+      "id": "icon192_app_icon",
+      "label": "App Icon 192px",
+      "file_type": "image",
+      "source_file": "public/icons/icon-192.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "icon192_background_color",
+      "label": "Icon Background Color",
+      "color_hex": "#5B5BD6",
+      "color_name": "indigo-purple",
+      "role": "background",
+      "source_file": "public/icons/icon-192.png"
+    },
+    {
+      "id": "icon192_card_element",
+      "label": "White Card / Envelope Shape",
+      "shape": "rectangle",
+      "color": "white",
+      "role": "primary_visual_element",
+      "description": "A centered white rectangular card resembling a document or mail envelope",
+      "source_file": "public/icons/icon-192.png"
+    },
+    {
+      "id": "icon192_text_lines_element",
+      "label": "Decorative Text Lines",
+      "shape": "horizontal_lines",
+      "color": "light-blue-gray",
+      "role": "content_indicator",
+      "description": "Light blue-gray horizontal lines on the white card suggesting text content or a list",
+      "source_file": "public/icons/icon-192.png"
+    },
+    {
+      "id": "icon192_flower_asterisk_element",
+      "label": "Purple Flower / Asterisk Accent",
+      "shape": "flower_asterisk",
+      "color": "purple-indigo",
+      "role": "accent_decoration",
+      "description": "A small purple flower or asterisk-like decorative element in the upper-right area of the white card",
+      "source_file": "public/icons/icon-192.png"
+    },
+    {
+      "id": "app_design_style",
+      "label": "PWA App Design Style",
+      "style": "flat_minimal",
+      "theme": "indigo-purple",
+      "category": "messaging_or_document_app",
+      "source_file": "public/icons/icon-192.png"
+    }
+  ],
+  "edges": [
+    {
+      "from": "icon192_app_icon",
+      "to": "icon192_background_color",
+      "relation": "HAS_BACKGROUND_COLOR",
+      "confidence_score": 1.0,
+      "extraction_type": "EXTRACTED"
+    },
+    {
+      "from": "icon192_app_icon",
+      "to": "icon192_card_element",
+      "relation": "CONTAINS_ELEMENT",
+      "confidence_score": 1.0,
+      "extraction_type": "EXTRACTED"
+    },
+    {
+      "from": "icon192_app_icon",
+      "to": "icon192_text_lines_element",
+      "relation": "CONTAINS_ELEMENT",
+      "confidence_score": 1.0,
+      "extraction_type": "EXTRACTED"
+    },
+    {
+      "from": "icon192_app_icon",
+      "to": "icon192_flower_asterisk_element",
+      "relation": "CONTAINS_ELEMENT",
+      "confidence_score": 1.0,
+      "extraction_type": "EXTRACTED"
+    },
+    {
+      "from": "icon192_card_element",
+      "to": "icon192_text_lines_element",
+      "relation": "HOSTS_ELEMENT",
+      "confidence_score": 1.0,
+      "extraction_type": "EXTRACTED"
+    },
+    {
+      "from": "icon192_card_element",
+      "to": "icon192_flower_asterisk_element",
+      "relation": "HOSTS_ELEMENT",
+      "confidence_score": 1.0,
+      "extraction_type": "EXTRACTED"
+    },
+    {
+      "from": "icon192_app_icon",
+      "to": "app_design_style",
+      "relation": "EXHIBITS_DESIGN_STYLE",
+      "confidence_score": 0.95,
+      "extraction_type": "INFERRED"
+    },
+    {
+      "from": "icon192_background_color",
+      "to": "app_design_style",
+      "relation": "CONTRIBUTES_TO_THEME",
+      "confidence_score": 0.95,
+      "extraction_type": "INFERRED"
+    },
+    {
+      "from": "icon192_card_element",
+      "to": "app_design_style",
+      "relation": "REPRESENTS_DOMAIN",
+      "note": "Card/envelope shape suggests messaging, mail, or document management app",
+      "confidence_score": 0.75,
+      "extraction_type": "INFERRED"
+    },
+    {
+      "from": "icon192_flower_asterisk_element",
+      "to": "icon192_background_color",
+      "relation": "SHARES_COLOR_PALETTE",
+      "confidence_score": 0.95,
+      "extraction_type": "INFERRED"
+    }
+  ],
+  "hyperedges": [
+    {
+      "id": "icon192_visual_composition",
+      "label": "Icon Visual Composition",
+      "members": [
+        "icon192_background_color",
+        "icon192_card_element",
+        "icon192_text_lines_element",
+        "icon192_flower_asterisk_element"
+      ],
+      "relation": "COMPOSE_ICON_IDENTITY",
+      "confidence_score": 1.0,
+      "extraction_type": "EXTRACTED"
+    }
+  ],
+  "input_tokens": 1024,
+  "output_tokens": 512
+}

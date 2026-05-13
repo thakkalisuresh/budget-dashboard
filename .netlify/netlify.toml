@@ -1,0 +1,49 @@
+functionsDirectory = "C:\\Users\\anupa\\Downloads\\cl\\dashboard\\netlify\\functions"
+functionsDirectoryOrigin = "config"
+headersOrigin = "config"
+plugins = []
+redirects = []
+
+[build]
+edge_functions = "C:\\Users\\anupa\\Downloads\\cl\\dashboard\\netlify\\edge-functions"
+publish = "C:\\Users\\anupa\\Downloads\\cl\\dashboard\\dist"
+publishOrigin = "config"
+commandOrigin = "config"
+command = "npm run build"
+functions = "C:\\Users\\anupa\\Downloads\\cl\\dashboard\\netlify\\functions"
+
+[build.environment]
+
+[build.processing]
+
+[build.processing.css]
+
+[build.processing.html]
+
+[build.processing.images]
+
+[build.processing.js]
+
+[build.services]
+
+[[edge_functions]]
+path = "/api/claude"
+function = "claude"
+
+[[edge_functions]]
+path = "/api/verify-user"
+function = "verify-user"
+
+[functions]
+
+[functions."*"]
+
+[[headers]]
+for = "/*"
+
+[headers.values]
+X-Frame-Options = "DENY"
+X-Content-Type-Options = "nosniff"
+Referrer-Policy = "strict-origin-when-cross-origin"
+Permissions-Policy = "camera=(self), microphone=()"
+Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' https://accounts.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://lh3.googleusercontent.com https://www.google.com https://*.googleusercontent.com; connect-src 'self' https://*.googleapis.com https://open.er-api.com https://accounts.google.com; frame-src https://accounts.google.com; font-src 'self' data:; object-src 'none'; base-uri 'self';"

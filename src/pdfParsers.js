@@ -22,10 +22,15 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
  * Extract text lines from a PDF File in top-to-bottom, left-to-right order.
  * PDF.js gives us individual text items with XY coordinates — we bucket them
  * into lines by Y position (±4px tolerance) then sort each line by X.
+ *
+ * Pass `password` for encrypted PDFs. Throws a PasswordException (name: 'PasswordException')
+ * if no password is supplied or the password is wrong.
  */
-export async function extractPdfLines(file) {
+export async function extractPdfLines(file, password) {
   const buffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+  const loadOptions = { data: buffer };
+  if (password) loadOptions.password = password;
+  const pdf = await pdfjsLib.getDocument(loadOptions).promise;
 
   const allLines = [];
 
@@ -160,12 +165,20 @@ function parseGenericFromLines(lines, fileName) {
  * Parse a PDF bank statement file.
  * Returns { transactions, bank, error, lines } — same shape as parseStatementFile,
  * plus `lines` so the Claude fallback can reuse the extracted text.
+ *
+ * Pass `password` for encrypted PDFs. If the PDF needs a password and none is
+ * supplied, returns { needsPassword: true } so the caller can prompt the user.
  */
-export async function parsePdfStatement(file) {
+export async function parsePdfStatement(file, password) {
   let lines = [];
   try {
-    lines = await extractPdfLines(file);
+    lines = await extractPdfLines(file, password);
   } catch (e) {
+    // PDF.js throws PasswordException for encrypted PDFs
+    if (e.name === 'PasswordException') {
+      const wrongPassword = password != null; // had a password but it was wrong
+      return { transactions: [], bank: 'unknown', error: null, lines: [], needsPassword: true, wrongPassword };
+    }
     return { transactions: [], bank: 'unknown', error: `PDF extraction failed: ${e.message}`, lines };
   }
 

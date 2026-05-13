@@ -30,12 +30,14 @@ import { LedgerTab } from './LedgerTab.jsx';
 const SettingsPanel    = lazy(() => import('./SettingsPanel.jsx').then(m => ({ default: m.SettingsPanel })));
 const AddCategoryDialog    = lazy(() => import('./AddCategoryDialog.jsx').then(m => ({ default: m.AddCategoryDialog })));
 const ReconcileDialog      = lazy(() => import('./ReconcileDialog.jsx').then(m => ({ default: m.ReconcileDialog })));
+const BulkRecurringDialog  = lazy(() => import('./BulkRecurringDialog.jsx').then(m => ({ default: m.BulkRecurringDialog })));
 const DeleteCategoryDialog = lazy(() => import('./DeleteCategoryDialog.jsx').then(m => ({ default: m.DeleteCategoryDialog })));
 const RenameCategoryDialog = lazy(() => import('./RenameCategoryDialog.jsx').then(m => ({ default: m.RenameCategoryDialog })));
 import { StatCard } from './StatCard.jsx';
 import { IconPickerModal } from './IconPickerModal.jsx';
 import { CategoryActionSheet } from './CategoryActionSheet.jsx';
 import { SpeedDial } from './SpeedDial.jsx';
+import { OnboardingWizard } from './OnboardingWizard.jsx';
 import { ExpenseTable } from './ExpenseTable.jsx';
 import { DonutChart } from './DonutChart.jsx';
 import { BudgetBarsChart } from './BudgetBarsChart.jsx';
@@ -112,14 +114,15 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
   const [salaryDraft, setSalaryDraft] = useState('');
   const [iconPickerFor, setIconPickerFor] = useState(null);
   const [showUserMenu, setShowUserMenu]     = useState(false);
-  const [showReconcile, setShowReconcile]   = useState(false);
-  const [showMessages, setShowMessages]     = useState(false);
+  const [showReconcile, setShowReconcile]       = useState(false);
+  const [showBulkRecurring, setShowBulkRecurring] = useState(false);
+  const [showMessages, setShowMessages]         = useState(false);
   const [chatOpen, setChatOpen]   = useState(false);
   const [fabOpen, setFabOpen]     = useState(false);
   const userMenuRef = useRef(null);
-  const { tableDragOver, tableDragging, handleTableDragStart, handleTableDragOver, handleTableDrop, handleTableDragEnd, handleGripTouchStart } = useDragSort({ expenses, settings, updateSettings, isDark });
 
   // Per-user settings (saved to Google Sheets)
+  const isReadOnly = user.role === 'viewer';
   const { settings, updateSettings } = useSettings(user.email, user.accessToken);
   const currencySymbol = getCurrencySymbol(settings.currency || 'USD');
   const categoryIcons  = { ...DEFAULT_ICONS, ...(settings.categoryIcons || {}) };
@@ -192,6 +195,32 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
     return () => document.removeEventListener('mousedown', handler);
   }, [showUserMenu]);
 
+  // Global keyboard shortcuts — driven by settings.keyboardShortcuts
+  useEffect(() => {
+    const shortcuts = settings.keyboardShortcuts || {};
+    const matches = (e, combo) => {
+      if (!combo) return false;
+      const parts = combo.toLowerCase().split('+');
+      const key   = parts[parts.length - 1];
+      return (
+        e.key.toLowerCase() === key &&
+        e.ctrlKey  === parts.includes('ctrl') &&
+        e.shiftKey === parts.includes('shift') &&
+        e.altKey   === parts.includes('alt') &&
+        e.metaKey  === parts.includes('meta')
+      );
+    };
+    const handler = (e) => {
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+      if (matches(e, shortcuts.addExpense))   { e.preventDefault(); setShowAddDialog(true);      return; }
+      if (matches(e, shortcuts.scanReceipt))  { e.preventDefault(); scanTriggerRef.current?.();  return; }
+      if (matches(e, shortcuts.openSettings)) { e.preventDefault(); setShowSettings(true);        return; }
+      if (matches(e, shortcuts.openChat))     { e.preventDefault(); setChatOpen(true);            return; }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [settings.keyboardShortcuts]);
+
   // Global Escape key — closes the topmost open panel
   useEffect(() => {
     const handler = (e) => {
@@ -262,6 +291,8 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
       .sort((a, b) => (orderMap[a.name] ?? 999) - (orderMap[b.name] ?? 999));
   }, [data, settings.categoryOrder]);
 
+  const { tableDragOver, tableDragging, handleTableDragStart, handleTableDragOver, handleTableDrop, handleTableDragEnd, handleGripTouchStart } = useDragSort({ expenses, settings, updateSettings, isDark });
+
   const totalActual = expenses.reduce((s, d) => s + d.actual, 0);
   const totalBudget = expenses.reduce((s, d) => s + d.budget, 0);
   const overallRemaining = totalBudget - totalActual;
@@ -304,6 +335,22 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
 
   // ── Push notifications ────────────────────────────────────────────────────────
   const pushHook = usePush(user.email, settings.pushHour ?? 20);
+
+  // Fire instant push for new budget threshold alerts
+  useEffect(() => {
+    if (!pushHook.subscribed) return;
+    const alertMessages = messages.filter(m =>
+      !m.read && (m.type === 'over_budget' || m.type === 'near_budget')
+    );
+    if (alertMessages.length === 0) return;
+    alertMessages.forEach(m => {
+      fetch('/api/push-alert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: user.email, title: m.title, body: m.body }),
+      }).catch(() => {});
+    });
+  }, [messages, pushHook.subscribed]);
 
   const handleUpdate = (index, name, actual, remaining) => {
     updateItem(index, [name, parseFloat(actual) || 0, parseFloat(remaining) || 0]);
@@ -392,6 +439,14 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
       }}
     >
       <div className="max-w-7xl mx-auto space-y-8 pb-12">
+
+        {/* Read-only banner */}
+        {isReadOnly && (
+          <div className="flex items-center gap-3 px-4 py-3 bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-700/40 rounded-2xl text-sm font-bold text-violet-800 dark:text-violet-300">
+            <span className="text-base">👁</span>
+            View-only mode — you can browse but not make changes
+          </div>
+        )}
 
         {/* Offline banner */}
         {!isOnline && (
@@ -670,7 +725,7 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
         /></Suspense>
       )}
 
-      {showAddDialog && (
+      {showAddDialog && !isReadOnly && (
         <Suspense fallback={null}><AddExpenseDialog
           accessToken={user.accessToken}
           sheetId={selectedSheetId}
@@ -754,6 +809,17 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
       /></Suspense>
 
       {/* Reconcile dialog */}
+      {showBulkRecurring && !isReadOnly && (
+        <Suspense fallback={null}><BulkRecurringDialog
+          recurringExpenses={settings.recurringExpenses || []}
+          accessToken={user.accessToken}
+          sheetId={selectedSheetId}
+          monthName={selectedMonth?.name}
+          onClose={() => setShowBulkRecurring(false)}
+          onSuccess={() => { refresh(); refreshNonMonthly(); }}
+        /></Suspense>
+      )}
+
       {showReconcile && (
         <Suspense fallback={null}><ReconcileDialog
           monthName={selectedMonth?.name}
@@ -762,7 +828,17 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
           onClose={() => setShowReconcile(false)}
           onComplete={() => refresh()}
           smartRules={settings.smartRules || []}
+          reconciledFingerprints={settings.reconciledFingerprints || []}
+          onAddFingerprints={fps => updateSettings(prev => ({
+            ...prev,
+            reconciledFingerprints: [...new Set([...(prev.reconciledFingerprints || []), ...fps])],
+          }))}
         /></Suspense>
+      )}
+
+      {/* Onboarding wizard — shown once per user */}
+      {!settings.hasSeenOnboarding && !isReadOnly && (
+        <OnboardingWizard onDone={() => updateSettings(prev => ({ ...prev, hasSeenOnboarding: true }))} />
       )}
 
       {/* PIN lock overlay */}
@@ -885,14 +961,17 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
         /></Suspense>
       )}
 
-      <SpeedDial
-        fabOpen={fabOpen}
-        setFabOpen={setFabOpen}
-        detail={detail}
-        scanTriggerRef={scanTriggerRef}
-        onAddExpense={() => setShowAddDialog(true)}
-        onOpenChat={() => setChatOpen(true)}
-      />
+      {!isReadOnly && (
+        <SpeedDial
+          fabOpen={fabOpen}
+          setFabOpen={setFabOpen}
+          detail={detail}
+          scanTriggerRef={scanTriggerRef}
+          onAddExpense={() => setShowAddDialog(true)}
+          onOpenChat={() => setChatOpen(true)}
+          onBulkRecurring={(settings.recurringExpenses || []).length > 0 ? () => setShowBulkRecurring(true) : null}
+        />
+      )}
     </div>
   );
 }

@@ -75,12 +75,19 @@ export default async (request) => {
 
   const allowed = allowedEmails.has(email);
 
+  // Viewer emails can sign in but get read-only access
+  const viewerEmails = new Set(
+    (Deno.env.get('VIEWER_EMAILS') || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
+  );
+  const role = allowed ? (viewerEmails.has(email) ? 'viewer' : 'owner') : null;
+
   return new Response(
     JSON.stringify({
       allowed,
       email: allowed ? email : null,
       name: allowed ? profile.given_name : null,
       picture: allowed ? profile.picture : null,
+      role,
     }),
     {
       status: 200,
