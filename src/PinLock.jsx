@@ -4,8 +4,14 @@ import { Lock, Fingerprint, X } from 'lucide-react';
 const PIN_KEY        = 'budget_pin_hash';
 const PIN_SALT_KEY   = 'budget_pin_salt';
 const BIOMETRIC_KEY  = 'budget_biometric_id';
+const PIN_TIMEOUT_KEY = 'budget_pin_timeout';
 const MAX_TRIES      = 5;
-const LOCK_AFTER_MS  = 2 * 60 * 1000; // lock after 2 min in background
+const DEFAULT_LOCK_MS = 10 * 60 * 1000;
+
+function getLockAfterMs() {
+  const stored = parseInt(localStorage.getItem(PIN_TIMEOUT_KEY) || '0');
+  return stored > 0 ? stored : DEFAULT_LOCK_MS;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -104,7 +110,7 @@ export function usePinLock(onSignOut) {
       if (document.visibilityState === 'hidden') {
         hiddenAt = Date.now();
       } else if (document.visibilityState === 'visible') {
-        if (hiddenAt && Date.now() - hiddenAt >= LOCK_AFTER_MS) setLocked(true);
+        if (hiddenAt && Date.now() - hiddenAt >= getLockAfterMs()) setLocked(true);
         hiddenAt = null;
       }
     };

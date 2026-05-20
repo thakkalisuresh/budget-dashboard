@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Camera, X, Plus, AlertCircle, CheckCircle, ChevronRight, Upload, FileText } from 'lucide-react';
-import { CATEGORIES, fetchDetailRows, checkExistingExpense, fuzzyNamesMatch, fetchAllLoggedTransactions, getAllCategoryNames } from './sheetsApi.js';
+import { CATEGORIES, fetchDetailRows, checkExistingExpense, fuzzyNamesMatch, fetchAllLoggedTransactions, getAllCategoryNames, markNonMonthly } from './sheetsApi.js';
 import { addOrUpdateExpense } from './useExpense.js';
 import { applySmartRules } from './smartRules.js';
 
@@ -93,15 +93,16 @@ If it is a RECEIPT, return exactly this JSON:
 
 If it is a BANK STATEMENT or transaction list, return exactly this JSON:
 {"type":"statement","transactions":[
-  {"vendor":"Merchant Name","amount":12.34,"category":"Grocery","date":"04/27/2026"},
-  {"vendor":"Another Store","amount":56.78,"category":"Shopping","date":"04/26/2026"}
+  {"vendor":"Merchant Name","amount":12.34,"category":"Grocery","date":"04/27/2026","txType":"debit"},
+  {"vendor":"Another Store","amount":56.78,"category":"Shopping","date":"04/26/2026","txType":"debit"}
 ]}
 
 Categories to use (pick the closest match): ${CATEGORIES.join(', ')}
 
 Rules:
 - RECEIPT: amount is the final total including tax. currency is the 3-letter ISO code visible on the receipt (e.g. USD, CAD, EUR, GBP). Default to USD if not shown.
-- STATEMENT: include ALL debit/spending transactions only — exclude credits, deposits, refunds, transfers
+- STATEMENT: include ONLY debit/purchase transactions where money left the account. For each transaction set txType to "debit" or "credit".
+- CRITICAL: If a transaction has a negative amount, a minus sign, is shown in red, or is labeled as refund/credit/return/reversal/payment, set txType to "credit". Do NOT include credits in the results.
 - Clean up truncated bank merchant names (e.g. "SEATTLEYELLOWCA HOLD" → "Seattle Yellow Cab", "WF SUPERMARKET" → "Whole Foods")
 - amount must be a positive number with no $ sign, or null if unclear
 - category must be exactly one value from the list, or null if none fit
@@ -215,7 +216,7 @@ async function checkDuplicates(transactions, accessToken, sheetId, allCategories
 
 // ── component ─────────────────────────────────────────────────────────────────
 
-export function ReceiptScanButton({ accessToken, sheetId, monthName, onSuccess, activeCategories = [], scanTriggerRef, smartRules = [] }) {
+export function ReceiptScanButton({ accessToken, sheetId, monthName, onSuccess, activeCategories = [], scanTriggerRef, smartRules = [], onSaveRecurring }) {
   // phase: idle | processing | confirming | saving | statement-reviewing | statement-importing | summary
   const [phase, setPhase]         = useState('idle');
   const [scanError, setScanError] = useState('');
@@ -267,7 +268,9 @@ export function ReceiptScanButton({ accessToken, sheetId, monthName, onSuccess, 
 
       // Statement detected — run duplicate check then switch to statement flow
       if (result.type === 'statement' && result.transactions?.length) {
-        const checked = await checkDuplicates(validateCategories(result.transactions), accessToken, sheetId, activeCategories);
+        const debitsOnly = result.transactions.filter(t => t.txType !== 'credit');
+        const withFlags = debitsOnly.map(t => ({ ...t, isNonMonthly: false, isRecurring: false }));
+        const checked = await checkDuplicates(validateCategories(withFlags), accessToken, sheetId, activeCategories);
         setStmtTransactions(checked);
         setPhase('statement-reviewing');
         return;
@@ -346,7 +349,8 @@ export function ReceiptScanButton({ accessToken, sheetId, monthName, onSuccess, 
       try {
         const result = await extractFromFile(files[i]);
         if (result.type === 'statement' && result.transactions?.length) {
-          allStmtTransactions = [...allStmtTransactions, ...result.transactions];
+          const debits = result.transactions.filter(t => t.txType !== 'credit').map(t => ({ ...t, isNonMonthly: false, isRecurring: false }));
+          allStmtTransactions = [...allStmtTransactions, ...debits];
         } else {
           receiptFiles.push(files[i]);
         }
@@ -441,6 +445,12 @@ export function ReceiptScanButton({ accessToken, sheetId, monthName, onSuccess, 
           t.category || 'Misc', t.vendor, t.amount,
           accessToken, sheetId, monthName, 'import', false
         );
+        if (t.isNonMonthly) {
+          try { await markNonMonthly(sheetId, accessToken, t.vendor, t.amount); } catch { /* non-fatal */ }
+        }
+        if (t.isRecurring) {
+          onSaveRecurring?.({ category: t.category || 'Misc', vendor: t.vendor, amount: t.amount });
+        }
         count++;
       } catch { /* skip failures silently */ }
     }
@@ -766,12 +776,13 @@ export function ReceiptScanButton({ accessToken, sheetId, monthName, onSuccess, 
                 {stmtTransactions.map((t, i) => (
                   <div
                     key={i}
-                    className={`flex items-center gap-3 p-3 rounded-2xl border transition-all bg-white dark:bg-slate-700/50 ${
+                    className={`flex flex-col p-3 rounded-2xl border transition-all bg-white dark:bg-slate-700/50 ${
                       t.selected
                         ? 'border-indigo-400 dark:border-indigo-500 shadow-sm shadow-indigo-100 dark:shadow-none'
                         : 'border-slate-200 dark:border-slate-600/40'
                     }`}
                   >
+                    <div className="flex items-center gap-3">
                     {/* Checkbox — toggles selection only */}
                     <div
                       onClick={() => setStmtTransactions(prev => prev.map((x, j) => j === i ? { ...x, selected: !x.selected } : x))}
@@ -807,6 +818,28 @@ export function ReceiptScanButton({ accessToken, sheetId, monthName, onSuccess, 
                         <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2a2 2 0 01.586-1.414z" />
                       </svg>
                     </div>
+                    </div>
+                    {/* One-time / recurring toggles */}
+                    <div className="flex gap-3 mt-1.5 pl-8">
+                    <label className="flex items-center gap-1.5 cursor-pointer" onClick={e => e.stopPropagation()}>
+                      <div
+                        onClick={() => setStmtTransactions(prev => prev.map((x, j) => j === i ? { ...x, isNonMonthly: !x.isNonMonthly, isRecurring: x.isNonMonthly ? x.isRecurring : false } : x))}
+                        className={`w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 cursor-pointer ${t.isNonMonthly ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 dark:border-slate-600'}`}
+                      >
+                        {t.isNonMonthly && <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                      </div>
+                      <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">One-time</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer" onClick={e => e.stopPropagation()}>
+                      <div
+                        onClick={() => setStmtTransactions(prev => prev.map((x, j) => j === i ? { ...x, isRecurring: !x.isRecurring } : x))}
+                        className={`w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 cursor-pointer ${t.isRecurring ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300 dark:border-slate-600'}`}
+                      >
+                        {t.isRecurring && <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                      </div>
+                      <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">Recurring</span>
+                    </label>
+                  </div>
                   </div>
                 ))}
               </div>

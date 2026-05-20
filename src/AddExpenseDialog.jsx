@@ -21,9 +21,9 @@ const VENDOR_EXAMPLES = {
   'Wi-Fi':         'e.g. Comcast, AT&T…',
 };
 
-export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess, categories: categoriesProp, onSaveRecurring, onSaveTransactionNote, smartRules = [] }) {
+export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess, categories: categoriesProp, onSaveRecurring, onSaveTransactionNote, smartRules = [], prefillCategory = null, lockCategory = false }) {
   const categoryList = categoriesProp?.length ? categoriesProp : CATEGORIES;
-  const [category, setCategory]         = useState('');
+  const [category, setCategory]         = useState(prefillCategory || '');
   const [vendor, setVendor]             = useState('');
   const [ruleHint, setRuleHint]         = useState(''); // category auto-filled by a rule
   const [amount, setAmount]             = useState('');
@@ -33,6 +33,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
   const [error, setError]               = useState('');
   const [dupWarning, setDupWarning]     = useState(false);
   const [queued, setQueued]             = useState(false);
+  const [addedToast, setAddedToast]     = useState(false);
   // Note / tag
   const [showNote, setShowNote]         = useState(false);
   const [txNote, setTxNote]             = useState('');
@@ -132,6 +133,33 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
     }
   };
 
+  const doSaveAndAnother = async () => {
+    const amt = parseFloat(amount);
+    setSaving(true);
+    setDupWarning(false);
+    try {
+      const result = await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'manual');
+      if (isNonMonthly) await markNonMonthly(sheetId, accessToken, vendor.trim(), amt);
+      if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
+      onSuccess?.();
+      // Reset for next entry — keep category
+      setVendor('');
+      setAmount('');
+      setIsNonMonthly(false);
+      setError('');
+      setDupWarning(false);
+      setShowNote(false);
+      setTxNote('');
+      setTxTags([]);
+      setAddedToast(true);
+      setTimeout(() => setAddedToast(false), 2000);
+    } catch (err) {
+      setError(err.message || 'Something went wrong. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -191,8 +219,9 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
               </div>
               <select
                 value={category}
-                onChange={e => { setCategory(e.target.value); setRuleHint(''); }}
-                className={`${inputCls} cursor-pointer`}
+                onChange={e => { if (!lockCategory) { setCategory(e.target.value); setRuleHint(''); } }}
+                disabled={lockCategory}
+                className={`${inputCls} ${lockCategory ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}`}
               >
                 <option value="">Select a category…</option>
                 {categoryList.map(c => (
@@ -370,35 +399,66 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
               </div>
             )}
 
+            {/* Added toast */}
+            {addedToast && (
+              <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700/40 rounded-2xl">
+                <svg className="w-4 h-4 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>
+                <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">Added ✓ — enter another</p>
+              </div>
+            )}
+
             {/* Actions */}
-            <div className="flex gap-3 pt-2" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-              <button
-                type="button"
-                onClick={dupWarning ? () => setDupWarning(false) : onClose}
-                className="flex-1 py-3 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
-              >
-                {dupWarning ? 'Go Back' : 'Cancel'}
-              </button>
-              <button
-                type={dupWarning ? 'button' : 'submit'}
-                onClick={dupWarning ? doSave : undefined}
-                disabled={saving}
-                className={`flex-1 py-3 rounded-2xl text-sm font-bold text-white shadow-lg transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${
-                  dupWarning
-                    ? 'bg-amber-500 hover:bg-amber-600 shadow-amber-200 dark:shadow-amber-900/30'
-                    : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-200 dark:shadow-indigo-900/30'
-                }`}
-              >
-                {saving ? (
-                  <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
-                  </svg>
-                ) : (
-                  <Plus className="w-4 h-4" />
-                )}
-                {saving ? 'Saving…' : dupWarning ? 'Add Anyway' : 'Add Expense'}
-              </button>
+            <div className="flex flex-col gap-2 pt-2" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={dupWarning ? () => setDupWarning(false) : onClose}
+                  className="flex-1 py-3 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                >
+                  {dupWarning ? 'Go Back' : 'Cancel'}
+                </button>
+                <button
+                  type={dupWarning ? 'button' : 'submit'}
+                  onClick={dupWarning ? doSave : undefined}
+                  disabled={saving}
+                  className={`flex-1 py-3 rounded-2xl text-sm font-bold text-white shadow-lg transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${
+                    dupWarning
+                      ? 'bg-amber-500 hover:bg-amber-600 shadow-amber-200 dark:shadow-amber-900/30'
+                      : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-200 dark:shadow-indigo-900/30'
+                  }`}
+                >
+                  {saving ? (
+                    <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+                    </svg>
+                  ) : (
+                    <Plus className="w-4 h-4" />
+                  )}
+                  {saving ? 'Saving…' : dupWarning ? 'Add Anyway' : 'Add Expense'}
+                </button>
+              </div>
+              {!dupWarning && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setError('');
+                    setDupWarning(false);
+                    if (!category)      { setError('Please select a category.');                    return; }
+                    if (!vendor.trim()) { setError('Please enter a vendor name.');                  return; }
+                    const amt = parseFloat(amount);
+                    if (!amt || amt <= 0) { setError('Please enter a valid amount greater than 0.'); return; }
+                    const isDuplicate = await checkExistingExpense(category, vendor.trim(), amt, accessToken, sheetId);
+                    if (isDuplicate) { setDupWarning(true); return; }
+                    await doSaveAndAnother();
+                  }}
+                  disabled={saving}
+                  className="w-full py-2.5 rounded-2xl text-sm font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Save & Add Another
+                </button>
+              )}
             </div>
           </form>
         </div>

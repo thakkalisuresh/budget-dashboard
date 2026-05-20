@@ -95,9 +95,9 @@ async function buildLedger(sheetId, accessToken) {
 }
 
 const CACHE_MS = 2 * 60 * 1000; // 2 minutes
-const ledgerCache = new Map(); // sheetId → { data, fetchedAt }
+export const ledgerCache = new Map(); // sheetId → { data, fetchedAt }
 
-export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthName = '', expenses = [], salaryReceived = 0, transactionNotes = {}, onUpdateNote }) {
+export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthName = '', expenses = [], salaryReceived = 0, transactionNotes = {}, onUpdateNote, refreshKey = 0 }) {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading]           = useState(true);
   const [refreshing, setRefreshing]     = useState(false);
@@ -130,7 +130,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
     finally { setLoading(false); setRefreshing(false); }
   };
 
-  useEffect(() => { load(); }, [sheetId]);
+  useEffect(() => { load(); }, [sheetId, refreshKey]);
 
   const allCategories = useMemo(() => [...new Set(transactions.map(t => t.category))].sort(), [transactions]);
   const allMethods    = useMemo(() => [...new Set(transactions.map(t => t.method).filter(Boolean))].sort(), [transactions]);
@@ -146,7 +146,9 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         return (t.vendor || '').toLowerCase().includes(q) ||
-               (t.category || '').toLowerCase().includes(q);
+               (t.category || '').toLowerCase().includes(q) ||
+               t.amount.toFixed(2).includes(q) ||
+               String(Math.floor(t.amount)).includes(q);
       }
       return true;
     });
@@ -335,7 +337,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
         <input
           type="text"
-          placeholder="Search by vendor or category…"
+          placeholder="Search by vendor, category or amount…"
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
           className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 rounded-2xl pl-10 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 transition-all placeholder:text-slate-400"

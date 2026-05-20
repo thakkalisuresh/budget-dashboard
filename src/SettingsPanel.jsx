@@ -552,6 +552,25 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                   </button>
                 )}
               </div>
+              {pinHash && (
+                <div className="px-4 py-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-bold text-slate-700 dark:text-slate-200">Lock timeout</p>
+                    <p className="text-xs text-slate-400 mt-0.5">How long before the app re-locks</p>
+                  </div>
+                  <select
+                    value={localStorage.getItem('budget_pin_timeout') || String(10 * 60 * 1000)}
+                    onChange={e => localStorage.setItem('budget_pin_timeout', e.target.value)}
+                    className="bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 rounded-xl px-3 py-1.5 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500/30 cursor-pointer"
+                  >
+                    <option value={String(2  * 60 * 1000)}>2 minutes</option>
+                    <option value={String(5  * 60 * 1000)}>5 minutes</option>
+                    <option value={String(10 * 60 * 1000)}>10 minutes</option>
+                    <option value={String(30 * 60 * 1000)}>30 minutes</option>
+                    <option value={String(60 * 60 * 1000)}>1 hour</option>
+                  </select>
+                </div>
+              )}
             </div>
           </div>
 

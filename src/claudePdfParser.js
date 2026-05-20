@@ -12,13 +12,15 @@
 
 const CLAUDE_PROXY = '/api/claude';
 
-const EXTRACT_PROMPT = `Extract every purchase transaction from this bank statement.
+const EXTRACT_PROMPT = `Extract every debit/purchase transaction from this bank statement.
 Return ONLY a JSON array — no explanation, no markdown fences.
-Each item: { "date": "MM/DD/YYYY", "vendor": "Clean Vendor Name", "amount": 12.99 }
+Each item: { "date": "MM/DD/YYYY", "vendor": "Clean Vendor Name", "amount": 12.99, "type": "debit" }
 Rules:
-- amount is always positive (charges only, skip payments/credits/transfers)
+- Include ONLY debit/purchase transactions — charges where money left the account
+- If a transaction has a negative amount, a minus sign, or is labeled as credit/refund/return/reversal, set "type": "credit" — do NOT include these in results
+- amount is always a positive number (no $ sign)
 - vendor: clean name only, no store numbers, no city/state, title case
-- skip: payments, transfers, ACH, Zelle, Venmo, autopay, direct deposit
+- skip: payments, transfers, ACH, Zelle, Venmo, autopay, direct deposit, wire transfers
 - if year is missing from date, omit it (use MM/DD)`;
 
 let _seq = 0;
@@ -93,7 +95,7 @@ export async function parsePdfWithClaude(file, lines = []) {
   }
 
   const transactions = raw
-    .filter(t => t.vendor && typeof t.amount === 'number' && t.amount > 0)
+    .filter(t => t.vendor && typeof t.amount === 'number' && t.amount > 0 && t.type !== 'credit')
     .map(t => ({
       id: uid(),
       date: t.date || '',

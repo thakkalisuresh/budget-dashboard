@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Repeat } from 'lucide-react';
+import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Repeat, Plus } from 'lucide-react';
 import { updateVendorName, updateVendorAmounts, unmarkNonMonthly, renameNonMonthly, markNonMonthly } from './sheetsApi.js';
 
 // ── Vendor logo helpers ───────────────────────────────────────────────────────
@@ -110,7 +110,7 @@ function VendorLogo({ name, size = 22, onEditDomain }) {
 /**
  * rows: Array of { rowIndex, description, amounts: number[] }
  */
-export function DetailPanel({ expense, rows, loading, onClose, accessToken, sheetId, onRefresh, currencySymbol = '$', onVendorRenamed, monthName, transactionNotes = {}, onUpdateNote, nonMonthlyVendors = [], onNonMonthlyChanged }) {
+export function DetailPanel({ expense, rows, loading, onClose, accessToken, sheetId, onRefresh, currencySymbol = '$', onVendorRenamed, monthName, transactionNotes = {}, onUpdateNote, nonMonthlyVendors = [], onNonMonthlyChanged, onAddExpense }) {
   const total = rows ? rows.reduce((s, r) => s + r.amounts.reduce((a, b) => a + b, 0), 0) : 0;
 
   // Editing state
@@ -253,12 +253,23 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
             <p className="text-lg font-black text-slate-800 dark:text-slate-100">{expense}</p>
             <p className="text-xs text-slate-400 mt-0.5">Itemised breakdown</p>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {onAddExpense && (
+              <button
+                onClick={onAddExpense}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-colors shadow-sm"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="p-2 rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Error banner */}

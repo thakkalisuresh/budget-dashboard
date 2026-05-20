@@ -55,7 +55,7 @@ function sortEntries(entries, sortBy) {
   }
 }
 
-export function HistoryTab({ sheetId, accessToken, onRefresh, currencySymbol = '$' }) {
+export function HistoryTab({ sheetId, accessToken, onRefresh, currencySymbol = '$', refreshKey = 0 }) {
   const [entries, setEntries]       = useState([]);
   const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -72,7 +72,7 @@ export function HistoryTab({ sheetId, accessToken, onRefresh, currencySymbol = '
     }
   };
 
-  useEffect(() => { load(); }, [sheetId]);
+  useEffect(() => { load(); }, [sheetId, refreshKey]);
 
   const handleUndo = async (entry) => {
     setUndoing(entry.id);

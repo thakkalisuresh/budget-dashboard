@@ -16,7 +16,7 @@ export function ExpenseTable({
   handleTableDragStart, handleTableDragOver, handleTableDrop, handleTableDragEnd, handleGripTouchStart,
   setIconPickerFor, setRenamingCategory, setDeletingCategory, setCategoryActionFor,
   onAddCategory, onAddExpense,
-  accessToken, sheetId, monthName, onRefresh, scanTriggerRef, smartRules,
+  accessToken, sheetId, monthName, onRefresh, scanTriggerRef, smartRules, onSaveRecurring,
 }) {
   return (
     <div className="bg-white dark:bg-slate-800 rounded-[2rem] border border-slate-100 dark:border-slate-700 shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.2)] overflow-hidden">
@@ -34,6 +34,7 @@ export function ExpenseTable({
             activeCategories={expenses.filter(e => e.actual > 0).map(e => e.name)}
             scanTriggerRef={scanTriggerRef}
             smartRules={smartRules}
+            onSaveRecurring={onSaveRecurring}
           />
           <button
             onClick={onAddCategory}

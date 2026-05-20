@@ -26,7 +26,7 @@ const AddExpenseDialog = lazy(() => import('./AddExpenseDialog.jsx').then(m => (
 const NewMonthDialog   = lazy(() => import('./NewMonthDialog.jsx').then(m => ({ default: m.NewMonthDialog })));
 const ChatAgent        = lazy(() => import('./ChatAgent.jsx').then(m => ({ default: m.ChatAgent })));
 import { HistoryTab } from './HistoryTab.jsx';
-import { LedgerTab } from './LedgerTab.jsx';
+import { LedgerTab, ledgerCache } from './LedgerTab.jsx';
 const SettingsPanel    = lazy(() => import('./SettingsPanel.jsx').then(m => ({ default: m.SettingsPanel })));
 const AddCategoryDialog    = lazy(() => import('./AddCategoryDialog.jsx').then(m => ({ default: m.AddCategoryDialog })));
 const ReconcileDialog      = lazy(() => import('./ReconcileDialog.jsx').then(m => ({ default: m.ReconcileDialog })));
@@ -114,6 +114,7 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
   const [salaryDraft, setSalaryDraft] = useState('');
   const [iconPickerFor, setIconPickerFor] = useState(null);
   const [showUserMenu, setShowUserMenu]     = useState(false);
+  const [refreshKey, setRefreshKey]             = useState(0);
   const [showReconcile, setShowReconcile]       = useState(false);
   const [showBulkRecurring, setShowBulkRecurring] = useState(false);
   const [showMessages, setShowMessages]         = useState(false);
@@ -556,7 +557,7 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
 
         {/* History tab */}
         {activeTab === 'history' && (
-          <HistoryTab sheetId={selectedSheetId} accessToken={user.accessToken} onRefresh={refresh} currencySymbol={currencySymbol} />
+          <HistoryTab sheetId={selectedSheetId} accessToken={user.accessToken} onRefresh={refresh} currencySymbol={currencySymbol} refreshKey={refreshKey} />
         )}
 
         {/* Ledger tab */}
@@ -573,6 +574,7 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
               ...prev,
               transactionNotes: { ...(prev.transactionNotes || {}), [key]: data },
             }))}
+            refreshKey={refreshKey}
           />
         )}
 
@@ -649,8 +651,17 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
                 accessToken={user.accessToken}
                 sheetId={selectedSheetId}
                 monthName={selectedMonth?.name}
-                onRefresh={refresh}
+                onRefresh={() => { ledgerCache.delete(selectedSheetId); setRefreshKey(k => k + 1); refresh(); }}
                 scanTriggerRef={scanTriggerRef}
+                onSaveRecurring={item => updateSettings(prev => ({
+                  ...prev,
+                  recurringExpenses: [
+                    ...(prev.recurringExpenses || []).filter(
+                      r => !(r.category === item.category && r.vendor.toLowerCase() === item.vendor.toLowerCase())
+                    ),
+                    item,
+                  ],
+                }))}
                 smartRules={settings.smartRules || []}
               />
 
@@ -722,6 +733,7 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
           }))}
           nonMonthlyVendors={nonMonthlyItems.map(i => i.vendor.toLowerCase())}
           onNonMonthlyChanged={refreshNonMonthly}
+          onAddExpense={!isReadOnly ? () => setShowAddDialog({ prefillCategory: detail.expense }) : undefined}
         /></Suspense>
       )}
 
@@ -731,10 +743,13 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
           sheetId={selectedSheetId}
           monthName={selectedMonth?.name}
           categories={expenses.map(e => e.name)}
+          prefillCategory={typeof showAddDialog === 'object' ? showAddDialog.prefillCategory : null}
           onClose={() => setShowAddDialog(false)}
+          lockCategory={typeof showAddDialog === 'object' && !!showAddDialog.prefillCategory}
           onSuccess={(result) => {
+            ledgerCache.delete(selectedSheetId);
+            setRefreshKey(k => k + 1);
             if (result?.queued) {
-              // Optimistic update: bump the category's actual spend locally
               setData(prev => prev.map(d => {
                 if (d.row[0] === result.category) {
                   const newActual    = (parseFloat(d.row[1]) || 0) + result.amount;
