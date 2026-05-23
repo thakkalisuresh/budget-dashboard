@@ -234,7 +234,7 @@ async function checkDuplicates(transactions, accessToken, sheetId, allCategories
   const existingMap = {};
   await Promise.all(categoriesToFetch.map(async (cat) => {
     try {
-      const rows = await fetchDetailRows(cat, accessToken, sheetId);
+      const rows = await fetchDetailRows(cat, accessToken, sheetId, monthName);
       existingMap[cat] = rows;
     } catch { existingMap[cat] = []; }
   }));

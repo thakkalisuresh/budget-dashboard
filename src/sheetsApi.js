@@ -108,8 +108,19 @@ export function normalizeStatementDate(dateStr) {
 // v1: A=Month B=Year C=Description D=Amount  E+=UUIDs  (SUM at F1)
 // v2: A=Month B=Year C=Date       D=Description E=Amount F+=UUIDs (SUM at F1)
 
-function detectV2(values) {
-  return Array.isArray(values) && Array.isArray(values[0]) &&
+const _V2_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+function isV2EligibleMonth(monthName) {
+  if (!monthName) return true;
+  const parts = String(monthName).trim().split(/\s+/);
+  const mIdx = _V2_MONTHS.findIndex(m => m.toLowerCase() === (parts[0] || '').toLowerCase());
+  const yr = parseInt(parts[1], 10);
+  if (mIdx < 0 || isNaN(yr)) return true;
+  return yr > 2026 || (yr === 2026 && mIdx >= 5); // June 2026+
+}
+
+function detectV2(values, monthName = '') {
+  return isV2EligibleMonth(monthName) &&
+    Array.isArray(values) && Array.isArray(values[0]) &&
     String(values[0][2] || '').trim() === 'Date';
 }
 
@@ -690,7 +701,7 @@ export async function undoHistoryEntry(sheetId, accessToken, entry) {
 
 // ─── Read ─────────────────────────────────────────────────────────────────────
 
-export async function fetchDetailRows(categoryName, accessToken, sheetId) {
+export async function fetchDetailRows(categoryName, accessToken, sheetId, monthName = '') {
   // Serve from cache if fresh (Item 12)
   const cacheKey = `${sheetId}:${categoryName}`;
   const cached = _detailCache.get(cacheKey);
@@ -727,8 +738,8 @@ export async function fetchDetailRows(categoryName, accessToken, sheetId) {
     }
   }
 
-  // Detect schema version from header row
-  const isV2    = detectV2(values);
+  // Detect schema version from header row (gated: only June 2026+)
+  const isV2    = detectV2(values, monthName);
   const descCol = isV2 ? 3 : config.descCol;
   const amtCol  = isV2 ? 4 : config.amtCol;
   const uuidCol = isV2 ? 5 : uuidStart(config);
@@ -829,7 +840,7 @@ export async function addOrUpdateExpense(
 
   const values   = await fetchRaw(sheetId, config.sheet, accessToken);
   const dataRows = values.slice(1);
-  const isV2     = detectV2(values);
+  const isV2     = detectV2(values, monthName);
 
   let month, year;
   if (monthName) {

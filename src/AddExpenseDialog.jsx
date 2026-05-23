@@ -63,7 +63,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
     setLoadingVendors(true);
     setVendor('');
     setSuggestions([]);
-    fetchDetailRows(category, accessToken, sheetId)
+    fetchDetailRows(category, accessToken, sheetId, monthName)
       .then(rows => setAllVendors(rows.map(r => r.description)))
       .catch(() => setAllVendors([]))
       .finally(() => setLoadingVendors(false));

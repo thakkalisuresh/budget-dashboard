@@ -388,7 +388,7 @@ function Dashboard({ auth }) {
     if (!hasDetail(name)) return;
     setDetail({ expense: name, rows: null, loading: true });
     try {
-      const rows = await fetchDetailRows(name, user.accessToken, selectedSheetId);
+      const rows = await fetchDetailRows(name, user.accessToken, selectedSheetId, selectedMonth?.name);
       setDetail({ expense: name, rows, loading: false });
     } catch {
       setDetail({ expense: name, rows: [], loading: false });
@@ -398,7 +398,7 @@ function Dashboard({ auth }) {
   const handleDetailRefresh = async () => {
     if (!detail) return;
     try {
-      const rows = await fetchDetailRows(detail.expense, user.accessToken, selectedSheetId);
+      const rows = await fetchDetailRows(detail.expense, user.accessToken, selectedSheetId, selectedMonth?.name);
       setDetail(d => ({ ...d, rows, loading: false }));
       refresh();
     } catch {

@@ -47,12 +47,12 @@ function downloadCSV(filename, headers, rows) {
   URL.revokeObjectURL(url);
 }
 
-async function buildLedger(sheetId, accessToken) {
+async function buildLedger(sheetId, accessToken, monthName = '') {
   const categories = getAllCategoryNames();
   const [historyEntries, ...categoryRows] = await Promise.all([
     fetchHistory(sheetId, accessToken),
     ...categories.map(cat =>
-      fetchDetailRows(cat, accessToken, sheetId)
+      fetchDetailRows(cat, accessToken, sheetId, monthName)
         .then(rows => ({ cat, rows }))
         .catch(() => ({ cat, rows: [] }))
     ),
@@ -125,7 +125,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
     }
     if (isRefresh) setRefreshing(true); else setLoading(true);
     try {
-      const data = await buildLedger(sheetId, accessToken);
+      const data = await buildLedger(sheetId, accessToken, monthName);
       ledgerCache.set(sheetId, { data, fetchedAt: Date.now() });
       setTransactions(data);
     }
