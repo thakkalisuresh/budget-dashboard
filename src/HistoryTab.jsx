@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { RefreshCw, Clock, Inbox, Undo2 } from 'lucide-react';
-import { fetchHistory, undoHistoryEntry } from './sheetsApi.js';
+import { fetchHistory, undoHistoryEntry, formatTxDate } from './sheetsApi.js';
 
 const ACTION_STYLES = {
   'Added':           { bg: 'bg-emerald-50 dark:bg-emerald-900/30', text: 'text-emerald-700 dark:text-emerald-300' },
@@ -185,6 +185,9 @@ export function HistoryTab({ sheetId, accessToken, onRefresh, currencySymbol = '
                     {entry.amount != null ? `${currencySymbol}${Number(entry.amount).toFixed(2)}` : '—'}
                   </span>
                   <p className="text-[10px] text-slate-400 mt-0.5">{formatTimestamp(entry.timestamp)}</p>
+                  {entry.txDate && (
+                    <p className="text-[10px] text-slate-400 mt-0.5">Tx: {formatTxDate(entry.txDate)}</p>
+                  )}
                   {entry.user && (
                     <p className="text-[10px] font-bold text-slate-400 mt-0.5">{entry.user}</p>
                   )}

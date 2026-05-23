@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Camera, X, Plus, AlertCircle, CheckCircle, ChevronRight, Upload, FileText } from 'lucide-react';
-import { CATEGORIES, fetchDetailRows, checkExistingExpense, fuzzyNamesMatch, fetchAllLoggedTransactions, getAllCategoryNames, markNonMonthly } from './sheetsApi.js';
+import { CATEGORIES, fetchDetailRows, checkExistingExpense, fuzzyNamesMatch, fetchAllLoggedTransactions, getAllCategoryNames, markNonMonthly, normalizeStatementDate, todayIso } from './sheetsApi.js';
 import { addOrUpdateExpense } from './useExpense.js';
 import { applySmartRules } from './smartRules.js';
 
@@ -500,7 +500,8 @@ export function ReceiptScanButton({ accessToken, sheetId, monthName, onSuccess, 
       try {
         await addOrUpdateExpense(
           t.category || 'Misc', t.vendor, t.amount,
-          accessToken, sheetId, monthName, 'import', false
+          accessToken, sheetId, monthName, 'import',
+          normalizeStatementDate(t.date) || todayIso()
         );
         if (t.isNonMonthly) {
           try { await markNonMonthly(sheetId, accessToken, t.vendor, t.amount); } catch { /* non-fatal */ }

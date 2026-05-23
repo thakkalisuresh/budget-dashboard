@@ -73,6 +73,61 @@ function escapeFormulaString(name) {
   return String(name).replace(/"/g, '""');
 }
 
+// ─── Date utilities ───────────────────────────────────────────────────────────
+
+/** Returns today as YYYY-MM-DD */
+export function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** Formats a YYYY-MM-DD string as "May 23 2026" */
+export function formatTxDate(dateStr) {
+  if (!dateStr) return '';
+  try {
+    const m = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) {
+      return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+        .toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+        .replace(',', '');
+    }
+    return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).replace(',', '');
+  } catch { return String(dateStr); }
+}
+
+/** Normalises statement date strings (MM/DD/YYYY or YYYY-MM-DD) → YYYY-MM-DD */
+export function normalizeStatementDate(dateStr) {
+  if (!dateStr) return null;
+  const mdy = String(dateStr).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mdy) return `${mdy[3]}-${mdy[1].padStart(2, '0')}-${mdy[2].padStart(2, '0')}`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr))) return String(dateStr);
+  return null;
+}
+
+// ─── Schema detection (v1 vs v2) ─────────────────────────────────────────────
+// v2 sheets have "Date" as the third header column (C1).
+// v1: A=Month B=Year C=Description D=Amount  E+=UUIDs  (SUM at F1)
+// v2: A=Month B=Year C=Date       D=Description E=Amount F+=UUIDs (SUM at F1)
+
+function detectV2(values) {
+  return Array.isArray(values) && Array.isArray(values[0]) &&
+    String(values[0][2] || '').trim() === 'Date';
+}
+
+// ─── Detail-row cache (Item 12) ───────────────────────────────────────────────
+
+const _detailCache = new Map(); // `${sheetId}:${cat}` → { data, ts }
+const DETAIL_CACHE_TTL = 2 * 60 * 1000; // 2 min
+
+export function invalidateDetailCache(sheetId, categoryName) {
+  if (categoryName) {
+    _detailCache.delete(`${sheetId}:${categoryName}`);
+  } else {
+    for (const k of [..._detailCache.keys()]) {
+      if (k.startsWith(sheetId + ':')) _detailCache.delete(k);
+    }
+  }
+}
+
 // ── Transaction UUID ──────────────────────────────────────────────────────────
 
 /**
@@ -421,19 +476,17 @@ async function ensureHistorySheet(sheetId, accessToken) {
 }
 
 export async function appendHistoryEntry(sheetId, accessToken, {
-  action, category = '', vendor = '', amount = null, details = '', uuid = '',
+  action, category = '', vendor = '', amount = null, details = '', uuid = '', txDate = '',
 }) {
   try {
     await ensureHistorySheet(sheetId, accessToken);
     const timestamp = new Date().toISOString();
-    // Auth moved to sessionStorage — check both to be safe
     let userName = '';
     try {
       const raw = sessionStorage.getItem('budget_auth') || localStorage.getItem('budget_auth') || '{}';
       userName = JSON.parse(raw).name || '';
     } catch { /* ignore */ }
-    // Columns: A=Timestamp B=Action C=Category D=Vendor E=Amount F=Details G=(reserved) H=User I=UUID
-    // safeText() prevents a malicious vendor/category/user value from being evaluated as a formula.
+    // Columns: A=Timestamp B=Action C=Category D=Vendor E=Amount F=Details G=(reserved) H=User I=UUID J=TxDate
     const row = [
       timestamp,
       safeText(action || ''),
@@ -444,6 +497,7 @@ export async function appendHistoryEntry(sheetId, accessToken, {
       '',
       safeText(userName),
       uuid || '',
+      txDate || '',
     ];
 
     // Use an explicit PUT to a calculated row number rather than the append API,
@@ -452,8 +506,8 @@ export async function appendHistoryEntry(sheetId, accessToken, {
     const colAData = await apiFetch(sheetId, `/values/${colARange}`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-    const nextRow = (colAData.values || []).length + 1; // next empty row (1-indexed)
-    const writeRange = encodeURIComponent(`'History'!A${nextRow}:I${nextRow}`);
+    const nextRow = (colAData.values || []).length + 1;
+    const writeRange = encodeURIComponent(`'History'!A${nextRow}:J${nextRow}`);
     await apiFetch(sheetId, `/values/${writeRange}?valueInputOption=USER_ENTERED`, {
       method: 'PUT',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -467,7 +521,7 @@ export async function appendHistoryEntry(sheetId, accessToken, {
 
 export async function fetchHistory(sheetId, accessToken) {
   try {
-    const range = encodeURIComponent("'History'!A:I");
+    const range = encodeURIComponent("'History'!A:J");
     const json = await apiFetch(sheetId, `/values/${range}?valueRenderOption=UNFORMATTED_VALUE`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
@@ -483,6 +537,7 @@ export async function fetchHistory(sheetId, accessToken) {
       details:   row[5] || '',
       user:      row[7] || '',
       uuid:      row[8] || '',
+      txDate:    row[9] || '',
     }))
     .filter(e => e.action)
     .reverse();
@@ -636,6 +691,11 @@ export async function undoHistoryEntry(sheetId, accessToken, entry) {
 // ─── Read ─────────────────────────────────────────────────────────────────────
 
 export async function fetchDetailRows(categoryName, accessToken, sheetId) {
+  // Serve from cache if fresh (Item 12)
+  const cacheKey = `${sheetId}:${categoryName}`;
+  const cached = _detailCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < DETAIL_CACHE_TTL) return cached.data;
+
   const config = getEffectiveSheetMap()[categoryName];
   if (!config) return [];
 
@@ -660,24 +720,35 @@ export async function fetchDetailRows(categoryName, accessToken, sheetId) {
         const amounts = parseAmounts(rawAmt);
         if (amounts.length === 0) return;
         const uuids = amounts.map((_, i) => String(row[legacyUuidCol + i] || ''));
-        result.push({ rowIndex: j + 2, description: String(desc), amounts, uuids });
+        result.push({ rowIndex: j + 2, description: String(desc), amounts, uuids, date: '', _v2: false });
       });
+      _detailCache.set(cacheKey, { data: result, ts: Date.now() });
       return result;
     }
   }
 
+  // Detect schema version from header row
+  const isV2    = detectV2(values);
+  const descCol = isV2 ? 3 : config.descCol;
+  const amtCol  = isV2 ? 4 : config.amtCol;
+  const uuidCol = isV2 ? 5 : uuidStart(config);
+  const dateCol = isV2 ? 2 : -1;
+
   const result = [];
-  const uuidCol = uuidStart(config);
   values.slice(1).forEach((row, j) => {
-    const desc = row[config.descCol];
-    const rawAmt = row[config.amtCol];
+    const desc   = row[descCol];
+    const rawAmt = row[amtCol];
     if (!desc || String(desc).trim() === '') return;
-    const amounts = parseAmounts(rawAmt);
+    const amounts = isV2
+      ? (() => { const n = parseFloat(String(rawAmt || '').replace(/[$,]/g, '')); return (!isNaN(n) && n > 0) ? [n] : []; })()
+      : parseAmounts(rawAmt);
     if (amounts.length === 0) return;
-    // Read per-transaction UUIDs from columns E, F, G… (index-aligned with amounts)
     const uuids = amounts.map((_, i) => String(row[uuidCol + i] || ''));
-    result.push({ rowIndex: j + 2, description: String(desc), amounts, uuids });
+    const date  = isV2 ? String(row[dateCol] || '').trim() : '';
+    result.push({ rowIndex: j + 2, description: String(desc), amounts, uuids, date, _v2: isV2 });
   });
+
+  _detailCache.set(cacheKey, { data: result, ts: Date.now() });
   return result;
 }
 
@@ -746,70 +817,60 @@ export async function fetchAllLoggedTransactions(categories, accessToken, sheetI
 
 export async function addOrUpdateExpense(
   categoryName, vendorName, amount, accessToken, sheetId, monthName,
-  source = 'manual',
+  source = 'manual', txDate = null,
 ) {
   if (!navigator.onLine) {
-    enqueue({ type: 'add_expense', payload: { categoryName, vendorName, amount, monthName, source } });
+    enqueue({ type: 'add_expense', payload: { categoryName, vendorName, amount, monthName, source, txDate } });
     return { queued: true };
   }
 
   const config = getEffectiveSheetMap()[categoryName];
   if (!config) throw new Error(`Unknown category: ${categoryName}`);
 
-  const values = await fetchRaw(sheetId, config.sheet, accessToken);
+  const values   = await fetchRaw(sheetId, config.sheet, accessToken);
   const dataRows = values.slice(1);
+  const isV2     = detectV2(values);
 
-  let foundIndex = -1;
-  for (let i = 0; i < dataRows.length; i++) {
-    const desc = dataRows[i][config.descCol];
-    if (desc && String(desc).trim().toLowerCase() === vendorName.trim().toLowerCase()) {
-      foundIndex = i;
-      break;
-    }
+  let month, year;
+  if (monthName) {
+    const parts = monthName.split(' ');
+    month = parts[0];
+    year  = parseInt(parts[1]) || new Date().getFullYear();
+  } else {
+    const now = new Date();
+    month = now.toLocaleString('en-US', { month: 'short' });
+    year  = now.getFullYear();
   }
 
-  const uuidCol = uuidStart(config);
+  const newUUID = generateTransactionUUID(amount);
 
-  if (foundIndex >= 0) {
-    const sheetRow = foundIndex + 2;
-    const currentValue = dataRows[foundIndex][config.amtCol] ?? '';
-    const existing = parseAmounts(currentValue);
-    const newUUID = generateTransactionUUID(amount);
-    // Write new formula + new UUID in the next UUID column
-    await writeCell(sheetId, config.sheet, sheetRow, config.amtCol, buildFormula([...existing, amount]), accessToken);
-    await writeCell(sheetId, config.sheet, sheetRow, uuidCol + existing.length, newUUID, accessToken);
-    await appendHistoryEntry(sheetId, accessToken, {
-      action: 'Updated', category: categoryName, vendor: vendorName, amount, uuid: newUUID,
-    });
-  } else {
-    let month, year;
-    if (monthName) {
-      const parts = monthName.split(' ');
-      month = parts[0];
-      year = parseInt(parts[1]) || new Date().getFullYear();
-    } else {
-      const now = new Date();
-      month = now.toLocaleString('en-US', { month: 'short' });
-      year = now.getFullYear();
-    }
-    const newUUID = generateTransactionUUID(amount);
-    const newRow = Array(uuidCol + 1).fill('');
-    newRow[0] = month;
-    newRow[1] = year;
-    newRow[config.descCol] = safeText(vendorName);
-    newRow[config.amtCol]  = amount;
-    newRow[uuidCol]        = newUUID;
+  if (isV2) {
+    // v2: always insert a new row per transaction — no vendor grouping
+    const dateVal  = txDate || todayIso();
+    const descColV2 = 3;
+    const amtColV2  = 4;
+    const uuidColV2 = 5;
 
     let targetRow = -1;
     for (let i = 0; i < dataRows.length; i++) {
-      const desc = dataRows[i][config.descCol];
-      const amt  = dataRows[i][config.amtCol];
-      const hasDesc = desc && String(desc).trim() !== '';
-      const hasAmt  = amt  && String(amt).trim()  !== '';
-      if (!hasDesc && !hasAmt) { targetRow = i + 2; break; }
+      const desc = dataRows[i][descColV2];
+      const amt  = dataRows[i][amtColV2];
+      if ((!desc || String(desc).trim() === '') && (!amt || String(amt).trim() === '')) {
+        targetRow = i + 2;
+        break;
+      }
     }
     if (targetRow === -1) targetRow = dataRows.length + 2;
-    const range = encodeURIComponent(`'${config.sheet}'!A${targetRow}:${colLetter(uuidCol)}${targetRow}`);
+
+    const newRow = Array(uuidColV2 + 1).fill('');
+    newRow[0]          = month;
+    newRow[1]          = year;
+    newRow[2]          = dateVal;
+    newRow[descColV2]  = safeText(vendorName);
+    newRow[amtColV2]   = amount;
+    newRow[uuidColV2]  = newUUID;
+
+    const range = encodeURIComponent(`'${config.sheet}'!A${targetRow}:${colLetter(uuidColV2)}${targetRow}`);
     await apiFetch(sheetId, `/values/${range}?valueInputOption=USER_ENTERED`, {
       method: 'PUT',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -817,42 +878,101 @@ export async function addOrUpdateExpense(
     });
     await appendHistoryEntry(sheetId, accessToken, {
       action: source === 'scan' ? 'Receipt Scan' : source === 'import' ? 'Import' : 'Added',
-      category: categoryName, vendor: vendorName, amount, uuid: newUUID,
+      category: categoryName, vendor: vendorName, amount, uuid: newUUID, txDate: dateVal,
     });
+  } else {
+    // v1: group by vendor in a single row, amounts as formula
+    const uuidCol = uuidStart(config);
+
+    let foundIndex = -1;
+    for (let i = 0; i < dataRows.length; i++) {
+      const desc = dataRows[i][config.descCol];
+      if (desc && String(desc).trim().toLowerCase() === vendorName.trim().toLowerCase()) {
+        foundIndex = i;
+        break;
+      }
+    }
+
+    if (foundIndex >= 0) {
+      const sheetRow     = foundIndex + 2;
+      const currentValue = dataRows[foundIndex][config.amtCol] ?? '';
+      const existing     = parseAmounts(currentValue);
+      await writeCell(sheetId, config.sheet, sheetRow, config.amtCol, buildFormula([...existing, amount]), accessToken);
+      await writeCell(sheetId, config.sheet, sheetRow, uuidCol + existing.length, newUUID, accessToken);
+      await appendHistoryEntry(sheetId, accessToken, {
+        action: 'Updated', category: categoryName, vendor: vendorName, amount, uuid: newUUID,
+      });
+    } else {
+      const newRow = Array(uuidCol + 1).fill('');
+      newRow[0]              = month;
+      newRow[1]              = year;
+      newRow[config.descCol] = safeText(vendorName);
+      newRow[config.amtCol]  = amount;
+      newRow[uuidCol]        = newUUID;
+
+      let targetRow = -1;
+      for (let i = 0; i < dataRows.length; i++) {
+        const desc = dataRows[i][config.descCol];
+        const amt  = dataRows[i][config.amtCol];
+        const hasDesc = desc && String(desc).trim() !== '';
+        const hasAmt  = amt  && String(amt).trim()  !== '';
+        if (!hasDesc && !hasAmt) { targetRow = i + 2; break; }
+      }
+      if (targetRow === -1) targetRow = dataRows.length + 2;
+
+      const range = encodeURIComponent(`'${config.sheet}'!A${targetRow}:${colLetter(uuidCol)}${targetRow}`);
+      await apiFetch(sheetId, `/values/${range}?valueInputOption=USER_ENTERED`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: [newRow] }),
+      });
+      await appendHistoryEntry(sheetId, accessToken, {
+        action: source === 'scan' ? 'Receipt Scan' : source === 'import' ? 'Import' : 'Added',
+        category: categoryName, vendor: vendorName, amount, uuid: newUUID,
+      });
+    }
   }
+
+  invalidateDetailCache(sheetId, categoryName);
 }
 
-export async function updateVendorName(categoryName, rowIndex, newName, accessToken, sheetId, oldName = '') {
+export async function updateTransactionDate(categoryName, rowIndex, newDate, accessToken, sheetId) {
   const config = getEffectiveSheetMap()[categoryName];
   if (!config) throw new Error(`Unknown category: ${categoryName}`);
-  await writeCell(sheetId, config.sheet, rowIndex, config.descCol, safeText(newName), accessToken);
-  // Also update the non-monthly tile if this vendor was listed there
-  // Rename in UserSettings is handled via onVendorRenamed callback in DetailPanel
+  await writeCell(sheetId, config.sheet, rowIndex, 2, newDate, accessToken); // col C = index 2
+  invalidateDetailCache(sheetId, categoryName);
+}
+
+export async function updateVendorName(categoryName, rowIndex, newName, accessToken, sheetId, oldName = '', v2 = false) {
+  const config   = getEffectiveSheetMap()[categoryName];
+  if (!config) throw new Error(`Unknown category: ${categoryName}`);
+  const descCol  = v2 ? 3 : config.descCol;
+  await writeCell(sheetId, config.sheet, rowIndex, descCol, safeText(newName), accessToken);
   await appendHistoryEntry(sheetId, accessToken, {
     action: 'Renamed', category: categoryName, vendor: newName,
     details: oldName ? `${oldName} → ${newName}` : '',
   });
+  invalidateDetailCache(sheetId, categoryName);
 }
 
 export async function updateVendorAmounts(
-  categoryName, rowIndex, amounts, accessToken, sheetId, vendorName = '', previousTotal = null, uuids = [],
+  categoryName, rowIndex, amounts, accessToken, sheetId, vendorName = '', previousTotal = null, uuids = [], v2 = false,
 ) {
   const config  = getEffectiveSheetMap()[categoryName];
   if (!config) throw new Error(`Unknown category: ${categoryName}`);
-  const uuidCol = uuidStart(config);
+  const amtCol  = v2 ? 4 : config.amtCol;
+  const uuidCol = v2 ? 5 : uuidStart(config);
 
   if (amounts.length === 0) {
-    // Clear the full row including UUID columns (up to 20 UUIDs max)
     await clearRowRange(sheetId, config.sheet, rowIndex, uuidCol + 19, accessToken);
     await appendHistoryEntry(sheetId, accessToken, {
       action: 'Deleted', category: categoryName, vendor: vendorName,
       amount: previousTotal,
     });
   } else {
-    await writeCell(sheetId, config.sheet, rowIndex, config.amtCol, buildFormula(amounts), accessToken);
-    // Rewrite UUID columns in sync with new amounts array (clears any trailing stale UUIDs)
+    await writeCell(sheetId, config.sheet, rowIndex, amtCol, v2 ? amounts[0] : buildFormula(amounts), accessToken);
     if (uuids.length > 0) {
-      const maxCols = Math.max(uuids.length + 2, 5); // clear a few extra to remove stale entries
+      const maxCols   = Math.max(uuids.length + 2, 5);
       const uuidValues = Array(maxCols).fill('').map((_, i) => uuids[i] || '');
       const uuidRange  = encodeURIComponent(
         `'${config.sheet}'!${colLetter(uuidCol)}${rowIndex}:${colLetter(uuidCol + maxCols - 1)}${rowIndex}`
@@ -869,6 +989,7 @@ export async function updateVendorAmounts(
       details: previousTotal != null ? `was: $${previousTotal.toFixed(2)}` : '',
     });
   }
+  invalidateDetailCache(sheetId, categoryName);
 }
 
 // ─── Delete a budget category ────────────────────────────────────────────────
@@ -1061,20 +1182,20 @@ export async function createCategoryDetailSheet(sheetId, accessToken, { category
     }),
   });
 
-  // Write headers: A=Month, B=Year, C=Description, D=Amount
-  const headerRange = encodeURIComponent(`'${categoryName}'!A1:D1`);
+  // Write v2 headers: A=Month, B=Year, C=Date, D=Description, E=Amount
+  const headerRange = encodeURIComponent(`'${categoryName}'!A1:E1`);
   await apiFetch(sheetId, `/values/${headerRange}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values: [['Month', 'Year', 'Description', 'Amount']] }),
+    body: JSON.stringify({ values: [['Month', 'Year', 'Date', 'Description', 'Amount']] }),
   });
 
-  // Put the SUM total at F1 — Totals sheet will reference this cell
+  // Put the SUM total at F1 — Totals sheet references this cell
   const totalRange = encodeURIComponent(`'${categoryName}'!F1`);
   await apiFetch(sheetId, `/values/${totalRange}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values: [['=SUM(D2:D1000)']] }),
+    body: JSON.stringify({ values: [['=SUM(E2:E1000)']] }),
   });
 }
 

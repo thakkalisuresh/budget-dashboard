@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Plus, Zap } from 'lucide-react';
-import { CATEGORIES, fetchDetailRows, checkExistingExpense, markNonMonthly } from './sheetsApi.js';
+import { CATEGORIES, fetchDetailRows, checkExistingExpense, markNonMonthly, todayIso } from './sheetsApi.js';
 import { addOrUpdateExpense } from './useExpense.js';
 import { applySmartRules } from './smartRules.js';
 
@@ -27,6 +27,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
   const [vendor, setVendor]             = useState('');
   const [ruleHint, setRuleHint]         = useState(''); // category auto-filled by a rule
   const [amount, setAmount]             = useState('');
+  const [txDate, setTxDate]             = useState(todayIso);
   const [isNonMonthly, setIsNonMonthly] = useState(false);
   const [isRecurring, setIsRecurring]   = useState(false);
   const [saving, setSaving]             = useState(false);
@@ -108,7 +109,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
     setSaving(true);
     setDupWarning(false);
     try {
-      const result = await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'manual');
+      const result = await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'manual', txDate);
       if (result?.queued) {
         if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
         setQueued(true);
@@ -138,11 +139,11 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
     setSaving(true);
     setDupWarning(false);
     try {
-      const result = await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'manual');
+      const result = await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'manual', txDate);
       if (isNonMonthly) await markNonMonthly(sheetId, accessToken, vendor.trim(), amt);
       if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
       onSuccess?.();
-      // Reset for next entry — keep category
+      // Reset for next entry — keep category and date
       setVendor('');
       setAmount('');
       setIsNonMonthly(false);
@@ -292,6 +293,19 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                   className={`${inputCls} pl-8`}
                 />
               </div>
+            </div>
+
+            {/* Date */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+                Transaction Date
+              </label>
+              <input
+                type="date"
+                value={txDate}
+                onChange={e => setTxDate(e.target.value || todayIso())}
+                className={inputCls}
+              />
             </div>
 
             {/* Toggles row */}

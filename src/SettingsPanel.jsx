@@ -875,7 +875,7 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
             Clear Cache & Refresh
           </button>
           <p className="text-center text-[10px] text-slate-300 dark:text-slate-600 font-mono mt-2">
-            v{__APP_VERSION__} · {__COMMIT_SHA__} · {new Date(__BUILD_TIME__).toLocaleString()}
+            v{__APP_VERSION__} · {new Date(__BUILD_TIME__).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).replace(',', '')}
           </p>
         </div>
 

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Repeat, Plus } from 'lucide-react';
-import { updateVendorName, updateVendorAmounts, unmarkNonMonthly, renameNonMonthly, markNonMonthly } from './sheetsApi.js';
+import { updateVendorName, updateVendorAmounts, updateTransactionDate, unmarkNonMonthly, renameNonMonthly, markNonMonthly, formatTxDate, todayIso } from './sheetsApi.js';
 
 // ── Vendor logo helpers ───────────────────────────────────────────────────────
 
@@ -170,19 +170,21 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
     }
   };
 
-  // ── Vendor name edit ────────────────────────────────────────────────────
+  // ── Vendor name + date edit ──────────────────────────────────────────────
   const saveVendorName = (row) => {
-    const newName  = editingVendor?.value?.trim();
+    const newName       = editingVendor?.value?.trim();
     const wasNonMonthly = editingVendor?.wasNonMonthly ?? false;
     const isNonMonthly  = editingVendor?.isNonMonthly  ?? false;
     if (!newName) { setEditingVendor(null); return; }
     withSave(async () => {
       if (newName !== row.description) {
-        await updateVendorName(expense, row.rowIndex, newName, accessToken, sheetId, row.description);
+        await updateVendorName(expense, row.rowIndex, newName, accessToken, sheetId, row.description, row._v2);
         await renameNonMonthly(sheetId, accessToken, row.description, newName);
         onVendorRenamed?.(row.description, newName);
       }
-      // Handle non-monthly toggle change
+      if (row._v2 && editingVendor?.date !== undefined && editingVendor.date !== row.date) {
+        await updateTransactionDate(expense, row.rowIndex, editingVendor.date, accessToken, sheetId);
+      }
       if (isNonMonthly !== wasNonMonthly) {
         const total = row.amounts.reduce((a, b) => a + b, 0);
         if (isNonMonthly) await markNonMonthly(sheetId, accessToken, newName, total);
@@ -202,8 +204,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
         i === editingAmount.amtIndex ? newVal : a
       );
       const prevTotal = row.amounts.reduce((a, b) => a + b, 0);
-      // UUIDs stay the same when editing a value — same transaction, corrected amount
-      await updateVendorAmounts(expense, row.rowIndex, newAmounts, accessToken, sheetId, row.description, prevTotal, row.uuids || []);
+      await updateVendorAmounts(expense, row.rowIndex, newAmounts, accessToken, sheetId, row.description, prevTotal, row.uuids || [], row._v2);
       setEditingAmount(null);
     });
   };
@@ -219,7 +220,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
       const newAmounts = row.amounts.filter((_, i) => i !== amtIndex);
       const newUuids   = (row.uuids || []).filter((_, i) => i !== amtIndex);
       const prevTotal  = row.amounts.reduce((a, b) => a + b, 0);
-      await updateVendorAmounts(expense, row.rowIndex, newAmounts, accessToken, sheetId, row.description, prevTotal, newUuids);
+      await updateVendorAmounts(expense, row.rowIndex, newAmounts, accessToken, sheetId, row.description, prevTotal, newUuids, row._v2);
       if (newAmounts.length === 0) await unmarkNonMonthly(sheetId, accessToken, row.description);
     });
   };
@@ -228,7 +229,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
   const deleteAllAmounts = (row) => {
     withSave(async () => {
       const prevTotal = row.amounts.reduce((a, b) => a + b, 0);
-      await updateVendorAmounts(expense, row.rowIndex, [], accessToken, sheetId, row.description, prevTotal, []);
+      await updateVendorAmounts(expense, row.rowIndex, [], accessToken, sheetId, row.description, prevTotal, [], row._v2);
       await unmarkNonMonthly(sheetId, accessToken, row.description);
       setDeletingVendor(null);
     });
@@ -321,7 +322,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                   </button>
                 </div>
               ) : editingVendor?.rowIndex === row.rowIndex ? (
-                // Editing vendor name
+                // Editing vendor name (+ date for v2)
                 <div className="flex flex-col border-b border-slate-100 dark:border-slate-700/50">
                   <div className="flex items-center gap-2 px-4 py-2.5">
                     <input
@@ -346,6 +347,19 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                       <X className="w-4 h-4" />
                     </button>
                   </div>
+                  {/* Date field — v2 only */}
+                  {row._v2 && (
+                    <div className="px-4 pb-2.5">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Date</p>
+                      <input
+                        type="date"
+                        value={editingVendor.date ?? row.date ?? ''}
+                        onChange={e => setEditingVendor(ev => ({ ...ev, date: e.target.value }))}
+                        className={inputCls}
+                        disabled={saving}
+                      />
+                    </div>
+                  )}
                   {/* Non-monthly toggle */}
                   <label className="flex items-center gap-2.5 px-4 pb-3 cursor-pointer group">
                     <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${editingVendor.isNonMonthly ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700'}`}
@@ -367,9 +381,22 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                     size={22}
                     onEditDomain={() => setEditingDomain({ vendorName: row.description, draft: resolveVendorDomain(row.description) || '' })}
                   />
-                  <span className="text-sm font-black text-slate-700 dark:text-slate-200 flex-1 truncate">
-                    {row.description}
-                  </span>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm font-black text-slate-700 dark:text-slate-200 block truncate">
+                      {row.description}
+                    </span>
+                    {row._v2 && (
+                      <span
+                        onClick={() => {
+                          const nm = nonMonthlyVendors.includes(row.description.toLowerCase());
+                          setEditingVendor({ rowIndex: row.rowIndex, value: row.description, date: row.date || todayIso(), isNonMonthly: nm, wasNonMonthly: nm });
+                        }}
+                        className={`text-[10px] cursor-pointer ${row.date ? 'text-slate-400' : 'text-indigo-400 font-bold'}`}
+                      >
+                        {row.date ? formatTxDate(row.date) : '— tap to add date'}
+                      </span>
+                    )}
+                  </div>
                   <span className="text-sm font-black text-slate-500 dark:text-slate-400 tabular-nums ml-2 flex-shrink-0">
                     {currencySymbol}{row.amounts.reduce((a, b) => a + b, 0).toFixed(2)}
                   </span>

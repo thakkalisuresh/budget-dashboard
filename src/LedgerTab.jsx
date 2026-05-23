@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { RefreshCw, Inbox, SlidersHorizontal, ArrowUpDown, X, Download, Search, FileText, MessageSquare } from 'lucide-react';
-import { getAllCategoryNames, fetchDetailRows, fetchHistory, fuzzyNamesMatch } from './sheetsApi.js';
+import { getAllCategoryNames, fetchDetailRows, fetchHistory, fuzzyNamesMatch, formatTxDate } from './sheetsApi.js';
 
 const METHOD_LABELS = {
   'Receipt Scan': 'Scan',
@@ -86,7 +86,10 @@ async function buildLedger(sheetId, accessToken) {
           method:    match ? (METHOD_LABELS[match.action] || 'Manual') : null,
           user:      match?.user || null,
           date:      match?.timestamp || null,
-          _sortDate: match?.timestamp ? new Date(match.timestamp).getTime() : 0,
+          txDate:    row.date || null,
+          _sortDate: row.date
+            ? new Date(row.date + 'T00:00:00').getTime()
+            : (match?.timestamp ? new Date(match.timestamp).getTime() : 0),
         });
       });
     }
@@ -172,10 +175,11 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
 
   // ── Export Option A — Transaction Ledger ─────────────────────────────────
   const exportLedger = () => {
-    const headers = ['Vendor', 'Category', 'Amount', 'Method', 'User', 'Date'];
+    const headers = ['Vendor', 'Category', 'Amount', 'Method', 'User', 'Tx Date', 'Added At'];
     const rows    = displayed.map(t => [
       t.vendor, t.category, t.amount.toFixed(2),
-      t.method || '', t.user || '', formatDate(t.date) || '',
+      t.method || '', t.user || '',
+      formatTxDate(t.txDate) || '', formatDate(t.date) || '',
     ]);
     downloadCSV(`ledger-${monthName || 'export'}.csv`, headers, rows);
     setShowExportMenu(false);
@@ -407,6 +411,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
               <div key={i} className="flex items-center gap-3 px-5 py-4 hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">{t.vendor}</p>
+                  {t.txDate && <p className="text-[10px] text-slate-400 mt-0.5">{formatTxDate(t.txDate)}</p>}
                   <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                     <span className="text-[10px] font-bold text-slate-400 bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full">{t.category}</span>
                     {t.method && <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${METHOD_STYLES[t.method] || ''}`}>{t.method}</span>}

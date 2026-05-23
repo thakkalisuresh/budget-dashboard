@@ -131,11 +131,12 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
       }
 
       // Write selected recurring expenses into the new month's detail sheets
+      const firstOfMonth = `${year}-${String(MONTHS.indexOf(month) + 1).padStart(2, '0')}-01`;
       for (const [i, exp] of recurringExpenses.entries()) {
         if (!selectedRecurring.has(i)) continue;
         await addOrUpdateExpense(
           exp.category, exp.vendor, exp.amount,
-          accessToken, newMonth.sheetId, name, 'recurring', false
+          accessToken, newMonth.sheetId, name, 'recurring', firstOfMonth
         );
       }
 
