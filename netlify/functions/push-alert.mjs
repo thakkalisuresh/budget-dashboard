@@ -4,7 +4,7 @@ import { checkOrigin, verifyBearer, jsonResp } from './_auth.mjs';
 
 const VAPID_PUBLIC  = process.env.VAPID_PUBLIC_KEY;
 const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY;
-const VAPID_EMAIL   = process.env.VAPID_EMAIL || 'mailto:nair.sabarish97@gmail.com';
+const VAPID_EMAIL   = process.env.VAPID_EMAIL; // required — set as a Netlify env var
 
 // Per-email + per-IP rate limit — anti-spam (1 push / 5s per email)
 const RECENT = new Map();
@@ -35,7 +35,7 @@ export default async function handler(req) {
   if (!corsOrigin) return jsonResp(403, { error: 'Forbidden' });
   if (req.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
 
-  if (!VAPID_PUBLIC || !VAPID_PRIVATE) {
+  if (!VAPID_PUBLIC || !VAPID_PRIVATE || !VAPID_EMAIL) {
     return jsonResp(200, { ok: false, reason: 'VAPID not configured' }, corsOrigin);
   }
 

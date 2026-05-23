@@ -3,12 +3,12 @@ import { getStore } from '@netlify/blobs';
 
 const VAPID_PUBLIC  = process.env.VAPID_PUBLIC_KEY;
 const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY;
-const VAPID_EMAIL   = process.env.VAPID_EMAIL || 'mailto:nair.sabarish97@gmail.com';
+const VAPID_EMAIL   = process.env.VAPID_EMAIL; // required — set as a Netlify env var
 
 // Runs every hour — sends push to users whose configured local time matches now
 export default async function handler() {
-  if (!VAPID_PUBLIC || !VAPID_PRIVATE) {
-    console.warn('push-digest: VAPID keys not configured');
+  if (!VAPID_PUBLIC || !VAPID_PRIVATE || !VAPID_EMAIL) {
+    console.warn('push-digest: VAPID not fully configured');
     return new Response('VAPID not configured', { status: 200 });
   }
 
