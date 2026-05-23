@@ -33,7 +33,7 @@ export default defineConfig({
         name: 'Budget Tracker',
         short_name: 'Budget',
         description: 'Personal budget dashboard',
-        theme_color: '#4f46e5',
+        theme_color: '#e07c00',
         background_color: '#0f172a',
         display: 'standalone',
         orientation: 'portrait',
