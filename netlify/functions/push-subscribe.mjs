@@ -1,40 +1,50 @@
 import { getStore } from '@netlify/blobs';
-
-const ALLOWED_EMAILS = new Set(
-  (process.env.ALLOWED_EMAILS || '').split(',').map(e => e.trim().toLowerCase())
-);
+import { checkOrigin, verifyBearer, jsonResp } from './_auth.mjs';
 
 export default async function handler(req) {
+  const corsOrigin = checkOrigin(req);
+
+  if (req.method === 'OPTIONS') {
+    if (!corsOrigin) return new Response(null, { status: 403 });
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'Access-Control-Allow-Origin': corsOrigin,
+        'Access-Control-Allow-Methods': 'POST',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      },
+    });
+  }
+
+  if (!corsOrigin) return jsonResp(403, { error: 'Forbidden' });
   if (req.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
 
+  const v = await verifyBearer(req);
+  if (!v.ok) return jsonResp(401, { error: 'Unauthorized' }, corsOrigin);
+
   try {
-    const { subscription, email, preferredHour, timezoneOffset } = await req.json();
+    const { subscription, preferredHour, timezoneOffset } = await req.json();
 
-    if (!email || !subscription?.endpoint) {
-      return new Response(JSON.stringify({ error: 'Missing required fields' }), { status: 400 });
+    if (!subscription?.endpoint) {
+      return jsonResp(400, { error: 'Missing subscription' }, corsOrigin);
     }
 
-    // Only allow emails on the allowlist
-    if (ALLOWED_EMAILS.size > 0 && !ALLOWED_EMAILS.has(email.toLowerCase())) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 403 });
-    }
+    // Use the verified email — never trust the client to claim someone else's email
+    const email = v.email;
 
     const store = getStore('push-subscriptions');
-    await store.setJSON(email.toLowerCase(), {
-      email: email.toLowerCase(),
+    await store.setJSON(email, {
+      email,
       subscription,
-      preferredHour: preferredHour ?? 20,       // default 8pm
-      timezoneOffset: timezoneOffset ?? 0,       // hours offset from UTC (positive = east)
+      preferredHour: preferredHour ?? 20,
+      timezoneOffset: timezoneOffset ?? 0,
       updatedAt: new Date().toISOString(),
     });
 
-    return new Response(JSON.stringify({ ok: true }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return jsonResp(200, { ok: true }, corsOrigin);
   } catch (e) {
     console.error('push-subscribe error:', e);
-    return new Response(JSON.stringify({ error: 'Internal error' }), { status: 500 });
+    return jsonResp(500, { error: 'Internal error' }, corsOrigin);
   }
 }
 
