@@ -9,6 +9,55 @@ const MAX_PX     = 1600;
 const JPEG_Q     = 0.85;
 const MAX_PDF_MB = 5;
 
+// Cache the last good FX rate locally — survives 24h. Used as fallback if the
+// upstream API is wrong/rate-limited/compromised so we don't write a wildly
+// incorrect USD amount based on a malicious rate.
+const FX_CACHE_KEY = 'budget_fx_rate_cache';
+const FX_CACHE_TTL = 24 * 60 * 60 * 1000;
+
+// Order-of-magnitude bounds. A rate outside this window for the listed currency
+// is almost certainly wrong — we fall back to cache or static defaults.
+const FX_PLAUSIBLE = {
+  USD: [1, 1],
+  EUR: [0.7, 1.5],
+  GBP: [0.6, 1.3],
+  CAD: [1.0, 2.0],
+  AUD: [1.0, 2.5],
+  JPY: [80, 200],
+  INR: [60, 120],
+  CHF: [0.7, 1.5],
+  CNY: [5, 9],
+  MXN: [15, 30],
+  SGD: [1.1, 2.0],
+};
+
+function loadFxCache(currency) {
+  try {
+    const raw = localStorage.getItem(FX_CACHE_KEY);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    const entry = obj?.[currency];
+    if (entry && Date.now() - entry.t < FX_CACHE_TTL) return entry.r;
+  } catch { /* ignore */ }
+  return null;
+}
+
+function saveFxCache(currency, rate) {
+  try {
+    const raw = localStorage.getItem(FX_CACHE_KEY) || '{}';
+    const obj = JSON.parse(raw);
+    obj[currency] = { r: rate, t: Date.now() };
+    localStorage.setItem(FX_CACHE_KEY, JSON.stringify(obj));
+  } catch { /* ignore */ }
+}
+
+function isPlausibleRate(currency, rate) {
+  if (typeof rate !== 'number' || !isFinite(rate) || rate <= 0) return false;
+  const bounds = FX_PLAUSIBLE[currency];
+  if (!bounds) return rate > 0 && rate < 1e6; // unknown currency: just guard against absurdities
+  return rate >= bounds[0] && rate <= bounds[1];
+}
+
 // ── MIME validation via magic bytes (not file extension) ─────────────────────
 async function detectMimeType(file) {
   const buf   = await file.slice(0, 12).arrayBuffer();
@@ -60,7 +109,7 @@ function toBase64(file) {
 }
 
 /** Send image/PDF to Claude and extract receipt OR statement transactions */
-async function extractFromFile(file) {
+async function extractFromFile(file, accessToken) {
   // Validate actual file content via magic bytes — don't trust the file extension
   const detectedMime = await detectMimeType(file);
   if (!detectedMime || !ALLOWED_MIME_TYPES.has(detectedMime)) {
@@ -110,11 +159,11 @@ Rules:
 - If the image is unreadable, return {"type":"receipt","vendor":null,"amount":null,"category":null,"currency":"USD"}
 - Respond with ONLY valid JSON — no extra text`;
 
+  const headers = { 'content-type': 'application/json' };
+  if (accessToken) headers['authorization'] = `Bearer ${accessToken}`;
   const res = await fetch(CLAUDE_URL, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
+    headers,
     body: JSON.stringify({
       model: 'claude-haiku-4-5',
       max_tokens: 1024,
@@ -264,7 +313,7 @@ export function ReceiptScanButton({ accessToken, sheetId, monthName, onSuccess, 
     setScanError('');
     setDupWarning(false);
     try {
-      const result = await extractFromFile(file);
+      const result = await extractFromFile(file, accessToken);
 
       // Statement detected — run duplicate check then switch to statement flow
       if (result.type === 'statement' && result.transactions?.length) {
@@ -291,19 +340,27 @@ export function ReceiptScanButton({ accessToken, sheetId, monthName, onSuccess, 
       // Foreign currency detection
       const detectedCurrency = (result.currency || 'USD').toUpperCase();
       if (detectedCurrency !== 'USD' && result.amount != null) {
+        let usableRate = null;
         try {
           const rateRes = await fetch(`https://open.er-api.com/v6/latest/USD`);
           const rateData = await rateRes.json();
-          const rate = rateData?.rates?.[detectedCurrency];
-          if (rate) {
-            const converted = result.amount / rate;
-            setForeignCurrency({ original: result.amount, currency: detectedCurrency, rate, converted });
-            setAmount(converted.toFixed(2));
-            setShowCurrencyPrompt(true);
-          } else {
-            setAmount(result.amount != null ? String(result.amount) : '');
+          const raw = rateData?.rates?.[detectedCurrency];
+          if (isPlausibleRate(detectedCurrency, raw)) {
+            usableRate = raw;
+            saveFxCache(detectedCurrency, raw);
+          } else if (typeof raw === 'number') {
+            console.warn(`FX rate for ${detectedCurrency} (${raw}) outside plausible bounds — falling back to cache`);
           }
         } catch {
+          /* network failed — fall through to cache */
+        }
+        if (usableRate == null) usableRate = loadFxCache(detectedCurrency);
+        if (usableRate != null) {
+          const converted = result.amount / usableRate;
+          setForeignCurrency({ original: result.amount, currency: detectedCurrency, rate: usableRate, converted });
+          setAmount(converted.toFixed(2));
+          setShowCurrencyPrompt(true);
+        } else {
           setAmount(result.amount != null ? String(result.amount) : '');
         }
       } else {
@@ -347,7 +404,7 @@ export function ReceiptScanButton({ accessToken, sheetId, monthName, onSuccess, 
     for (let i = 0; i < files.length; i++) {
       setProcessingProgress({ current: i + 1, total: files.length });
       try {
-        const result = await extractFromFile(files[i]);
+        const result = await extractFromFile(files[i], accessToken);
         if (result.type === 'statement' && result.transactions?.length) {
           const debits = result.transactions.filter(t => t.txType !== 'credit').map(t => ({ ...t, isNonMonthly: false, isRecurring: false }));
           allStmtTransactions = [...allStmtTransactions, ...debits];

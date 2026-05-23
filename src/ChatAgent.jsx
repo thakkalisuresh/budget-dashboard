@@ -97,13 +97,30 @@ function buildSystemPrompt({
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const dateStr     = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
+  // Sanitise user-supplied strings to prevent prompt injection.
+  // - Strip HTML/XML-style tags that could be mistaken for prompt structure
+  // - Strip well-known injection trigger phrases
+  // - Collapse newlines and tabs so attacker can't fabricate new instructions
+  // - Truncate to a short max length so a long crafted vendor name can't bloat the prompt
+  const safe = (s, max = 80) => {
+    let v = String(s || '');
+    v = v.replace(/<\/?[a-z][^>]*>?/gi, '');
+    v = v.replace(/<\/?(system|user|assistant|instruction|tool_use|tool_result|financial_data)\b[^>]*>?/gi, '');
+    v = v.replace(/ignore (all |any )?previous (instructions?|messages?|directives?)/gi, '[redacted]');
+    v = v.replace(/you are now\b/gi, '[redacted]');
+    v = v.replace(/\bdisregard\b/gi, '[redacted]');
+    v = v.replace(/[\r\n\t]+/g, ' ');
+    if (v.length > max) v = v.slice(0, max) + '…';
+    return v;
+  };
+
   const expenseLines = expenses.map(e => {
     const status = e.remaining > 0
       ? `$${e.remaining.toFixed(2)} remaining`
       : e.remaining === 0
         ? 'exactly at budget'
         : `$${Math.abs(e.remaining).toFixed(2)} over budget`;
-    return `  - ${e.name}: spent $${e.actual.toFixed(2)} of $${e.budget.toFixed(2)} budget (${status})`;
+    return `  - ${safe(e.name, 40)}: spent $${e.actual.toFixed(2)} of $${e.budget.toFixed(2)} budget (${status})`;
   }).join('\n');
 
   let rulesSection = '';
@@ -115,10 +132,9 @@ function buildSystemPrompt({
   Savings (20%): $${Number(rulesData.savings?.total || 0).toFixed(2)} spent / $${Number(rulesData.savings?.target || 0).toFixed(2)} target (${rulesData.savings?.pct || 0}%)`;
   }
 
-  const categoryNames = expenses.length > 0 ? expenses.map(e => e.name).join(', ') : CATEGORIES.join(', ');
-
-  // Sanitise user-supplied strings to prevent prompt injection
-  const safe = (s) => String(s || '').replace(/<\/?[a-z]/gi, '');
+  const categoryNames = expenses.length > 0
+    ? expenses.map(e => safe(e.name, 40)).join(', ')
+    : CATEGORIES.join(', ');
 
   return `You are a friendly, concise personal budget assistant for ${safe(monthName) || 'this month'}.
 
@@ -169,6 +185,10 @@ export function ChatAgent({
   const [input, setInput]       = useState('');
   const [streaming, setStreaming]   = useState(false);
   const [toolRunning, setToolRunning] = useState(false);
+  // When Claude requests add_expense, we surface a confirm card and pause the
+  // tool execution until the user accepts/declines. This blocks a prompt-injected
+  // vendor/category from auto-writing rows.
+  const [pendingConfirm, setPendingConfirm] = useState(null);
   const messagesEndRef  = useRef(null);
   const inputRef        = useRef(null);
   const apiHistoryRef   = useRef([]); // full API conversation (includes tool_use / tool_result)
@@ -241,8 +261,25 @@ export function ChatAgent({
   const executeTool = async (toolName, toolInput) => {
     if (toolName === 'add_expense') {
       const { category, vendor, amount, is_random = false } = toolInput;
+
+      // Require explicit user confirmation before any write. This is the
+      // hard backstop against a prompt-injection payload smuggled into a
+      // vendor/category cell instructing the model to call add_expense.
+      const approved = await new Promise((resolve) => {
+        setPendingConfirm({
+          category, vendor, amount: Number(amount), is_random,
+          resolve,
+        });
+      });
+      setPendingConfirm(null);
+
+      if (!approved) {
+        return `User declined to add this expense. Do not retry without asking again.`;
+      }
+
       await addOrUpdateExpense(
-        category, vendor, Number(amount), accessToken, sheetId, monthName, 'chat', is_random
+        category, String(vendor).slice(0, 200),
+        Number(amount), accessToken, sheetId, monthName, 'chat', is_random
       );
       if (onRefresh) onRefresh();
       return `Successfully added $${Number(amount).toFixed(2)} for "${vendor}" under ${category}.`;
@@ -277,6 +314,7 @@ export function ChatAgent({
   const callApi = async (history, stream = true) => {
     const url     = '/api/claude';
     const headers = { 'content-type': 'application/json' };
+    if (accessToken) headers['authorization'] = `Bearer ${accessToken}`;
     const res = await fetch(url, {
       method: 'POST',
       headers,
@@ -595,6 +633,39 @@ export function ChatAgent({
                 ))}
                 <div ref={messagesEndRef} />
               </div>
+
+              {/* Confirm add_expense — gated to prevent prompt-injection auto-writes */}
+              {pendingConfirm && (
+                <div className="px-3 pt-3">
+                  <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded-2xl p-3 space-y-2">
+                    <p className="text-xs font-bold text-amber-700 dark:text-amber-300">
+                      Confirm new expense
+                    </p>
+                    <div className="text-sm text-slate-700 dark:text-slate-200 space-y-0.5">
+                      <div><span className="text-slate-400">Vendor:</span> <strong>{String(pendingConfirm.vendor).slice(0, 80)}</strong></div>
+                      <div><span className="text-slate-400">Amount:</span> <strong>${Number(pendingConfirm.amount).toFixed(2)}</strong></div>
+                      <div><span className="text-slate-400">Category:</span> <strong>{String(pendingConfirm.category).slice(0, 40)}</strong></div>
+                      {pendingConfirm.is_random && (
+                        <div className="text-xs text-amber-700 dark:text-amber-300">One-off / non-monthly</div>
+                      )}
+                    </div>
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        onClick={() => pendingConfirm.resolve(false)}
+                        className="flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => pendingConfirm.resolve(true)}
+                        className="flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+                      >
+                        Add expense
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Input bar */}
               <div className="p-3 border-t border-slate-100 dark:border-slate-700 flex gap-2 flex-shrink-0">
