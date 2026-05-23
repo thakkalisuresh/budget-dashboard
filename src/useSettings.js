@@ -46,6 +46,7 @@ export const DEFAULT_SETTINGS = {
   messages:                [],  // [{ id, type, title, body, timestamp, read }]
   pushHour:                20,  // preferred local hour for daily push (18-22)
   reconciledFingerprints:  [],  // ["vendor_amount", ...] — tracks imported reconciliation tx
+  colorScheme:             'amber',
   hasSeenOnboarding:       false,
   keyboardShortcuts: {
     addExpense:   'alt+n',

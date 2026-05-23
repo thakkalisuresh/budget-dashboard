@@ -1,7 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
-import {
-  TrendingDown, TrendingUp, Wallet, Banknote, Receipt,
-} from 'lucide-react';
+import { Wallet } from 'lucide-react';
 import { useSheetData } from './useSheetData.js';
 import { use503020 } from './use503020.js';
 import { hasDetail } from './fetchDetail.js';
@@ -173,7 +171,7 @@ function Dashboard({ auth }) {
       default: { c600:'#4f46e5', c700:'#4338ca', c500:'#6366f1', c400:'#818cf8', c50:'#eef2ff', cdark:'rgba(99,102,241,0.2)',  cshadow:'rgba(99,102,241,0.25)',  c300:'#a5b4fc' },
       rose:    { c600:'#e11d48', c700:'#be123c', c500:'#f43f5e', c400:'#fb7185', c50:'#fff1f2', cdark:'rgba(225,29,72,0.2)',   cshadow:'rgba(225,29,72,0.25)',   c300:'#fda4af' },
       emerald: { c600:'#059669', c700:'#047857', c500:'#10b981', c400:'#34d399', c50:'#ecfdf5', cdark:'rgba(5,150,105,0.2)',   cshadow:'rgba(5,150,105,0.25)',   c300:'#6ee7b7' },
-      amber:   { c600:'#d97706', c700:'#b45309', c500:'#f59e0b', c400:'#fbbf24', c50:'#fffbeb', cdark:'rgba(217,119,6,0.2)',   cshadow:'rgba(217,119,6,0.25)',   c300:'#fcd34d' },
+      amber:   { c600:'#e07c00', c700:'#c46a00', c500:'#f08c10', c400:'#f5a840', c50:'#fff7ed', cdark:'rgba(224,124,0,0.16)',  cshadow:'rgba(224,124,0,0.28)',   c300:'#fcc27a' },
       sky:     { c600:'#0284c7', c700:'#0369a1', c500:'#0ea5e9', c400:'#38bdf8', c50:'#f0f9ff', cdark:'rgba(2,132,199,0.2)',   cshadow:'rgba(2,132,199,0.25)',   c300:'#7dd3fc' },
       violet:  { c600:'#7c3aed', c700:'#6d28d9', c500:'#8b5cf6', c400:'#a78bfa', c50:'#f5f3ff', cdark:'rgba(124,58,237,0.2)',  cshadow:'rgba(124,58,237,0.25)',  c300:'#c4b5fd' },
     };
@@ -601,31 +599,57 @@ function Dashboard({ auth }) {
 
         {/* Loading skeleton */}
         {activeTab === 'budget' && loading && !lastUpdated && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {[...Array(4)].map((_, i) => (
-              <div key={i} className="bg-white dark:bg-slate-800 rounded-[2rem] border border-slate-100 dark:border-slate-700 p-7 h-40 animate-pulse">
-                <div className="h-4 bg-slate-100 dark:bg-slate-700 rounded-xl w-1/2 mb-4" />
-                <div className="h-8 bg-slate-100 dark:bg-slate-700 rounded-xl w-3/4" />
-              </div>
-            ))}
+          <div className="space-y-4">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 p-10 h-48 animate-pulse">
+              <div className="h-3 bg-slate-100 dark:bg-slate-800 rounded-full w-24 mb-8" />
+              <div className="h-12 bg-slate-100 dark:bg-slate-800 rounded-xl w-56" />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800 px-5 py-4 h-16 animate-pulse">
+                  <div className="h-2.5 bg-slate-100 dark:bg-slate-800 rounded-full w-20" />
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
         {/* Stat Cards */}
         {activeTab === 'budget' && settings.visibility.statCards !== false && (!loading || lastUpdated) && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <StatCard title="Income" value={salaryReceived} icon={<Wallet className="text-blue-500" />} color="blue" onEdit={() => { setEditingSalary(true); setSalaryDraft(salaryReceived.toFixed(2)); }} currencySymbol={currencySymbol} />
-            <StatCard title="Actual Expenses" value={totalActual} icon={<Receipt className="text-rose-500" />} color="rose" subtext={`Budget: ${currencySymbol}${totalBudget.toFixed(2)}`} currencySymbol={currencySymbol} />
-            <StatCard title="Remaining Income" value={salaryReceived - totalActual}
-              icon={<Banknote className={salaryReceived > 0 && (salaryReceived - totalActual) / salaryReceived <= 0 ? 'text-rose-500' : salaryReceived > 0 && (salaryReceived - totalActual) / salaryReceived <= 0.15 ? 'text-amber-500' : 'text-emerald-500'} />}
-              color={salaryReceived > 0 && (salaryReceived - totalActual) / salaryReceived <= 0 ? 'rose' : salaryReceived > 0 && (salaryReceived - totalActual) / salaryReceived <= 0.15 ? 'amber' : 'emerald'}
+          <div className="space-y-4">
+            <StatCard
+              hero
+              title="Remaining Income"
+              value={salaryReceived - totalActual}
               subtext={
-                (salaryReceived - totalActual) > 0 ? 'Surplus Position' :
+                (salaryReceived - totalActual) > 0 ? 'Surplus' :
                 (salaryReceived - totalActual) === 0 ? 'Break Even' :
-                'Deficit Position'
+                'Deficit'
               }
-              currencySymbol={currencySymbol} />
-            <StatCard title="Budget Variance" value={overallRemaining} icon={overallRemaining >= 0 ? <TrendingUp className="text-emerald-500" /> : <TrendingDown className="text-rose-500" />} color={overallRemaining >= 0 ? 'emerald' : 'rose'} subtext={overallRemaining >= 0 ? 'Under Budget' : 'Over Budget'} currencySymbol={currencySymbol} />
+              currencySymbol={currencySymbol}
+            />
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <StatCard
+                title="Income"
+                value={salaryReceived}
+                onEdit={() => { setEditingSalary(true); setSalaryDraft(salaryReceived.toFixed(2)); }}
+                currencySymbol={currencySymbol}
+                valueColor="text-slate-900 dark:text-white"
+              />
+              <StatCard
+                title="Actual Expenses"
+                value={totalActual}
+                subtext={`of ${currencySymbol}${totalBudget.toFixed(2)} budget`}
+                currencySymbol={currencySymbol}
+                valueColor="text-slate-900 dark:text-white"
+              />
+              <StatCard
+                title="Budget Variance"
+                value={overallRemaining}
+                subtext={overallRemaining >= 0 ? 'Under Budget' : 'Over Budget'}
+                currencySymbol={currencySymbol}
+              />
+            </div>
           </div>
         )}
 
