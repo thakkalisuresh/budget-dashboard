@@ -1,6 +1,101 @@
 @import "tailwindcss";
 @custom-variant dark (&:is(.dark *));
 
+/* ── Animation tokens ──────────────────────────────────────────────────────── */
+:root {
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in:     cubic-bezier(0.4, 0, 1, 1);
+  --ease-spring: cubic-bezier(0.34, 1.36, 0.64, 1);
+
+  --dur-fast:   150ms;
+  --dur-normal: 250ms;
+  --dur-slow:   380ms;
+
+  /* enter-delay is set inline per element for staggering */
+  --enter-delay: 0ms;
+}
+
+/* ── Keyframes ─────────────────────────────────────────────────────────────── */
+@keyframes enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position:  200% 0; }
+}
+
+@keyframes bar-grow {
+  from { width: 0%; }
+}
+
+@keyframes donut-spin {
+  from { stroke-dashoffset: var(--dash-total); }
+  to   { stroke-dashoffset: var(--dash-offset); }
+}
+
+/* ── Animation utility classes ─────────────────────────────────────────────── */
+.animate-enter {
+  animation: enter var(--dur-slow) var(--ease-out) backwards;
+  animation-delay: var(--enter-delay, 0ms);
+}
+
+.animate-fade-in {
+  animation: fade-in var(--dur-normal) var(--ease-out) backwards;
+  animation-delay: var(--enter-delay, 0ms);
+}
+
+/* ── Skeleton shimmer ──────────────────────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    oklch(93% 0.003 260) 25%,
+    oklch(97% 0.002 260) 50%,
+    oklch(93% 0.003 260) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+  border-radius: 0.5rem;
+}
+
+.dark .skeleton {
+  background: linear-gradient(
+    90deg,
+    oklch(22% 0.008 260) 25%,
+    oklch(27% 0.006 260) 50%,
+    oklch(22% 0.008 260) 75%
+  );
+  background-size: 200% 100%;
+}
+
+/* ── Reduced motion: kill all animations ──────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .animate-enter,
+  .animate-fade-in {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
+  }
+  .skeleton {
+    animation: none !important;
+    background: oklch(93% 0.003 260);
+  }
+  .dark .skeleton {
+    background: oklch(22% 0.008 260);
+  }
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* ── Design tokens ─────────────────────────────────────────────────────────── */
 :root {
   --text: #6b6375;
   --text-h: #08060d;

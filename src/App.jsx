@@ -600,23 +600,32 @@ function Dashboard({ auth }) {
         {/* Loading skeleton */}
         {activeTab === 'budget' && loading && !lastUpdated && (
           <div className="space-y-4">
-            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 p-10 h-48 animate-pulse">
-              <div className="h-3 bg-slate-100 dark:bg-slate-800 rounded-full w-24 mb-8" />
-              <div className="h-12 bg-slate-100 dark:bg-slate-800 rounded-xl w-56" />
+            {/* Hero card skeleton */}
+            <div className="bg-white dark:bg-slate-900 rounded-[1.25rem] border border-slate-100 dark:border-slate-800 p-8 sm:p-10">
+              <div className="skeleton h-3 w-28 mb-8" />
+              <div className="skeleton h-14 w-52" />
+              <div className="skeleton h-6 w-16 rounded-full mt-5" />
             </div>
+            {/* Stat row skeleton */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               {[...Array(3)].map((_, i) => (
-                <div key={i} className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800 px-5 py-4 h-16 animate-pulse">
-                  <div className="h-2.5 bg-slate-100 dark:bg-slate-800 rounded-full w-20" />
+                <div key={i} className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800 px-5 py-4 flex items-center justify-between">
+                  <div className="skeleton h-2.5 w-20" />
+                  <div className="skeleton h-5 w-16" />
                 </div>
               ))}
+            </div>
+            {/* Main grid skeleton */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-2 skeleton h-64 rounded-[1.25rem]" />
+              <div className="skeleton h-64 rounded-[1.25rem]" />
             </div>
           </div>
         )}
 
-        {/* Stat Cards */}
+        {/* Stat Cards — keyed on selectedSheetId so entering month triggers re-animation */}
         {activeTab === 'budget' && settings.visibility.statCards !== false && (!loading || lastUpdated) && (
-          <div className="space-y-4">
+          <div key={`stats-${selectedSheetId}`} className="space-y-4">
             <StatCard
               hero
               title="Remaining Income"
@@ -627,6 +636,7 @@ function Dashboard({ auth }) {
                 'Deficit'
               }
               currencySymbol={currencySymbol}
+              enterDelay={0}
             />
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <StatCard
@@ -635,6 +645,7 @@ function Dashboard({ auth }) {
                 onEdit={() => { setEditingSalary(true); setSalaryDraft(salaryReceived.toFixed(2)); }}
                 currencySymbol={currencySymbol}
                 valueColor="text-slate-900 dark:text-white"
+                enterDelay={60}
               />
               <StatCard
                 title="Actual Expenses"
@@ -642,20 +653,22 @@ function Dashboard({ auth }) {
                 subtext={`of ${currencySymbol}${totalBudget.toFixed(2)} budget`}
                 currencySymbol={currencySymbol}
                 valueColor="text-slate-900 dark:text-white"
+                enterDelay={100}
               />
               <StatCard
                 title="Budget Variance"
                 value={overallRemaining}
                 subtext={overallRemaining >= 0 ? 'Under Budget' : 'Over Budget'}
                 currencySymbol={currencySymbol}
+                enterDelay={140}
               />
             </div>
           </div>
         )}
 
-        {/* Main 2-column grid */}
+        {/* Main 2-column grid — keyed so month switch re-animates content */}
         {activeTab === 'budget' && (!loading || lastUpdated) && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+          <div key={`grid-${selectedSheetId}`} className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
 
             {/* Left column */}
             <div className="lg:col-span-2 space-y-8">
