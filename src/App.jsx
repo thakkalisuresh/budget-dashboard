@@ -47,17 +47,35 @@ import { MonthPickerBar } from './MonthPickerBar.jsx';
 import { HeaderBar } from './HeaderBar.jsx';
 
 function App() {
-  const { user, denied, loadingAuth, onGoogleSuccess, onGoogleError, signOut, sessionExpired, setSessionExpired } = useAuth();
+  const auth = useAuth();
+  const { user, denied, loadingAuth, onGoogleSuccess, onGoogleError } = auth;
 
   if (!user) {
     return <LoginScreen onSuccess={onGoogleSuccess} onError={onGoogleError} loading={loadingAuth} denied={denied} />;
   }
 
-  return <Dashboard user={user} signOut={signOut} sessionExpired={sessionExpired} setSessionExpired={setSessionExpired} onGoogleSuccess={onGoogleSuccess} />;
+  return <Dashboard auth={auth} />;
 }
 
-function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleSuccess }) {
+function Dashboard({ auth }) {
+  const { user, signOut, sessionExpired, setSessionExpired,
+          lockToken, unlockToken, setupEncryption } = auth;
   const pinLock = usePinLock(signOut);
+
+  // Show the lock screen whenever the session is in the "needs PIN" state —
+  // covers tab-reload-while-locked AND fresh sign-in when a PIN already exists.
+  useEffect(() => {
+    if (user?.isLocked && pinLock.pinHash && !pinLock.locked) pinLock.setLocked(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.isLocked, pinLock.pinHash]);
+
+  // When the lock screen shows (background timeout, manual lock), strip the
+  // plaintext access token from React state and sessionStorage. The encrypted
+  // copy stays so we can restore it on PIN unlock without a full re-auth.
+  useEffect(() => {
+    if (pinLock.locked) lockToken();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinLock.locked]);
   const { months, loading: monthsLoading, createMonth, deleteMonth, shareAllMonths } = useMonths(user.accessToken);
   const [showNewMonth, setShowNewMonth] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(null); // month to delete
@@ -335,7 +353,7 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
     useMessages(settings, updateSettings, expenses, totalActual, salaryReceived, selectedMonth?.name);
 
   // ── Push notifications ────────────────────────────────────────────────────────
-  const pushHook = usePush(user.email, settings.pushHour ?? 20);
+  const pushHook = usePush(user.email, settings.pushHour ?? 20, user.accessToken);
 
   // Fire instant push for new budget threshold alerts
   useEffect(() => {
@@ -347,8 +365,11 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
     alertMessages.forEach(m => {
       fetch('/api/push-alert', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: user.email, title: m.title, body: m.body }),
+        headers: {
+          'Content-Type': 'application/json',
+          ...(user.accessToken ? { 'Authorization': `Bearer ${user.accessToken}` } : {}),
+        },
+        body: JSON.stringify({ title: m.title, body: m.body }),
       }).catch(() => {});
     });
   }, [messages, pushHook.subscribed]);
@@ -862,13 +883,21 @@ function Dashboard({ user, signOut, sessionExpired, setSessionExpired, onGoogleS
         setting={pinLock.setting}
         pinHash={pinLock.pinHash}
         onUnlock={async (pin) => {
-          // '__biometric__' is the signal that WebAuthn succeeded — unlock directly
-          const ok = pin === '__biometric__' ? true : await pinLock.unlock(pin);
-          if (ok) pinLock.setLocked(false);
-          return ok;
+          const ok = await pinLock.unlock(pin);
+          if (!ok) return false;
+          // Restore the access token (no-op when biometric is the unlock path).
+          await unlockToken(pin);
+          pinLock.setLocked(false);
+          return true;
         }}
+        onBiometricUnlock={() => pinLock.setLocked(false)}
         onSignOut={signOut}
-        onSave={pinLock.savePin}
+        onSave={async (pin) => {
+          await pinLock.savePin(pin);
+          // Encrypt the in-memory access token under the new PIN so subsequent
+          // locks can clear plaintext from storage without losing the session.
+          await setupEncryption(pin);
+        }}
         onCancel={() => pinLock.setSetting(false)}
       />
 

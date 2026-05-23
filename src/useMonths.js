@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { SHEET_MAP } from './sheetsApi.js';
+import { requestDriveToken } from './driveAuth.js';
 
 const TEMPLATE_ID = import.meta.env.VITE_TEMPLATE_SHEET_ID;
 
@@ -211,12 +212,15 @@ export function useMonths(accessToken) {
 
   /** Create a new month: copy template → delete Months tab → update month columns → clear stale notes → share → register */
   const createMonth = async (name) => {
-    const newSheetId = await copyTemplate(name, accessToken);
+    // Drive operations need a separately-granted token (drive scope is not in
+    // the default session). Sheets operations use the session token.
+    const driveToken = await requestDriveToken();
+    const newSheetId = await copyTemplate(name, driveToken);
     await deleteMonthsTab(newSheetId, accessToken);
     await updateMonthColumns(newSheetId, name, accessToken);
     await clearNotesCell(newSheetId, accessToken);
     // Share with all household members so everyone can access the new month
-    await shareSheetWithUsers(newSheetId, allowedEmails, accessToken);
+    await shareSheetWithUsers(newSheetId, allowedEmails, driveToken);
     await appendMonthEntry(name, newSheetId, accessToken);
     const newMonth = { name, sheetId: newSheetId };
     setMonths(prev => [...prev, newMonth]);
@@ -225,11 +229,12 @@ export function useMonths(accessToken) {
 
   /** Re-share every registered month with all allowed users (fixes permission gaps for existing months) */
   const shareAllMonths = async () => {
+    const driveToken = await requestDriveToken();
     await Promise.allSettled(
-      months.map(m => shareSheetWithUsers(m.sheetId, allowedEmails, accessToken))
+      months.map(m => shareSheetWithUsers(m.sheetId, allowedEmails, driveToken))
     );
     // Also share the template itself
-    await shareSheetWithUsers(TEMPLATE_ID, allowedEmails, accessToken);
+    await shareSheetWithUsers(TEMPLATE_ID, allowedEmails, driveToken);
   };
 
   /** Remove a month from the registry (does not delete the Google Sheet) */

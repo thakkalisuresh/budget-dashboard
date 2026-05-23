@@ -12,7 +12,8 @@ function urlBase64ToUint8Array(base64String) {
 const pushSupported = () =>
   'serviceWorker' in navigator && 'PushManager' in window && !!VAPID_PUBLIC_KEY;
 
-export function usePush(userEmail, preferredHour) {
+export function usePush(userEmail, preferredHour, accessToken) {
+  const authHeader = () => accessToken ? { 'Authorization': `Bearer ${accessToken}` } : {};
   const [subscribed,   setSubscribed]   = useState(false);
   const [permission,   setPermission]   = useState(() =>
     typeof Notification !== 'undefined' ? Notification.permission : 'default'
@@ -43,10 +44,9 @@ export function usePush(userEmail, preferredHour) {
 
       await fetch('/api/push-subscribe', {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({
           subscription:    sub.toJSON(),
-          email:           userEmail,
           preferredHour:   preferredHour ?? 20,
           timezoneOffset:  -(new Date().getTimezoneOffset() / 60), // positive = east of UTC
         }),
@@ -68,8 +68,8 @@ export function usePush(userEmail, preferredHour) {
       if (sub) await sub.unsubscribe();
       await fetch('/api/push-unsubscribe', {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ email: userEmail }),
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body:    JSON.stringify({}),
       });
       setSubscribed(false);
     } catch (e) {
@@ -88,10 +88,9 @@ export function usePush(userEmail, preferredHour) {
       if (!sub) return;
       await fetch('/api/push-subscribe', {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({
           subscription:   sub.toJSON(),
-          email:          userEmail,
           preferredHour:  hour,
           timezoneOffset: -(new Date().getTimezoneOffset() / 60),
         }),

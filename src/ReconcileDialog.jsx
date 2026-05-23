@@ -502,7 +502,7 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
       if (pdfResult.transactions.length > 0) {
         result = { ...pdfResult, via: 'pdfjs' };
       } else {
-        result = await parsePdfWithClaude(file, pdfResult.lines || []);
+        result = await parsePdfWithClaude(file, pdfResult.lines || [], accessToken);
         if (!result.error) result.via = 'claude';
       }
     } else {
@@ -511,7 +511,7 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
     }
 
     return result;
-  }, []);
+  }, [accessToken]);
 
   const processFiles = useCallback(async (newFiles) => {
     setParsing(true);

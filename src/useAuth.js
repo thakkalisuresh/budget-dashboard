@@ -1,7 +1,43 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { clearQueue } from './offlineQueue.js';
+import { clearDriveTokenCache } from './driveAuth.js';
+import {
+  derivePinKey, aesEncrypt, aesDecrypt, ensureEncSalt,
+  PIN_HASH_KEY, BIOMETRIC_KEY,
+} from './PinLock.jsx';
 
 const STORAGE_KEY    = 'budget_auth';
 const AUTH_CACHE_KEY = 'budget_auth_cache';
+
+/** True if a PIN is set AND biometric is NOT — the "encrypt the token" regime.
+ *  When biometric is registered we leave plaintext in sessionStorage because
+ *  WebAuthn assertions don't yield key material that can decrypt it. */
+function isEncryptingRegime() {
+  return !!localStorage.getItem(PIN_HASH_KEY) && !localStorage.getItem(BIOMETRIC_KEY);
+}
+
+/** Best-effort: clear every Workbox/runtime cache so financial-data responses
+ *  don't linger in the Service Worker cache after sign-out. */
+async function clearAllCaches() {
+  try {
+    if (typeof caches === 'undefined') return;
+    const keys = await caches.keys();
+    await Promise.all(keys.map(k => caches.delete(k)));
+  } catch { /* non-fatal */ }
+}
+
+/** Best-effort: drop every IndexedDB database the app touched. */
+async function clearAllIndexedDB() {
+  try {
+    if (!indexedDB?.databases) return;
+    const dbs = await indexedDB.databases();
+    await Promise.all((dbs || []).map(db => new Promise(resolve => {
+      if (!db?.name) return resolve();
+      const req = indexedDB.deleteDatabase(db.name);
+      req.onsuccess = req.onerror = req.onblocked = () => resolve();
+    })));
+  } catch { /* non-fatal */ }
+}
 
 // Edge function endpoint — email allowlist lives server-side only
 const VERIFY_URL = import.meta.env.DEV
@@ -17,6 +53,9 @@ function loadStored() {
       sessionStorage.removeItem(STORAGE_KEY);
       return null;
     }
+    // If only the encrypted token remains (e.g., tab reload while locked),
+    // the session is intact but the access token is held under the PIN.
+    if (!parsed.accessToken && parsed.encToken) parsed.isLocked = true;
     return parsed;
   } catch {
     return null;
@@ -44,11 +83,15 @@ export function useAuth() {
   const [loadingAuth, setLoading] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
 
+  // In-memory AES key derived from the PIN. Populated on PIN setup or unlock;
+  // cleared on lock and sign-out. Never written to storage.
+  const cipherKeyRef = useRef(null);
+
   const onGoogleSuccess = async (tokenResponse) => {
     setLoading(true);
     setDenied(false);
     try {
-      let email, name, picture;
+      let email, name, picture, prodRole;
 
       if (import.meta.env.DEV) {
         // Dev mode: verify with Google directly — edge function not available without netlify dev
@@ -74,24 +117,57 @@ export function useAuth() {
         });
         const data = await res.json();
         if (!data.allowed) { setDenied(true); setLoading(false); return; }
-        email   = data.email;
-        name    = data.name || 'User';
-        picture = data.picture;
+        email    = data.email;
+        name     = data.name || 'User';
+        picture  = data.picture;
+        prodRole = data.role;
       }
 
       const role = import.meta.env.DEV
         ? ((import.meta.env.VITE_VIEWER_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).includes(email) ? 'viewer' : 'owner')
-        : (data?.role ?? 'owner');
+        : (prodRole ?? 'owner');
 
       const auth = {
         email, name, picture, role,
         accessToken: tokenResponse.access_token,
         expiresAt:   Date.now() + (tokenResponse.expires_in ?? 3600) * 1000,
       };
+
+      // If a PIN exists without biometric, the at-rest token must be encrypted.
+      // Four cases:
+      //   1. Cipher key cached (normal silent-refresh path) → encrypt and store both
+      //      plaintext (memory + sessionStorage during unlocked use) and encToken.
+      //   2. No cipher key cached, storage already has an encToken (silent refresh
+      //      fires while locked) → drop the new token; lock stays effective and
+      //      the user re-auths on next interaction.
+      //   3. No cipher key cached, no existing encToken (fresh sign-in with a
+      //      previously-set PIN) → store plaintext but mark isLocked. The lock
+      //      screen will show and unlockToken(pin) will encrypt in place.
+      //   4. No PIN at all → store plaintext as before.
+      if (isEncryptingRegime()) {
+        if (cipherKeyRef.current) {
+          auth.encToken = await aesEncrypt(cipherKeyRef.current, auth.accessToken);
+        } else {
+          const existingRaw = sessionStorage.getItem(STORAGE_KEY);
+          let existingHasEnc = false;
+          try { existingHasEnc = !!JSON.parse(existingRaw || '{}').encToken; } catch { /* ignore */ }
+          if (existingHasEnc) {
+            // Silent refresh while locked — keep the existing ciphertext, drop this token.
+            setLoading(false);
+            return;
+          }
+          // Fresh sign-in with a pre-existing PIN — gate the session behind the lock
+          // until the user supplies the PIN, at which point we'll encrypt in place.
+          auth.isLocked = true;
+        }
+      }
+
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(auth));
-      // Store only non-sensitive profile data in localStorage — no access token
-      const { accessToken: _drop, ...profileOnly } = auth;
-      localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify(profileOnly));
+      // Cache profile only in localStorage — no access token, no ciphertext
+      localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify({
+        email: auth.email, name: auth.name, picture: auth.picture,
+        role: auth.role, expiresAt: auth.expiresAt,
+      }));
       setSessionExpired(false);
       setUser(auth);
     } catch {
@@ -108,14 +184,112 @@ export function useAuth() {
 
   const signOut = () => {
     sessionStorage.removeItem(STORAGE_KEY);
-    // Clear all app localStorage on sign-out (security hygiene)
-    ['budget_custom_categories', 'budget_category_icons', 'budget_vendor_domains',
-     'theme', AUTH_CACHE_KEY,
-     'budget_pin_hash', 'budget_pin_salt', 'budget_biometric_id',
-    ].forEach(k => localStorage.removeItem(k));
+    // Sweep every budget_* key — covers per-sheet data caches, offline queue,
+    // smart-rules, custom categories, vendor domains, PIN, biometric markers, etc.
+    try {
+      const toRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.startsWith('budget_') || k === 'theme')) toRemove.push(k);
+      }
+      toRemove.forEach(k => localStorage.removeItem(k));
+    } catch { /* non-fatal */ }
+    // Explicit removals in case the prefix sweep missed anything
+    localStorage.removeItem(AUTH_CACHE_KEY);
+    cipherKeyRef.current = null;
+    clearQueue();
+    clearDriveTokenCache();
+    // SW and IDB clean-up runs async — UI doesn't wait
+    clearAllCaches();
+    clearAllIndexedDB();
     setUser(null);
     setDenied(false);
     setSessionExpired(false);
+  };
+
+  /** Called once when the user sets their PIN (or unlocks with one) to bring
+   *  the session into the encrypting regime: derive the AES key, encrypt the
+   *  in-memory access token, and persist the ciphertext alongside the plaintext.
+   *  Subsequent silent refreshes re-encrypt using the cached key.
+   *  No-op when biometric is registered (per the design choice). */
+  const setupEncryption = async (pin) => {
+    if (!isEncryptingRegime()) return;
+    if (!user?.accessToken) return;
+    const salt = ensureEncSalt();
+    const key  = await derivePinKey(pin, salt);
+    const enc  = await aesEncrypt(key, user.accessToken);
+    cipherKeyRef.current = key;
+    try {
+      const raw = sessionStorage.getItem(STORAGE_KEY);
+      const obj = raw ? JSON.parse(raw) : { ...user };
+      obj.encToken = enc;
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+    } catch { /* non-fatal */ }
+  };
+
+  /** Strip the plaintext access token from React state and sessionStorage,
+   *  leaving the encrypted copy intact. Clear the in-memory key so a memory
+   *  inspector after lock can't read it either.
+   *  Only strips when an encToken exists to restore from — otherwise leaves
+   *  plaintext so the first PIN unlock can encrypt it in place.
+   *  No-op when biometric is registered or no PIN is set. */
+  const lockToken = () => {
+    if (!isEncryptingRegime()) return;
+    let stripped = false;
+    try {
+      const raw = sessionStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const obj = JSON.parse(raw);
+        if (obj.encToken) {
+          delete obj.accessToken;
+          sessionStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+          stripped = true;
+        }
+      }
+    } catch { /* non-fatal */ }
+    if (stripped) {
+      cipherKeyRef.current = null;
+      setUser(prev => prev ? { ...prev, accessToken: null, isLocked: true } : prev);
+    }
+  };
+
+  /** Called from the unlock flow with the entered PIN. Two paths:
+   *   - encToken exists: derive key, decrypt, restore accessToken to memory and
+   *     sessionStorage, cache the key.
+   *   - encToken missing (first unlock after fresh sign-in with existing PIN, or
+   *     legacy session pre-encryption): derive key, encrypt the current plaintext
+   *     accessToken in place, cache the key. The session moves into the
+   *     encrypted regime from here on.
+   *  Returns true on success, false if nothing to do or decryption failed. */
+  const unlockToken = async (pin) => {
+    if (!isEncryptingRegime()) return true; // no PIN regime — caller handles UI gate only
+    try {
+      const raw = sessionStorage.getItem(STORAGE_KEY);
+      if (!raw) return false;
+      const obj   = JSON.parse(raw);
+      const salt  = ensureEncSalt();
+      const key   = await derivePinKey(pin, salt);
+
+      if (obj.encToken) {
+        const token = await aesDecrypt(key, obj.encToken);
+        if (!token) return false;
+        obj.accessToken = token;
+      } else if (obj.accessToken) {
+        // Migrate: encrypt the plaintext currently in storage so the next lock
+        // can strip it safely.
+        obj.encToken = await aesEncrypt(key, obj.accessToken);
+      } else {
+        return false; // nothing to unlock
+      }
+
+      delete obj.isLocked;
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+      cipherKeyRef.current = key;
+      setUser(prev => prev ? { ...prev, accessToken: obj.accessToken, isLocked: false } : obj);
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   // Auto-clear expired sessions
@@ -140,7 +314,6 @@ export function useAuth() {
           scope: [
             'openid email profile',
             'https://www.googleapis.com/auth/spreadsheets',
-            'https://www.googleapis.com/auth/drive',
           ].join(' '),
           prompt: '',
           callback: (tokenResponse) => {
@@ -158,5 +331,9 @@ export function useAuth() {
     return () => clearTimeout(t);
   }, [user?.expiresAt]);
 
-  return { user, denied, loadingAuth, onGoogleSuccess, onGoogleError, signOut, sessionExpired, setSessionExpired };
+  return {
+    user, denied, loadingAuth, onGoogleSuccess, onGoogleError, signOut,
+    sessionExpired, setSessionExpired,
+    lockToken, unlockToken, setupEncryption,
+  };
 }

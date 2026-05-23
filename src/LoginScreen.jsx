@@ -6,7 +6,10 @@ export function LoginScreen({ onSuccess, onError, loading, denied }) {
     onSuccess,
     onError,
     flow: 'implicit',
-    scope: 'openid email profile https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive',
+    // NOTE: drive scope deliberately omitted. The default session only needs
+    // Sheets API. Drive (template copy + sharing) is requested just-in-time
+    // when the user creates a new month — see requestDriveToken() in driveAuth.js.
+    scope: 'openid email profile https://www.googleapis.com/auth/spreadsheets',
   });
 
   return (

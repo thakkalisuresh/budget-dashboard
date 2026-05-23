@@ -30,10 +30,12 @@ function uid() { return `claude-${Date.now()}-${++_seq}`; }
  * Call the Claude proxy and return parsed transactions.
  * @param {object} messageContent - Anthropic messages[0].content value
  */
-async function callClaude(messageContent) {
+async function callClaude(messageContent, accessToken) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
   const res = await fetch(CLAUDE_PROXY, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       model: 'claude-haiku-4-5',
       max_tokens: 4096,
@@ -59,7 +61,7 @@ async function callClaude(messageContent) {
  * @param {File} file - The PDF file
  * @param {string[]} lines - Text lines already extracted by PDF.js (may be empty)
  */
-export async function parsePdfWithClaude(file, lines = []) {
+export async function parsePdfWithClaude(file, lines = [], accessToken) {
   let messageContent;
 
   if (lines.length > 0) {
@@ -85,7 +87,7 @@ export async function parsePdfWithClaude(file, lines = []) {
 
   let raw = [];
   try {
-    raw = await callClaude(messageContent);
+    raw = await callClaude(messageContent, accessToken);
   } catch (e) {
     return { transactions: [], bank: 'unknown', error: `Claude parse failed: ${e.message}` };
   }
