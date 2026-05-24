@@ -11,7 +11,7 @@ export const SHEET_MAP = {
   'Investment':    { sheet: 'Investment',    descCol: 2, amtCol: 3,  uuidStartCol: 4  },
   'Car Payments':  { sheet: 'Car Payments',  descCol: 2, amtCol: 3,  uuidStartCol: 4  },
   'Utilities':     { sheet: 'Utilities',     descCol: 2, amtCol: 3,  uuidStartCol: 4  },
-  'Utilties':      { sheet: 'Utilities',     descCol: 2, amtCol: 3,  uuidStartCol: 4  },
+  'Utilties':      { sheet: 'Utilities',     descCol: 2, amtCol: 3,  uuidStartCol: 4  }, // intentional misspelling — some sheets use this legacy name
   'Rent':          { sheet: 'Rent',          descCol: 2, amtCol: 3,  uuidStartCol: 4  },
   'Health':        { sheet: 'Health',        descCol: 2, amtCol: 3,  uuidStartCol: 4  },
   'Furniture':     { sheet: 'Furniture',     descCol: 2, amtCol: 3,  uuidStartCol: 4  },

@@ -10,9 +10,12 @@ const ALLOWED_ORIGINS = new Set([
 ]);
 
 // Small in-memory cache so we don't hit Google on every push event.
-const TOKEN_CACHE_MS = 5 * 60_000;
-const MAX_ENTRIES    = 500;
-const cache = new Map();
+const TOKEN_CACHE_MS     = 5 * 60_000;
+const FAIL_CACHE_MS      = 30_000;
+const MAX_ENTRIES        = 500;
+const MAX_FAIL_ENTRIES   = 50;
+const cache     = new Map();
+const failCache = new Map();
 
 async function sha256Hex(s) {
   const buf  = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
@@ -51,7 +54,11 @@ export async function verifyBearer(req) {
 
   const hash = await sha256Hex(token);
   const now  = Date.now();
-  const hit  = cache.get(hash);
+
+  const failHit = failCache.get(hash);
+  if (failHit && failHit.validUntil > now) return failHit;
+
+  const hit = cache.get(hash);
   if (hit && hit.validUntil > now) return hit;
 
   let res;
@@ -63,8 +70,9 @@ export async function verifyBearer(req) {
     return { ok: false };
   }
   if (!res.ok) {
-    const miss = { ok: false, validUntil: now + 30_000 };
-    cache.set(hash, miss);
+    if (failCache.size >= MAX_FAIL_ENTRIES) failCache.delete(failCache.keys().next().value);
+    const miss = { ok: false, validUntil: now + FAIL_CACHE_MS };
+    failCache.set(hash, miss);
     return miss;
   }
   const profile = await res.json().catch(() => null);

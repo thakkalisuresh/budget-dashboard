@@ -194,7 +194,7 @@ export function useAuth() {
     setDenied(true);
   };
 
-  const signOut = () => {
+  const signOut = async () => {
     sessionStorage.removeItem(STORAGE_KEY);
     // Sweep every budget_* key — covers per-sheet data caches, offline queue,
     // smart-rules, custom categories, vendor domains, PIN, biometric markers, etc.
@@ -211,9 +211,8 @@ export function useAuth() {
     cipherKeyRef.current = null;
     clearQueue();
     clearDriveTokenCache();
-    // SW and IDB clean-up runs async — UI doesn't wait
-    clearAllCaches();
-    clearAllIndexedDB();
+    await clearAllCaches();
+    await clearAllIndexedDB();
     setUser(null);
     setDenied(false);
     setSessionExpired(false);
