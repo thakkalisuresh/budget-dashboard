@@ -242,7 +242,12 @@ export function usePinLock(onSignOut) {
     const salt = b64decode(saltB64);
     const h = await hashPin(pin, salt);
     const ok = h === pinHash;
-    if (ok) resetFails();
+    if (ok) {
+      resetFails();
+      if (pin.length < PIN_LENGTH_DEFAULT) {
+        setTimeout(() => setSetting(true), 0);
+      }
+    }
     return ok;
   };
 

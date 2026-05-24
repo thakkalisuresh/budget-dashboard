@@ -15,6 +15,10 @@ try {
 } catch { /* non-git environment */ }
 
 export default defineConfig({
+  test: {
+    globals: true,
+    environment: 'node',
+  },
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
     __COMMIT_SHA__:  JSON.stringify(commitSha),

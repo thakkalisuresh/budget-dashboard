@@ -24,6 +24,11 @@ export function checkOrigin(req) {
   return ALLOWED_ORIGINS.has(origin) ? origin : null;
 }
 
+export function checkSecFetchSite(req) {
+  const secFetchSite = req.headers.get('sec-fetch-site');
+  return !!secFetchSite && (secFetchSite === 'same-origin' || secFetchSite === 'same-site');
+}
+
 export function corsHeaders(corsOrigin) {
   const h = { 'Content-Type': 'application/json' };
   if (corsOrigin) h['Access-Control-Allow-Origin'] = corsOrigin;

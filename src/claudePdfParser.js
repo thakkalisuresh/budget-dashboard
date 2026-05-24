@@ -65,8 +65,9 @@ export async function parsePdfWithClaude(file, lines = [], accessToken) {
   let messageContent;
 
   if (lines.length > 0) {
-    // Text-based PDF — send the extracted text (much cheaper than sending the PDF image)
-    const text = lines.join('\n');
+    // Text-based PDF — send the extracted text (much cheaper than sending the PDF image).
+    // SEC-10: strip angle brackets so malicious PDFs can't inject closing XML tags.
+    const text = lines.join('\n').replace(/[<>]/g, '');
     messageContent = `${EXTRACT_PROMPT}\n\n<statement>\n${text}\n</statement>`;
   } else {
     // Scanned/image PDF — send as base64 document so Claude can read it visually

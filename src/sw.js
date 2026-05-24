@@ -1,15 +1,24 @@
 import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching';
 import { registerRoute } from 'workbox-routing';
 import { NetworkFirst } from 'workbox-strategies';
+import { ExpirationPlugin } from 'workbox-expiration';
 
 // ── Precaching ────────────────────────────────────────────────────────────────
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
 
 // ── Runtime caching — Sheets API ──────────────────────────────────────────────
+// SEC-05: cap cached financial data at 1 hour / 50 entries so it doesn't
+// persist indefinitely if the user closes without signing out.
 registerRoute(
   ({ url }) => url.origin === 'https://sheets.googleapis.com',
-  new NetworkFirst({ cacheName: 'sheets-api', networkTimeoutSeconds: 10 })
+  new NetworkFirst({
+    cacheName: 'sheets-api',
+    networkTimeoutSeconds: 10,
+    plugins: [
+      new ExpirationPlugin({ maxEntries: 50, maxAgeSeconds: 60 * 60 }),
+    ],
+  })
 );
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────

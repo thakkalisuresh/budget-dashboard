@@ -1,6 +1,6 @@
 import webpush from 'web-push';
 import { getStore } from '@netlify/blobs';
-import { checkOrigin, verifyBearer, jsonResp } from './_auth.mjs';
+import { checkOrigin, checkSecFetchSite, verifyBearer, jsonResp } from './_auth.mjs';
 
 const VAPID_PUBLIC  = process.env.VAPID_PUBLIC_KEY;
 const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY;
@@ -33,6 +33,7 @@ export default async function handler(req) {
   }
 
   if (!corsOrigin) return jsonResp(403, { error: 'Forbidden' });
+  if (!checkSecFetchSite(req)) return jsonResp(403, { error: 'Forbidden' }, corsOrigin);
   if (req.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
 
   if (!VAPID_PUBLIC || !VAPID_PRIVATE || !VAPID_EMAIL) {

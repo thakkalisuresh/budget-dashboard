@@ -190,7 +190,7 @@ async function removeMonthEntry(monthName, accessToken) {
   );
 }
 
-export function useMonths(accessToken) {
+export function useMonths(accessToken, allowedEmails = []) {
   const [months, setMonths]   = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -207,8 +207,6 @@ export function useMonths(accessToken) {
 
   useEffect(() => { load(); }, [load]);
 
-  // All emails that should have access — read from env so they match the allowlist
-  const allowedEmails = (import.meta.env.VITE_ALLOWED_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
 
   /** Create a new month: copy template → delete Months tab → update month columns → clear stale notes → share → register */
   const createMonth = async (name) => {

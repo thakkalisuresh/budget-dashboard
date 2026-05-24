@@ -16,36 +16,44 @@ const ALLOWED_MODELS  = new Set(['claude-haiku-4-5']);
 const MAX_TOKENS_CAP  = 4096;
 const MAX_BODY_BYTES  = 8 * 1024 * 1024;          // 8 MB hard ceiling on request body
 
-// ── Rate limiter — 20 req/IP/60s, with cleanup to prevent memory growth ──────
-const RATE_LIMIT = 20;
-const WINDOW_MS  = 60_000;
-const MAX_IPS    = 500;
-const ipMap      = new Map();
+// ── Rate limiter — dual layer: per-IP burst + per-email sustained ────────────
+// IP layer: 20 req/60s — stops unauthenticated floods before they hit Google.
+// Email layer: 10 req/60s — tighter cap on authenticated users; harder to
+// bypass than IP since it requires a valid allowlisted token.
+const IP_RATE_LIMIT    = 20;
+const EMAIL_RATE_LIMIT = 10;
+const WINDOW_MS        = 60_000;
+const MAX_IPS          = 500;
+const ipMap            = new Map();
+const emailMap         = new Map();
 
 let lastCleanup = Date.now();
 function cleanupIfNeeded() {
   const now = Date.now();
   if (now - lastCleanup < 300_000) return;
   lastCleanup = now;
-  for (const [ip, entry] of ipMap) {
-    if (now - entry.windowStart > WINDOW_MS * 2) ipMap.delete(ip);
+  for (const [key, entry] of ipMap) {
+    if (now - entry.windowStart > WINDOW_MS * 2) ipMap.delete(key);
+  }
+  for (const [key, entry] of emailMap) {
+    if (now - entry.windowStart > WINDOW_MS * 2) emailMap.delete(key);
   }
 }
 
-function isRateLimited(ip) {
+function isRateLimited(key, map, limit) {
   cleanupIfNeeded();
   const now   = Date.now();
-  const entry = ipMap.get(ip);
+  const entry = map.get(key);
   if (!entry || now - entry.windowStart > WINDOW_MS) {
-    if (ipMap.size >= MAX_IPS) {
-      const firstKey = ipMap.keys().next().value;
-      ipMap.delete(firstKey);
+    if (map.size >= MAX_IPS) {
+      const firstKey = map.keys().next().value;
+      map.delete(firstKey);
     }
-    ipMap.set(ip, { count: 1, windowStart: now });
+    map.set(key, { count: 1, windowStart: now });
     return false;
   }
   entry.count += 1;
-  return entry.count > RATE_LIMIT;
+  return entry.count > limit;
 }
 
 // ── Token validation cache (5 min TTL, hashed key — never stores raw token) ──
@@ -147,7 +155,7 @@ export default async (request) => {
   const ip = request.headers.get('x-forwarded-for')?.split(',')[0].trim()
           || request.headers.get('x-real-ip')
           || 'unknown';
-  if (isRateLimited(ip)) {
+  if (isRateLimited(ip, ipMap, IP_RATE_LIMIT)) {
     return jsonResp(429, { error: { message: 'Too many requests. Please wait a moment and try again.' } }, corsOrigin);
   }
 
@@ -161,6 +169,10 @@ export default async (request) => {
   const tokenInfo = await verifyToken(accessToken);
   if (!tokenInfo?.allowed) {
     return jsonResp(401, { error: { message: 'Unauthorized' } }, corsOrigin);
+  }
+
+  if (tokenInfo.email && isRateLimited(tokenInfo.email, emailMap, EMAIL_RATE_LIMIT)) {
+    return jsonResp(429, { error: { message: 'Too many requests. Please wait a moment and try again.' } }, corsOrigin);
   }
 
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');

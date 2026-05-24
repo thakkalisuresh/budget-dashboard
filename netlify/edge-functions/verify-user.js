@@ -88,6 +88,7 @@ export default async (request) => {
       name: allowed ? profile.given_name : null,
       picture: allowed ? profile.picture : null,
       role,
+      allowedEmails: allowed ? [...allowedEmails] : [],
     }),
     {
       status: 200,
