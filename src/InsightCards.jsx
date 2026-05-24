@@ -1,62 +1,88 @@
 import React from 'react';
-import { Info, TrendingUp } from 'lucide-react';
+import { Minus, TrendingUp, TrendingDown } from 'lucide-react';
 
-export function InsightCards({ nonMonthlyItems, nonMonthlyTotal, balanceWithoutNonMonthly, potentialDifference, currencySymbol }) {
+export function InsightCards({
+  nonMonthlyItems, nonMonthlyTotal, balanceWithoutNonMonthly,
+  potentialDifference, currencySymbol,
+}) {
+  const isSurplus = potentialDifference >= 0;
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
       {/* Balance without one-time expenses */}
-      <div className="bg-slate-900 dark:bg-slate-800 rounded-[2rem] p-5 sm:p-8 text-white relative overflow-hidden group border border-transparent dark:border-slate-700">
-        <div className="relative z-10">
-          <div className="bg-white/10 w-10 h-10 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center mb-4 sm:mb-6">
-            <Info className="text-indigo-400 w-5 h-5 sm:w-6 sm:h-6" />
-          </div>
-          <h3 className="text-base sm:text-lg font-bold mb-2 sm:mb-3">Balance without one-time expenses</h3>
-          {nonMonthlyItems.length > 0 ? (
-            <>
-              <p className="text-slate-400 text-sm leading-relaxed mb-2">
-                Removing {nonMonthlyItems.length} one-time purchase{nonMonthlyItems.length > 1 ? 's' : ''} (
-                {currencySymbol}{nonMonthlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}) from your total
-                <span className={`font-black block text-xl sm:text-2xl mt-2 ${balanceWithoutNonMonthly < 0 ? 'text-rose-400' : 'text-white'}`}>
-                  {currencySymbol}{balanceWithoutNonMonthly.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                </span>
-              </p>
-              <div className="mt-3 space-y-1">
-                {nonMonthlyItems.map((item, i) => (
-                  <div key={i} className="flex justify-between text-xs text-slate-400">
-                    <span className="truncate mr-2">· {item.vendor}</span>
-                    <span className="font-bold text-slate-300 flex-shrink-0">{currencySymbol}{item.amount.toFixed(2)}</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          ) : (
-            <p className="text-slate-500 text-sm leading-relaxed">
-              No one-time expenses tracked this month.
-              <span className="block mt-2 text-xs">Mark an expense as "one-time" when adding it, or via the pencil icon in the detail panel.</span>
+      <div className="animate-enter bg-slate-900 dark:bg-slate-800 rounded-[1.25rem] p-5 sm:p-7 text-white border border-slate-800 dark:border-slate-700"
+        style={{ '--enter-delay': '60ms' }}
+      >
+        <p className="text-[10px] font-semibold text-slate-500 mb-4">
+          Balance excl. one-time expenses
+        </p>
+
+        {nonMonthlyItems.length > 0 ? (
+          <>
+            <p className={`text-3xl font-black tabular-nums leading-none mb-4 ${
+              balanceWithoutNonMonthly < 0 ? 'text-rose-400' : 'text-white'
+            }`}>
+              {balanceWithoutNonMonthly < 0 ? '-' : ''}{currencySymbol}
+              {Math.abs(balanceWithoutNonMonthly).toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </p>
-          )}
-        </div>
-        <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full -mr-16 -mt-16 blur-2xl" />
+            <p className="text-xs text-slate-500 mb-3">
+              {nonMonthlyItems.length} one-time purchase{nonMonthlyItems.length > 1 ? 's' : ''} removed
+              ({currencySymbol}{nonMonthlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })})
+            </p>
+            <div className="space-y-1.5 border-t border-slate-800 dark:border-slate-700 pt-3">
+              {nonMonthlyItems.map((item, i) => (
+                <div key={i} className="flex justify-between text-xs text-slate-500">
+                  <span className="truncate mr-2">{item.vendor}</span>
+                  <span className="font-semibold text-slate-400 flex-shrink-0 tabular-nums">
+                    {currencySymbol}{item.amount.toFixed(2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-3xl font-black tabular-nums text-slate-500 leading-none mb-4">
+              {currencySymbol}—
+            </p>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              No one-time expenses this month. Mark an expense as "one-time" via the pencil icon in the detail panel.
+            </p>
+          </>
+        )}
       </div>
 
       {/* Budget vs actual difference */}
-      <div className="bg-indigo-600 dark:bg-indigo-700 rounded-[2rem] p-5 sm:p-8 text-white relative overflow-hidden group">
-        <div className="relative z-10">
-          <div className="bg-white/10 w-10 h-10 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center mb-4 sm:mb-6">
-            <TrendingUp className="text-white w-5 h-5 sm:w-6 sm:h-6" />
-          </div>
-          <h3 className="text-base sm:text-lg font-bold mb-2 sm:mb-3">Difference between budgeted and actual spent</h3>
-          <p className="text-indigo-100 text-sm leading-relaxed mb-4 sm:mb-6">
-            Calculated difference between what we budgeted and what we spent
-            <span className="text-white font-black block text-xl sm:text-2xl mt-2">
-              {currencySymbol}{potentialDifference.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-            </span>
+      <div
+        className="animate-enter rounded-[1.25rem] p-5 sm:p-7 text-white border"
+        style={{
+          '--enter-delay': '120ms',
+          backgroundColor: isSurplus ? 'oklch(55% 0.18 155)' : 'oklch(55% 0.20 20)',
+          borderColor: isSurplus ? 'oklch(50% 0.18 155)' : 'oklch(50% 0.20 20)',
+        }}
+      >
+        <p className="text-[10px] font-semibold mb-4" style={{ opacity: 0.65 }}>
+          Budget vs actual difference
+        </p>
+
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <p className="text-3xl font-black tabular-nums leading-none">
+            {isSurplus ? '+' : '-'}{currencySymbol}
+            {Math.abs(potentialDifference).toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </p>
-          <div className="h-1 w-full bg-white/20 rounded-full overflow-hidden mt-2">
-            <div className="h-full bg-white w-3/4 rounded-full" />
+          <div className="p-2 rounded-lg flex-shrink-0 mt-0.5" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }}>
+            {isSurplus
+              ? <TrendingDown className="w-4 h-4" />
+              : <TrendingUp className="w-4 h-4" />
+            }
           </div>
         </div>
-        <div className="absolute bottom-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mb-16 blur-2xl" />
+
+        <p className="text-xs leading-relaxed" style={{ opacity: 0.7 }}>
+          {isSurplus
+            ? 'Spent less than budgeted — good discipline.'
+            : 'Spent more than budgeted this month.'}
+        </p>
       </div>
     </div>
   );

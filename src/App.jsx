@@ -1,9 +1,8 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
-import { Wallet } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useRef, lazy, Suspense } from 'react';
 import { useSheetData } from './useSheetData.js';
 import { use503020 } from './use503020.js';
 import { hasDetail } from './fetchDetail.js';
-import { fetchDetailRows, updateCategoryBudget, writeSalary, fetchNonMonthlyItems, migrateNonMonthlyFromI4 } from './sheetsApi.js';
+import { fetchDetailRows, updateCategoryBudget, writeSalary } from './sheetsApi.js';
 import { getCurrencySymbol } from './currency.js';
 import { useAuth } from './useAuth.js';
 import { useOfflineSync } from './useOfflineSync.js';
@@ -12,11 +11,15 @@ import { useMonths } from './useMonths.js';
 import { useSettings, DEFAULT_CATEGORY_ORDER } from './useSettings.js';
 import { useMessages } from './useMessages.js';
 import { usePush } from './usePush.js';
-import { DEFAULT_ICONS, EMOJI_DATA } from './categoryIcons.js';
+import { DEFAULT_ICONS } from './categoryIcons.js';
 import { usePinLock, PinLockScreen } from './PinLock.jsx';
 import { LoginScreen } from './LoginScreen.jsx';
-import { ReceiptScanButton } from './ReceiptScanner.jsx';
 import { BudgetRules } from './BudgetRules.jsx';
+import { useTheme } from './useTheme.js';
+import { useNonMonthlyExpenses } from './useNonMonthlyExpenses.js';
+import { useEscapeDismiss } from './useEscapeDismiss.js';
+import { useGlobalShortcuts } from './useGlobalShortcuts.js';
+import { SalaryEditDialog } from './SalaryEditDialog.jsx';
 
 // Heavy components — loaded only when first rendered
 const DetailPanel      = lazy(() => import('./DetailPanel.jsx').then(m => ({ default: m.DetailPanel })));
@@ -74,7 +77,7 @@ function Dashboard({ auth }) {
     if (pinLock.locked) lockToken();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pinLock.locked]);
-  const { months, loading: monthsLoading, createMonth, deleteMonth, shareAllMonths } = useMonths(user.accessToken);
+  const { months, loading: monthsLoading, createMonth, deleteMonth, shareAllMonths } = useMonths(user.accessToken, user.allowedEmails);
   const [showNewMonth, setShowNewMonth] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(null); // month to delete
   const [deleteInput, setDeleteInput] = useState('');
@@ -127,7 +130,6 @@ function Dashboard({ auth }) {
   const [editingBudgetId, setEditingBudgetId] = useState(null);
   const [budgetDraft, setBudgetDraft] = useState('');
   const [editingSalary, setEditingSalary] = useState(false);
-  const [salaryDraft, setSalaryDraft] = useState('');
   const [iconPickerFor, setIconPickerFor] = useState(null);
   const [showUserMenu, setShowUserMenu]     = useState(false);
   const [refreshKey, setRefreshKey]             = useState(0);
@@ -144,60 +146,8 @@ function Dashboard({ auth }) {
   const currencySymbol = getCurrencySymbol(settings.currency || 'USD');
   const categoryIcons  = { ...DEFAULT_ICONS, ...(settings.categoryIcons || {}) };
 
-  // Theme — driven by settings.theme, with a quick-toggle override stored locally
-  const [isDark, setIsDark] = useState(() => {
-    const saved = localStorage.getItem('theme');
-    if (saved) return saved === 'dark';
-    return true;
-  });
-
-  // Sync theme when settings.theme changes
-  useEffect(() => {
-    if (!settings.theme || settings.theme === 'system') return;
-    const dark = settings.theme === 'dark';
-    setIsDark(dark);
-  }, [settings.theme]);
-
-  // Font size applied to <html>
-  useEffect(() => {
-    const sizes = { sm: '14px', base: '16px', lg: '18px' };
-    document.documentElement.style.fontSize = sizes[settings.fontSize] || '16px';
-  }, [settings.fontSize]);
-
-  // Accent color — injects a <style> block that overrides every indigo-* class
-  useEffect(() => {
-    // Each scheme: [600, 700, 500, 400, 50(light), 900/30(dark bg), shadow-rgb, 300(border)]
-    const SCHEMES = {
-      default: { c600:'#4f46e5', c700:'#4338ca', c500:'#6366f1', c400:'#818cf8', c50:'#eef2ff', cdark:'rgba(99,102,241,0.2)',  cshadow:'rgba(99,102,241,0.25)',  c300:'#a5b4fc' },
-      rose:    { c600:'#e11d48', c700:'#be123c', c500:'#f43f5e', c400:'#fb7185', c50:'#fff1f2', cdark:'rgba(225,29,72,0.2)',   cshadow:'rgba(225,29,72,0.25)',   c300:'#fda4af' },
-      emerald: { c600:'#059669', c700:'#047857', c500:'#10b981', c400:'#34d399', c50:'#ecfdf5', cdark:'rgba(5,150,105,0.2)',   cshadow:'rgba(5,150,105,0.25)',   c300:'#6ee7b7' },
-      amber:   { c600:'#e07c00', c700:'#c46a00', c500:'#f08c10', c400:'#f5a840', c50:'#fff7ed', cdark:'rgba(224,124,0,0.16)',  cshadow:'rgba(224,124,0,0.28)',   c300:'#fcc27a' },
-      sky:     { c600:'#0284c7', c700:'#0369a1', c500:'#0ea5e9', c400:'#38bdf8', c50:'#f0f9ff', cdark:'rgba(2,132,199,0.2)',   cshadow:'rgba(2,132,199,0.25)',   c300:'#7dd3fc' },
-      violet:  { c600:'#7c3aed', c700:'#6d28d9', c500:'#8b5cf6', c400:'#a78bfa', c50:'#f5f3ff', cdark:'rgba(124,58,237,0.2)',  cshadow:'rgba(124,58,237,0.25)',  c300:'#c4b5fd' },
-    };
-    const s = SCHEMES[settings.colorScheme] || SCHEMES.default;
-    let el = document.getElementById('accent-override');
-    if (!el) { el = document.createElement('style'); el.id = 'accent-override'; document.head.appendChild(el); }
-    el.textContent = `
-      .bg-indigo-600, .dark\\:bg-indigo-700  { background-color: ${s.c600} !important; }
-      .hover\\:bg-indigo-700:hover           { background-color: ${s.c700} !important; }
-      .bg-indigo-50, .dark\\:bg-indigo-900\\/20, .dark\\:bg-indigo-900\\/30 { background-color: ${s.c50} !important; }
-      .text-indigo-600, .dark\\:text-indigo-400 { color: ${s.c600} !important; }
-      .text-indigo-500                       { color: ${s.c500} !important; }
-      .text-indigo-400                       { color: ${s.c400} !important; }
-      .border-indigo-300, .dark\\:border-indigo-600 { border-color: ${s.c300} !important; }
-      .ring-indigo-500\\/40, .focus\\:ring-indigo-500\\/40:focus { --tw-ring-color: ${s.cshadow} !important; }
-      .shadow-indigo-200, .dark\\:shadow-indigo-900\\/30 { --tw-shadow-color: ${s.cshadow} !important; }
-      .hover\\:text-indigo-500:hover, .hover\\:text-indigo-600:hover, .dark\\:hover\\:text-indigo-400:hover { color: ${s.c500} !important; }
-      .hover\\:bg-indigo-50:hover, .dark\\:hover\\:bg-indigo-900\\/30:hover { background-color: ${s.cdark} !important; }
-      .bg-indigo-500 { background-color: ${s.c500} !important; }
-      .text-indigo-100 { color: ${s.c50} !important; }
-      .text-indigo-300 { color: ${s.c300} !important; }
-      .bg-indigo-100\\/50 { background-color: ${s.cdark} !important; }
-      .dark\\:bg-indigo-900\\/40 { background-color: ${s.cdark} !important; }
-      .hover\\:border-indigo-300:hover, .dark\\:hover\\:border-indigo-600:hover { border-color: ${s.c300} !important; }
-    `;
-  }, [settings.colorScheme]);
+  // Theme (dark/light, font size, accent color) — extracted to useTheme hook
+  const { isDark, setIsDark } = useTheme(settings, updateSettings);
 
 
   // Close user menu on outside click
@@ -212,63 +162,33 @@ function Dashboard({ auth }) {
     return () => document.removeEventListener('mousedown', handler);
   }, [showUserMenu]);
 
-  // Global keyboard shortcuts — driven by settings.keyboardShortcuts
-  useEffect(() => {
-    const shortcuts = settings.keyboardShortcuts || {};
-    const matches = (e, combo) => {
-      if (!combo) return false;
-      const parts = combo.toLowerCase().split('+');
-      const key   = parts[parts.length - 1];
-      return (
-        e.key.toLowerCase() === key &&
-        e.ctrlKey  === parts.includes('ctrl') &&
-        e.shiftKey === parts.includes('shift') &&
-        e.altKey   === parts.includes('alt') &&
-        e.metaKey  === parts.includes('meta')
-      );
-    };
-    const handler = (e) => {
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
-      if (matches(e, shortcuts.addExpense))   { e.preventDefault(); setShowAddDialog(true);      return; }
-      if (matches(e, shortcuts.scanReceipt))  { e.preventDefault(); scanTriggerRef.current?.();  return; }
-      if (matches(e, shortcuts.openSettings)) { e.preventDefault(); setShowSettings(true);        return; }
-      if (matches(e, shortcuts.openChat))     { e.preventDefault(); setChatOpen(true);            return; }
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [settings.keyboardShortcuts]);
+  // Global keyboard shortcuts — extracted to useGlobalShortcuts hook
+  const shortcutActions = useMemo(() => ({
+    addExpense:   () => setShowAddDialog(true),
+    scanReceipt:  () => scanTriggerRef.current?.(),
+    openSettings: () => setShowSettings(true),
+    openChat:     () => setChatOpen(true),
+  }), []);
+  useGlobalShortcuts(settings.keyboardShortcuts, shortcutActions);
 
-  // Global Escape key — closes the topmost open panel
-  useEffect(() => {
-    const handler = (e) => {
-      if (e.key !== 'Escape') return;
-      if (fabOpen)                { setFabOpen(false);           return; }
-      if (chatOpen)               { setChatOpen(false);          return; }
-      if (iconPickerFor)          { setIconPickerFor(null);      return; }
-      if (categoryActionFor)      { setCategoryActionFor(null);  return; }
-      if (deletingCategory)       { setDeletingCategory(null);   return; }
-      if (renamingCategory)       { setRenamingCategory(null);   return; }
-      if (editingSalary)          { setEditingSalary(false);     return; }
-      if (editingBudgetId !== null){ setEditingBudgetId(null);   return; }
-      if (showAddCategory)        { setShowAddCategory(false);   return; }
-      if (showAddDialog)          { setShowAddDialog(false);     return; }
-      if (deleteConfirm)          { setDeleteConfirm(null);      return; }
-      if (showNewMonth)           { setShowNewMonth(false);      return; }
-      if (detail)                 { setDetail(null);             return; }
-      if (showSettings)           { setShowSettings(false);      return; }
-      if (showUserMenu)           { setShowUserMenu(false);      return; }
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [fabOpen, chatOpen, iconPickerFor, categoryActionFor, deletingCategory, renamingCategory, editingSalary, editingBudgetId,
-      showAddCategory, showAddDialog, deleteConfirm, showNewMonth, detail, showSettings, showUserMenu]);
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', isDark);
-    localStorage.setItem('theme', isDark ? 'dark' : 'light');
-    // Keep settings in sync when the quick-toggle is used
-    updateSettings(prev => ({ ...prev, theme: isDark ? 'dark' : 'light' }));
-  }, [isDark]);
+  // Global Escape key — extracted to useEscapeDismiss hook
+  useEscapeDismiss([
+    { active: fabOpen,                dismiss: () => setFabOpen(false) },
+    { active: chatOpen,               dismiss: () => setChatOpen(false) },
+    { active: iconPickerFor,          dismiss: () => setIconPickerFor(null) },
+    { active: categoryActionFor,      dismiss: () => setCategoryActionFor(null) },
+    { active: deletingCategory,       dismiss: () => setDeletingCategory(null) },
+    { active: renamingCategory,       dismiss: () => setRenamingCategory(null) },
+    { active: editingSalary,          dismiss: () => setEditingSalary(false) },
+    { active: editingBudgetId !== null, dismiss: () => setEditingBudgetId(null) },
+    { active: showAddCategory,        dismiss: () => setShowAddCategory(false) },
+    { active: showAddDialog,          dismiss: () => setShowAddDialog(false) },
+    { active: deleteConfirm,          dismiss: () => setDeleteConfirm(null) },
+    { active: showNewMonth,           dismiss: () => setShowNewMonth(false) },
+    { active: detail,                 dismiss: () => setDetail(null) },
+    { active: showSettings,           dismiss: () => setShowSettings(false) },
+    { active: showUserMenu,           dismiss: () => setShowUserMenu(false) },
+  ]);
 
   useEffect(() => {
     if (liveData) setData(liveData);
@@ -314,30 +234,8 @@ function Dashboard({ auth }) {
   const totalBudget = expenses.reduce((s, d) => s + d.budget, 0);
   const overallRemaining = totalBudget - totalActual;
 
-  // ── Non-monthly expenses (sheet-backed) ──────────────────────────────────────
-  const [nonMonthlyItems, setNonMonthlyItems] = useState([]);
-  const [nonMonthlyTick, setNonMonthlyTick]   = useState(0);
-  const refreshNonMonthly = useCallback(() => setNonMonthlyTick(t => t + 1), []);
-  const migratedSheets = useRef(new Set());
-  useEffect(() => {
-    if (!selectedSheetId || !user.accessToken) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        let items = await fetchNonMonthlyItems(selectedSheetId, user.accessToken);
-        // One-time migration from legacy I4 cell for months that predate this feature
-        if (items.length === 0 && !migratedSheets.current.has(selectedSheetId)) {
-          migratedSheets.current.add(selectedSheetId);
-          await migrateNonMonthlyFromI4(selectedSheetId, user.accessToken);
-          items = await fetchNonMonthlyItems(selectedSheetId, user.accessToken);
-        }
-        if (!cancelled) setNonMonthlyItems(items);
-      } catch {
-        if (!cancelled) setNonMonthlyItems([]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [selectedSheetId, user.accessToken, nonMonthlyTick]);
+  // ── Non-monthly expenses (sheet-backed) — extracted to useNonMonthlyExpenses hook
+  const { nonMonthlyItems, refreshNonMonthly } = useNonMonthlyExpenses(selectedSheetId, user.accessToken);
 
   const nonMonthlyTotal = nonMonthlyItems.reduce((s, r) => s + r.amount, 0);
   // "What would the balance be if we hadn't made these one-off purchases?"
@@ -423,9 +321,7 @@ function Dashboard({ auth }) {
     }
   };
 
-  const handleSaveSalary = async () => {
-    const newSalary = parseFloat(salaryDraft);
-    if (isNaN(newSalary) || newSalary < 0) { setEditingSalary(false); return; }
+  const handleSaveSalary = async (newSalary) => {
     try {
       await writeSalary(selectedSheetId, newSalary, user.accessToken);
       refresh();
@@ -600,23 +496,32 @@ function Dashboard({ auth }) {
         {/* Loading skeleton */}
         {activeTab === 'budget' && loading && !lastUpdated && (
           <div className="space-y-4">
-            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 p-10 h-48 animate-pulse">
-              <div className="h-3 bg-slate-100 dark:bg-slate-800 rounded-full w-24 mb-8" />
-              <div className="h-12 bg-slate-100 dark:bg-slate-800 rounded-xl w-56" />
+            {/* Hero card skeleton */}
+            <div className="bg-white dark:bg-slate-900 rounded-[1.25rem] border border-slate-100 dark:border-slate-800 p-8 sm:p-10">
+              <div className="skeleton h-3 w-28 mb-8" />
+              <div className="skeleton h-14 w-52" />
+              <div className="skeleton h-6 w-16 rounded-full mt-5" />
             </div>
+            {/* Stat row skeleton */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               {[...Array(3)].map((_, i) => (
-                <div key={i} className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800 px-5 py-4 h-16 animate-pulse">
-                  <div className="h-2.5 bg-slate-100 dark:bg-slate-800 rounded-full w-20" />
+                <div key={i} className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800 px-5 py-4 flex items-center justify-between">
+                  <div className="skeleton h-2.5 w-20" />
+                  <div className="skeleton h-5 w-16" />
                 </div>
               ))}
+            </div>
+            {/* Main grid skeleton */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-2 skeleton h-64 rounded-[1.25rem]" />
+              <div className="skeleton h-64 rounded-[1.25rem]" />
             </div>
           </div>
         )}
 
-        {/* Stat Cards */}
+        {/* Stat Cards — keyed on selectedSheetId so entering month triggers re-animation */}
         {activeTab === 'budget' && settings.visibility.statCards !== false && (!loading || lastUpdated) && (
-          <div className="space-y-4">
+          <div key={`stats-${selectedSheetId}`} className="space-y-4">
             <StatCard
               hero
               title="Remaining Income"
@@ -627,14 +532,16 @@ function Dashboard({ auth }) {
                 'Deficit'
               }
               currencySymbol={currencySymbol}
+              enterDelay={0}
             />
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <StatCard
                 title="Income"
                 value={salaryReceived}
-                onEdit={() => { setEditingSalary(true); setSalaryDraft(salaryReceived.toFixed(2)); }}
+                onEdit={() => setEditingSalary(true)}
                 currencySymbol={currencySymbol}
                 valueColor="text-slate-900 dark:text-white"
+                enterDelay={60}
               />
               <StatCard
                 title="Actual Expenses"
@@ -642,20 +549,22 @@ function Dashboard({ auth }) {
                 subtext={`of ${currencySymbol}${totalBudget.toFixed(2)} budget`}
                 currencySymbol={currencySymbol}
                 valueColor="text-slate-900 dark:text-white"
+                enterDelay={100}
               />
               <StatCard
                 title="Budget Variance"
                 value={overallRemaining}
                 subtext={overallRemaining >= 0 ? 'Under Budget' : 'Over Budget'}
                 currencySymbol={currencySymbol}
+                enterDelay={140}
               />
             </div>
           </div>
         )}
 
-        {/* Main 2-column grid */}
+        {/* Main 2-column grid — keyed so month switch re-animates content */}
         {activeTab === 'budget' && (!loading || lastUpdated) && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+          <div key={`grid-${selectedSheetId}`} className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
 
             {/* Left column */}
             <div className="lg:col-span-2 space-y-8">
@@ -949,40 +858,11 @@ function Dashboard({ auth }) {
       )}
 
       {editingSalary && (
-        <>
-          <div className="fixed inset-0 bg-black/40 dark:bg-black/60 z-40 backdrop-blur-sm" onClick={() => setEditingSalary(false)} />
-          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
-            <div className="bg-white dark:bg-slate-800 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl w-full sm:max-w-sm border border-slate-100 dark:border-slate-700 overflow-hidden">
-              <div className="w-10 h-1 bg-slate-200 dark:bg-slate-600 rounded-full mx-auto mt-3 mb-1 sm:hidden" />
-              <div className="px-8 pt-6 pb-6 border-b border-slate-100 dark:border-slate-700">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-blue-50 dark:bg-blue-900/30 rounded-2xl flex items-center justify-center">
-                    <Wallet className="w-5 h-5 text-blue-500" />
-                  </div>
-                  <div>
-                    <p className="text-base font-black text-slate-800 dark:text-slate-100">Monthly Salary</p>
-                    <p className="text-xs text-slate-400 mt-0.5">Update your take-home pay for this month</p>
-                  </div>
-                </div>
-              </div>
-              <div className="px-8 py-6">
-                <input
-                  type="number"
-                  value={salaryDraft}
-                  onChange={e => setSalaryDraft(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleSaveSalary()}
-                  autoFocus
-                  placeholder="0.00"
-                  className="w-full bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 placeholder:text-slate-300"
-                />
-              </div>
-              <div className="px-8 flex gap-3" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 2rem)' }}>
-                <button onClick={() => setEditingSalary(false)} className="flex-1 py-3 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">Cancel</button>
-                <button onClick={handleSaveSalary} className="flex-1 py-3 rounded-2xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-all shadow-lg">Save</button>
-              </div>
-            </div>
-          </div>
-        </>
+        <SalaryEditDialog
+          currentSalary={salaryReceived}
+          onSave={handleSaveSalary}
+          onClose={() => setEditingSalary(false)}
+        />
       )}
 
       {showAddCategory && (

@@ -83,6 +83,21 @@ export function useAuth() {
   const [loadingAuth, setLoading] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
 
+  // ── Localhost dev bypass ──────────────────────────────────────────────────
+  // When VITE_DEV_ACCESS_TOKEN is set in .env, skip the OAuth popup entirely
+  // and auto-login on page load. No-op in production.
+  const devAutoLoginFired = useRef(false);
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    if (devAutoLoginFired.current) return;
+    if (user) return;
+    const devToken = import.meta.env.VITE_DEV_ACCESS_TOKEN;
+    if (!devToken) return;
+    devAutoLoginFired.current = true;
+    onGoogleSuccess({ access_token: devToken, expires_in: 3600 });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // In-memory AES key derived from the PIN. Populated on PIN setup or unlock;
   // cleared on lock and sign-out. Never written to storage.
   const cipherKeyRef = useRef(null);
@@ -91,7 +106,7 @@ export function useAuth() {
     setLoading(true);
     setDenied(false);
     try {
-      let email, name, picture, prodRole;
+      let email, name, picture, prodRole, prodAllowedEmails;
 
       if (import.meta.env.DEV) {
         // Dev mode: verify with Google directly — edge function not available without netlify dev
@@ -102,12 +117,6 @@ export function useAuth() {
         email   = profile.email?.toLowerCase();
         name    = profile.given_name || 'User';
         picture = profile.picture;
-
-        // Check against VITE_ALLOWED_EMAILS in .env (dev only — never in production bundle)
-        const devAllowed = new Set(
-          (import.meta.env.VITE_ALLOWED_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
-        );
-        if (!devAllowed.has(email)) { setDenied(true); setLoading(false); return; }
       } else {
         // Production: verify server-side via edge function — emails never in client bundle
         const res  = await fetch(VERIFY_URL, {
@@ -121,14 +130,14 @@ export function useAuth() {
         name     = data.name || 'User';
         picture  = data.picture;
         prodRole = data.role;
+        prodAllowedEmails = data.allowedEmails;
       }
 
-      const role = import.meta.env.DEV
-        ? ((import.meta.env.VITE_VIEWER_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).includes(email) ? 'viewer' : 'owner')
-        : (prodRole ?? 'owner');
+      const role = import.meta.env.DEV ? 'owner' : (prodRole ?? 'owner');
+      const allowedEmails = import.meta.env.DEV ? [email] : (prodAllowedEmails || []);
 
       const auth = {
-        email, name, picture, role,
+        email, name, picture, role, allowedEmails,
         accessToken: tokenResponse.access_token,
         expiresAt:   Date.now() + (tokenResponse.expires_in ?? 3600) * 1000,
       };
@@ -162,6 +171,9 @@ export function useAuth() {
         }
       }
 
+      // SEC-04: without a PIN, accessToken is stored as plaintext in sessionStorage.
+      // XSS or a malicious extension can read it. Setting a PIN enables AES-GCM
+      // encryption via isEncryptingRegime() above. Token expires in ≤1 hour.
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(auth));
       // Cache profile only in localStorage — no access token, no ciphertext
       localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify({
@@ -182,7 +194,7 @@ export function useAuth() {
     setDenied(true);
   };
 
-  const signOut = () => {
+  const signOut = async () => {
     sessionStorage.removeItem(STORAGE_KEY);
     // Sweep every budget_* key — covers per-sheet data caches, offline queue,
     // smart-rules, custom categories, vendor domains, PIN, biometric markers, etc.
@@ -199,9 +211,8 @@ export function useAuth() {
     cipherKeyRef.current = null;
     clearQueue();
     clearDriveTokenCache();
-    // SW and IDB clean-up runs async — UI doesn't wait
-    clearAllCaches();
-    clearAllIndexedDB();
+    await clearAllCaches();
+    await clearAllIndexedDB();
     setUser(null);
     setDenied(false);
     setSessionExpired(false);
@@ -292,42 +303,46 @@ export function useAuth() {
     }
   };
 
-  // Auto-clear expired sessions
+  // Auto-clear expired sessions — but try silent refresh first (SEC-14)
   useEffect(() => {
     if (!user?.expiresAt) return;
     const ms = user.expiresAt - Date.now();
-    if (ms <= 0) { signOut(); return; }
+    if (ms <= 0) { attemptSilentRefresh(); return; }
     const t = setTimeout(signOut, ms);
     return () => clearTimeout(t);
   }, [user?.expiresAt]);
 
-  // Silent token refresh — fires 5 min before expiry
+  // Shared silent-refresh logic — used both by the scheduled pre-expiry
+  // refresh and by the post-sleep catch-up path (SEC-14).
+  const attemptSilentRefresh = () => {
+    try {
+      const client = window.google?.accounts?.oauth2?.initTokenClient({
+        client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
+        scope: [
+          'openid email profile',
+          'https://www.googleapis.com/auth/spreadsheets',
+        ].join(' '),
+        prompt: '',
+        callback: (tokenResponse) => {
+          if (tokenResponse?.access_token) {
+            onGoogleSuccess(tokenResponse);
+          } else {
+            setSessionExpired(true);
+          }
+        },
+      });
+      client?.requestAccessToken({ prompt: '' });
+    } catch { setSessionExpired(true); }
+  };
+
+  // Silent token refresh — fires 5 min before expiry, or immediately if
+  // the window has already passed (e.g. laptop resumed from sleep).
   useEffect(() => {
     if (!user?.expiresAt) return;
     const refreshIn = user.expiresAt - Date.now() - 5 * 60 * 1000;
-    if (refreshIn <= 0) return;
+    if (refreshIn <= 0) { attemptSilentRefresh(); return; }
 
-    const t = setTimeout(() => {
-      try {
-        const client = window.google?.accounts?.oauth2?.initTokenClient({
-          client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
-          scope: [
-            'openid email profile',
-            'https://www.googleapis.com/auth/spreadsheets',
-          ].join(' '),
-          prompt: '',
-          callback: (tokenResponse) => {
-            if (tokenResponse?.access_token) {
-              onGoogleSuccess(tokenResponse);
-            } else {
-              setSessionExpired(true);
-            }
-          },
-        });
-        client?.requestAccessToken({ prompt: '' });
-      } catch { /* silent refresh failed — user will re-auth on expiry */ }
-    }, refreshIn);
-
+    const t = setTimeout(attemptSilentRefresh, refreshIn);
     return () => clearTimeout(t);
   }, [user?.expiresAt]);
 

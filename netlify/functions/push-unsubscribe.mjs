@@ -1,5 +1,5 @@
 import { getStore } from '@netlify/blobs';
-import { checkOrigin, verifyBearer, jsonResp } from './_auth.mjs';
+import { checkOrigin, checkSecFetchSite, verifyBearer, jsonResp } from './_auth.mjs';
 
 export default async function handler(req) {
   const corsOrigin = checkOrigin(req);
@@ -17,6 +17,7 @@ export default async function handler(req) {
   }
 
   if (!corsOrigin) return jsonResp(403, { error: 'Forbidden' });
+  if (!checkSecFetchSite(req)) return jsonResp(403, { error: 'Forbidden' }, corsOrigin);
   if (req.method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
 
   const v = await verifyBearer(req);

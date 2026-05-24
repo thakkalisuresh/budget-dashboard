@@ -18,13 +18,16 @@ export function useOfflineSync({ user, selectedSheetId, refresh, setSessionExpir
     return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down); };
   }, [user]);
 
-  // Queue processor — runs when we come back online
+  // Queue processor — runs when we come back online.
+  // Uses navigator.locks so only one tab processes at a time (DATA-03).
   useEffect(() => {
     if (!isOnline || !user.accessToken) return;
     const queue = getQueue();
     if (queue.length === 0) return;
-    (async () => {
-      for (const item of queue) {
+
+    const processQueue = async () => {
+      const items = getQueue();
+      for (const item of items) {
         if (item.type !== 'add_expense') continue;
         try {
           const { categoryName, vendorName, amount, monthName, source } = item.payload;
@@ -35,7 +38,16 @@ export function useOfflineSync({ user, selectedSheetId, refresh, setSessionExpir
         }
       }
       refresh();
-    })();
+    };
+
+    if (navigator.locks) {
+      navigator.locks.request('budget_offline_queue', { ifAvailable: true }, async (lock) => {
+        if (!lock) return;
+        await processQueue();
+      });
+    } else {
+      processQueue();
+    }
   }, [isOnline]);
 
   return { isOnline };
