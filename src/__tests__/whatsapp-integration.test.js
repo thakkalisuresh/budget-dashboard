@@ -362,7 +362,7 @@ describe('webhook handler — manual clarification', () => {
     const res = await handler(buildRequest(params));
     const text = await res.text();
     // Won't match the regex (abc isn't digits), so falls through to generic help
-    expect(text).toContain('Send a receipt image');
+    expect(text).toContain('Send a receipt photo');
   });
 
   it('defaults to Misc for unrecognized category', async () => {
@@ -761,7 +761,7 @@ describe('webhook handler — transaction text parsing (I1)', () => {
     const params = { From: 'whatsapp:+919567791515', Body: 'hey how are you doing today', NumMedia: '0' };
     const res = await handler(buildRequest(params));
     const text = await res.text();
-    expect(text).toContain('Send a receipt image');
+    expect(text).toContain('Send a receipt photo');
   });
 });
 
@@ -1334,17 +1334,45 @@ describe('webhook handler — DELETE (3-layer security)', () => {
     // Expired delete should be ignored, text falls through to help
     const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'CONFIRM DELETE', NumMedia: '0' }));
     const text = await res.text();
-    expect(text).toContain('Send a receipt image');
+    expect(text).toContain('Send a receipt photo');
     expect(mockStore.data.has(`delete_pending:${phone}`)).toBe(false);
   });
 });
 
+describe('webhook handler — GUIDE command', () => {
+  it('GUIDE returns full command reference', async () => {
+    const res = await handler(buildRequest({ From: 'whatsapp:+919567791515', Body: 'GUIDE', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('BUDGET BOT GUIDE');
+    expect(text).toContain('LOG EXPENSES');
+    expect(text).toContain('SET SALARY');
+    expect(text).toContain('NEW MONTH');
+    expect(text).toContain('DELETE');
+    expect(text).toContain('UNDO');
+    expect(text).toContain('QUERIES');
+    expect(text).toContain('Categories:');
+  });
+
+  it('HELP also returns the guide', async () => {
+    const res = await handler(buildRequest({ From: 'whatsapp:+919567791515', Body: 'help', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('BUDGET BOT GUIDE');
+  });
+
+  it('guide is case-insensitive', async () => {
+    const res = await handler(buildRequest({ From: 'whatsapp:+919567791515', Body: 'Guide', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('BUDGET BOT GUIDE');
+  });
+});
+
 describe('webhook handler — generic text messages', () => {
-  it('shows help for unrecognized text', async () => {
+  it('shows short help with GUIDE hint for unrecognized text', async () => {
     const params = { From: 'whatsapp:+919567791515', Body: 'hello there', NumMedia: '0' };
     const res = await handler(buildRequest(params));
     const text = await res.text();
-    expect(text).toContain('Send a receipt image');
+    expect(text).toContain('Send a receipt photo');
+    expect(text).toContain('GUIDE');
   });
 
   it('returns empty TwiML for empty body', async () => {

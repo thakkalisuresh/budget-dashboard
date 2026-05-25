@@ -530,6 +530,11 @@ async function handleTextReply(store, phone, text) {
     return await handleDelete(store, phone, arg.replace('#', ''));
   }
 
+  // ── GUIDE / HELP ──
+  if (/^(guide|help)$/i.test(text.trim())) {
+    return twilioResponse(buildGuideMessage());
+  }
+
   // ── Budget query (J1-J4) ──
   if (looksLikeQuery(text)) {
     try {
@@ -707,7 +712,7 @@ async function handleTextReply(store, phone, text) {
   // ── Help ──
   if (text.trim().length > 0) {
     return twilioResponse(
-      'Send a receipt image, wallet/bank screenshot, or paste a transaction SMS.\n\nOr type "Store Amount Category" for manual entry.\n\nCommands: YES, CANCEL, UNDO, ATTACH\nEdit pending: "category: Travel" or "amount: 52.10"\nBudget: "SET SALARY 5500" or "SET BUDGET Grocery 400"\nNew: "ADD CATEGORY Subscriptions 80 Want"\nMonth: "NEW MONTH June 2026"\nDelete: "DELETE", "DELETE last", "DELETE #3"\nQuery: "? budget", "? last 5", "how much on grocery?"'
+      'Send a receipt photo, bank screenshot, or paste a transaction SMS.\nManual: "Walmart 45.23 Grocery"\n\nType GUIDE for full command list.'
     );
   }
 
@@ -839,6 +844,47 @@ async function handleAddCategory(store, phone, nameInput, budgetStr, type) {
   return twilioResponse(
     `✅ Category "${name}" added for ${monthName}.\nBudget: $${budget} · Type: ${typeLabel}\n\nYou can now log expenses: "${name} 25.50 ${name}"`
   );
+}
+
+// ── GUIDE message ──────────────────────────────────────────────────────────
+
+function buildGuideMessage() {
+  return [
+    'BUDGET BOT GUIDE',
+    '',
+    'LOG EXPENSES',
+    '• Send receipt photo or screenshot',
+    '• Paste bank/wallet SMS text',
+    '• Manual: "Walmart 45.23 Grocery"',
+    '• Edit pending: "category: Travel" or "amount: 52.10"',
+    '• Confirm: YES · Cancel: CANCEL',
+    '',
+    'BUDGET MANAGEMENT',
+    '• SET SALARY 5500',
+    '• SET BUDGET Grocery 400',
+    '• ADD CATEGORY Subscriptions 80 Want',
+    '',
+    'NEW MONTH',
+    '• NEW MONTH June 2026',
+    '  (wizard: salary > budgets > create)',
+    '',
+    'DELETE (3-step security)',
+    '• DELETE — list recent expenses',
+    '• DELETE last · DELETE #3',
+    '  > CONFIRM DELETE > type amount',
+    '',
+    'AFTER LOGGING',
+    '• UNDO — reverse last entry (10 min)',
+    '• ATTACH — add receipt photo to last entry',
+    '',
+    'QUERIES',
+    '• ? budget — all categories',
+    '• ? Grocery — single category',
+    '• ? top — top spending',
+    '• "how much on grocery?"',
+    '',
+    'Categories: Grocery, Misc, Eating Out, Travel, Entertainment, Thakkali, Investment, Car Payments, Utilities, Rent, Health, Furniture, Holiday, Wi-Fi',
+  ].join('\n');
 }
 
 // ── DELETE handler (3-layer security) ──────────────────────────────────────
