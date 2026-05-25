@@ -163,6 +163,27 @@ export async function moveFile(fileId, newFolderId) {
   return moveRes.json();
 }
 
+export async function copyFile(fileId, newName) {
+  return driveRequest(`${DRIVE_API}/${fileId}/copy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: newName }),
+  });
+}
+
+export async function shareWithEmails(fileId, emails) {
+  const valid = emails.map(e => e.trim().toLowerCase()).filter(e => e.includes('@'));
+  await Promise.allSettled(
+    valid.map(email =>
+      driveRequest(`${DRIVE_API}/${fileId}/permissions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'user', role: 'writer', emailAddress: email }),
+      })
+    )
+  );
+}
+
 export async function uploadReceiptImage({ year, month, category, fileName, mimeType, base64 }) {
   const { folderId } = await buildFolderPath(year, month, category);
   const file = await uploadFile(folderId, fileName, mimeType, base64);

@@ -941,6 +941,203 @@ describe('webhook handler — budget queries (J1)', () => {
   });
 });
 
+describe('webhook handler — NEW MONTH wizard', () => {
+  const phone = '+919567791515';
+  const monthName = 'June 2026';
+
+  function mockSheetsForNewMonth({ monthExists = false, prevSalary = 5000, prevBudgets = null, userSettings = {} } = {}) {
+    const defaultBudgets = [
+      ['Grocery', 200, 200, null, null, null, null],
+      ['Misc', 50, 50, null, null, null, null],
+    ];
+    const budgetRows = prevBudgets || defaultBudgets;
+
+    mockFetch.mockImplementation((url, opts) => {
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      // Months registry lookup
+      if (url.includes('Months') && !opts?.method) {
+        if (monthExists) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['June 2026', 'sheet-jun']] }) });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['May 2026', 'sheet-may']] }) });
+      }
+      // Totals (for previous month data and new sheet creation)
+      if (url.includes('Totals') && !opts?.method) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [
+          ...budgetRows,
+          [null, null, null, null, null, 'Salary Received', prevSalary],
+        ] }) });
+      }
+      // UserSettings
+      if (url.includes('UserSettings')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({
+          values: [['nair.sabarish97@gmail.com', JSON.stringify(userSettings)]],
+        }) });
+      }
+      // Drive copy (createMonth)
+      if (url.includes('/copy')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'new-sheet-id' }) });
+      }
+      // Sheet metadata for deleteMonthsTab
+      if (url.includes('fields=sheets.properties')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({
+          sheets: [{ properties: { title: 'Months', sheetId: 99 } }, { properties: { title: 'Totals', sheetId: 1 } }],
+        }) });
+      }
+      // Default: succeed for any write operation
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [] }) });
+    });
+  }
+
+  it('rejects invalid month format', async () => {
+    const params = { From: `whatsapp:${phone}`, Body: 'NEW MONTH blah', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Invalid month format');
+  });
+
+  it('rejects already-existing month', async () => {
+    mockSheetsForNewMonth({ monthExists: true });
+    const params = { From: `whatsapp:${phone}`, Body: 'NEW MONTH June 2026', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('already exists');
+  });
+
+  it('starts wizard and asks for salary', async () => {
+    mockSheetsForNewMonth();
+    const params = { From: `whatsapp:${phone}`, Body: 'NEW MONTH June 2026', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Creating June 2026');
+    expect(text).toContain('Previous salary: $5000');
+    expect(text).toContain('SAME');
+    expect(mockStore.data.has(`new_month_wizard:${phone}`)).toBe(true);
+  });
+
+  it('stage 1: SAME keeps previous salary and shows budgets', async () => {
+    mockSheetsForNewMonth();
+    // Start wizard
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'NEW MONTH June 2026', NumMedia: '0' }));
+
+    // Reply SAME for salary
+    const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'SAME', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('Salary: $5000');
+    expect(text).toContain('Grocery');
+    expect(text).toContain('Misc');
+    expect(text).toContain('DONE');
+
+    const wizard = mockStore.data.get(`new_month_wizard:${phone}`);
+    expect(wizard.stage).toBe(2);
+    expect(wizard.salary).toBe(5000);
+  });
+
+  it('stage 1: numeric input sets salary', async () => {
+    mockSheetsForNewMonth();
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'NEW MONTH June 2026', NumMedia: '0' }));
+
+    const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: '6000', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('Salary: $6000');
+
+    const wizard = mockStore.data.get(`new_month_wizard:${phone}`);
+    expect(wizard.salary).toBe(6000);
+  });
+
+  it('stage 2: budget change is recorded', async () => {
+    mockSheetsForNewMonth();
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'NEW MONTH June 2026', NumMedia: '0' }));
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'SAME', NumMedia: '0' }));
+
+    const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'Grocery 500', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('Grocery');
+    expect(text).toContain('$500');
+
+    const wizard = mockStore.data.get(`new_month_wizard:${phone}`);
+    expect(wizard.budgetChanges['Grocery']).toBe(500);
+  });
+
+  it('stage 2: DONE shows summary with YES prompt', async () => {
+    mockSheetsForNewMonth();
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'NEW MONTH June 2026', NumMedia: '0' }));
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'SAME', NumMedia: '0' }));
+
+    const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'DONE', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('New month: June 2026');
+    expect(text).toContain('Salary: $5000');
+    expect(text).toContain('Grocery');
+    expect(text).toContain('Reply YES');
+
+    const wizard = mockStore.data.get(`new_month_wizard:${phone}`);
+    expect(wizard.stage).toBe(3);
+  });
+
+  it('stage 3: YES creates the month', async () => {
+    mockSheetsForNewMonth();
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'NEW MONTH June 2026', NumMedia: '0' }));
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'SAME', NumMedia: '0' }));
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'DONE', NumMedia: '0' }));
+
+    const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'YES', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('June 2026 created');
+    expect(text).toContain('Salary: $5000');
+    expect(mockStore.data.has(`new_month_wizard:${phone}`)).toBe(false);
+  });
+
+  it('stage 4: recurring expenses YES logs them', async () => {
+    mockSheetsForNewMonth({
+      userSettings: { recurringExpenses: [{ category: 'Misc', vendor: 'Netflix', amount: 15.99 }] },
+    });
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'NEW MONTH June 2026', NumMedia: '0' }));
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'SAME', NumMedia: '0' }));
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'DONE', NumMedia: '0' }));
+    // YES at stage 3 creates, then shows recurring
+    const res3 = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'YES', NumMedia: '0' }));
+    const text3 = await res3.text();
+    expect(text3).toContain('Recurring expenses');
+    expect(text3).toContain('Netflix');
+    expect(mockStore.data.get(`new_month_wizard:${phone}`).stage).toBe(4);
+
+    // YES at stage 4 logs recurring
+    const res4 = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'YES', NumMedia: '0' }));
+    const text4 = await res4.text();
+    expect(text4).toContain('1 recurring expense');
+    expect(mockStore.data.has(`new_month_wizard:${phone}`)).toBe(false);
+  });
+
+  it('stage 4: SKIP skips recurring', async () => {
+    mockSheetsForNewMonth({
+      userSettings: { recurringExpenses: [{ category: 'Misc', vendor: 'Netflix', amount: 15.99 }] },
+    });
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'NEW MONTH June 2026', NumMedia: '0' }));
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'SAME', NumMedia: '0' }));
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'DONE', NumMedia: '0' }));
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'YES', NumMedia: '0' }));
+
+    const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'SKIP', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('skipped');
+    expect(mockStore.data.has(`new_month_wizard:${phone}`)).toBe(false);
+  });
+
+  it('CANCEL clears wizard state', async () => {
+    mockSheetsForNewMonth();
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'NEW MONTH June 2026', NumMedia: '0' }));
+    expect(mockStore.data.has(`new_month_wizard:${phone}`)).toBe(true);
+
+    const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'CANCEL', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('Cancelled');
+    expect(mockStore.data.has(`new_month_wizard:${phone}`)).toBe(false);
+  });
+});
+
 describe('webhook handler — generic text messages', () => {
   it('shows help for unrecognized text', async () => {
     const params = { From: 'whatsapp:+919567791515', Body: 'hello there', NumMedia: '0' };

@@ -10,7 +10,7 @@ import {
 } from './_whatsapp.mjs';
 import { extractReceipt, extractTransactionText, CATEGORIES } from './_extraction.mjs';
 import { uploadReceiptImage, moveFile, buildFolderPath } from './_drive.mjs';
-import { getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID, getTotals, writeSalaryAmount, writeBudgetAmount, addCategory } from './_sheets.mjs';
+import { getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID, getTotals, writeSalaryAmount, writeBudgetAmount, addCategory, checkMonthExists, getLatestMonthData, getUserSettings, createMonth } from './_sheets.mjs';
 import { convertToUSD } from './_currency.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
 
@@ -299,7 +299,7 @@ async function handleTextReply(store, phone, text) {
   // ── CANCEL ──
   if (normalized === 'CANCEL') {
     let cancelledAny = false;
-    for (const key of [`salary_pending:${phone}`, `budget_pending:${phone}`]) {
+    for (const key of [`salary_pending:${phone}`, `budget_pending:${phone}`, `new_month_wizard:${phone}`]) {
       try {
         const val = await store.get(key, { type: 'json' });
         if (val) { await store.delete(key); cancelledAny = true; }
@@ -314,6 +314,15 @@ async function handleTextReply(store, phone, text) {
     }
     console.log(`whatsapp-webhook: CANCEL by ${phone} (cleaned ${cancelledAny ? 'pending' : 'nothing'})`);
     return twilioResponse(cancelledAny ? 'Cancelled.' : 'Nothing to cancel.');
+  }
+
+  // ── NEW MONTH wizard (active) ──
+  const wizardState = await store.get(`new_month_wizard:${phone}`, { type: 'json' }).catch(() => null);
+  if (wizardState) {
+    if (new Date(wizardState.expires) > new Date()) {
+      return await handleNewMonthWizard(store, phone, text, wizardState);
+    }
+    await store.delete(`new_month_wizard:${phone}`);
   }
 
   // ── YES ──
@@ -497,6 +506,12 @@ async function handleTextReply(store, phone, text) {
     return await handleAddCategory(store, phone, catMatch[1].trim(), catMatch[2], (catMatch[3] || 'want').toLowerCase());
   }
 
+  // ── NEW MONTH ──
+  const monthMatch = text.trim().match(/^new\s+month\s+(.+)$/i);
+  if (monthMatch) {
+    return await handleNewMonth(store, phone, monthMatch[1].trim());
+  }
+
   // ── Budget query (J1-J4) ──
   if (looksLikeQuery(text)) {
     try {
@@ -674,7 +689,7 @@ async function handleTextReply(store, phone, text) {
   // ── Help ──
   if (text.trim().length > 0) {
     return twilioResponse(
-      'Send a receipt image, wallet/bank screenshot, or paste a transaction SMS.\n\nOr type "Store Amount Category" for manual entry.\n\nCommands: YES, CANCEL, UNDO, ATTACH\nEdit pending: "category: Travel" or "amount: 52.10"\nBudget: "SET SALARY 5500" or "SET BUDGET Grocery 400"\nNew: "ADD CATEGORY Subscriptions 80 Want"\nQuery: "? budget", "? last 5", "how much on grocery?"'
+      'Send a receipt image, wallet/bank screenshot, or paste a transaction SMS.\n\nOr type "Store Amount Category" for manual entry.\n\nCommands: YES, CANCEL, UNDO, ATTACH\nEdit pending: "category: Travel" or "amount: 52.10"\nBudget: "SET SALARY 5500" or "SET BUDGET Grocery 400"\nNew: "ADD CATEGORY Subscriptions 80 Want"\nMonth: "NEW MONTH June 2026"\nQuery: "? budget", "? last 5", "how much on grocery?"'
     );
   }
 
@@ -806,6 +821,213 @@ async function handleAddCategory(store, phone, nameInput, budgetStr, type) {
   return twilioResponse(
     `✅ Category "${name}" added for ${monthName}.\nBudget: $${budget} · Type: ${typeLabel}\n\nYou can now log expenses: "${name} 25.50 ${name}"`
   );
+}
+
+// ── NEW MONTH handler ──────────────────────────────────────────────────────
+
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+function parseMonthName(input) {
+  const parts = input.trim().split(/\s+/);
+  if (parts.length !== 2) return null;
+  const month = MONTH_NAMES.find(m => m.toLowerCase() === parts[0].toLowerCase());
+  const year = parseInt(parts[1]);
+  if (!month || isNaN(year) || year < 2020 || year > 2099) return null;
+  return `${month} ${year}`;
+}
+
+async function handleNewMonth(store, phone, monthInput) {
+  const monthName = parseMonthName(monthInput);
+  if (!monthName) {
+    return twilioResponse('Invalid month format. Use: NEW MONTH June 2026');
+  }
+
+  const exists = await checkMonthExists(monthName);
+  if (exists) {
+    return twilioResponse(`${monthName} already exists. Use SET SALARY or SET BUDGET to edit it.`);
+  }
+
+  let prevData = null;
+  try { prevData = await getLatestMonthData(); } catch { /* first month */ }
+
+  let settings = {};
+  try { settings = await getUserSettings(); } catch { /* no settings */ }
+
+  const wizard = {
+    monthName,
+    stage: 1,
+    salary: null,
+    budgetChanges: {},
+    prevSalary: prevData?.salary || 0,
+    prevBudgets: prevData?.budgets || [],
+    recurringExpenses: settings.recurringExpenses || [],
+    customCategories: settings.customCategories || [],
+    expires: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  };
+
+  await store.setJSON(`new_month_wizard:${phone}`, wizard);
+
+  const salaryLine = prevData?.salary
+    ? `Previous salary: $${prevData.salary}`
+    : 'No previous salary found';
+
+  return twilioResponse(
+    `Creating ${monthName}.\n\n${salaryLine}\nEnter salary amount, or SAME to keep it.\n(CANCEL to abort)`
+  );
+}
+
+async function handleNewMonthWizard(store, phone, text, wizard) {
+  const normalized = text.trim().toUpperCase();
+  const key = `new_month_wizard:${phone}`;
+
+  if (wizard.stage === 1) {
+    if (normalized === 'SAME') {
+      wizard.salary = wizard.prevSalary;
+    } else {
+      const amount = parseFloat(text.trim().replace(/[\$,]/g, ''));
+      if (isNaN(amount) || amount <= 0) {
+        return twilioResponse('Enter a salary amount (e.g. 5500) or SAME.');
+      }
+      wizard.salary = amount;
+    }
+
+    wizard.stage = 2;
+    await store.setJSON(key, wizard);
+
+    if (wizard.prevBudgets.length === 0) {
+      wizard.stage = 3;
+      await store.setJSON(key, wizard);
+      return twilioResponse(buildNewMonthSummary(wizard));
+    }
+
+    const lines = [`Salary: $${wizard.salary}\n`, 'Budgets:'];
+    for (const cat of wizard.prevBudgets) {
+      lines.push(`  ${cat.name}: $${cat.budget}`);
+    }
+    lines.push('', 'Send "CategoryName Amount" to change, SAME to keep all, or DONE when finished.');
+    return twilioResponse(lines.join('\n'));
+  }
+
+  if (wizard.stage === 2) {
+    if (normalized === 'SAME' || normalized === 'DONE') {
+      for (const cat of wizard.prevBudgets) {
+        if (wizard.budgetChanges[cat.name] == null) {
+          wizard.budgetChanges[cat.name] = cat.budget;
+        }
+      }
+      wizard.stage = 3;
+      await store.setJSON(key, wizard);
+      return twilioResponse(buildNewMonthSummary(wizard));
+    }
+
+    const budgetEdit = text.trim().match(/^(.+?)\s+\$?([\d,]+(?:\.\d{1,2})?)$/);
+    if (budgetEdit) {
+      const catName = budgetEdit[1].trim();
+      const amount = parseFloat(budgetEdit[2].replace(/,/g, ''));
+      const matched = wizard.prevBudgets.find(c => c.name.toLowerCase() === catName.toLowerCase());
+
+      if (!matched) {
+        const names = wizard.prevBudgets.map(c => c.name).join(', ');
+        return twilioResponse(`Unknown category "${catName}".\nAvailable: ${names}`);
+      }
+
+      if (isNaN(amount) || amount < 0) {
+        return twilioResponse('Invalid amount. Use: CategoryName Amount (e.g. Grocery 500)');
+      }
+
+      wizard.budgetChanges[matched.name] = amount;
+      await store.setJSON(key, wizard);
+
+      return twilioResponse(`${matched.name} → $${amount}\nMore changes, SAME for remaining, or DONE to finish.`);
+    }
+
+    return twilioResponse('Send "CategoryName Amount" to change, SAME to keep all, or DONE when finished.');
+  }
+
+  if (wizard.stage === 3) {
+    if (normalized !== 'YES') {
+      return twilioResponse('Reply YES to create, or CANCEL to abort.');
+    }
+
+    let result;
+    try {
+      result = await createMonth({
+        monthName: wizard.monthName,
+        salary: wizard.salary,
+        budgetChanges: wizard.budgetChanges,
+      });
+    } catch (e) {
+      console.error('whatsapp-webhook: createMonth failed', e.message);
+      await store.delete(key);
+      return twilioResponse(`Failed to create ${wizard.monthName}. Try again or use the dashboard.`);
+    }
+
+    wizard.createdSheetId = result.sheetId;
+
+    if (wizard.recurringExpenses.length > 0) {
+      wizard.stage = 4;
+      await store.setJSON(key, wizard);
+
+      const lines = [`✅ ${wizard.monthName} created!\n`, 'Recurring expenses:'];
+      for (const exp of wizard.recurringExpenses) {
+        lines.push(`  ${exp.vendor} · $${exp.amount} (${exp.category})`);
+      }
+      lines.push('', 'Log them all? Reply YES or SKIP.');
+      return twilioResponse(lines.join('\n'));
+    }
+
+    await store.delete(key);
+    console.log(`whatsapp-webhook: NEW MONTH ${wizard.monthName} created by ${phone}`);
+    return twilioResponse(`✅ ${wizard.monthName} created!\nSalary: $${wizard.salary}\nSheet is ready to use.`);
+  }
+
+  if (wizard.stage === 4) {
+    if (normalized === 'YES') {
+      let logged = 0;
+      for (const exp of wizard.recurringExpenses) {
+        try {
+          await appendExpense({
+            category: exp.category,
+            vendor: exp.vendor,
+            amount: exp.amount,
+            sheetId: wizard.createdSheetId,
+            monthName: wizard.monthName,
+          });
+          logged++;
+        } catch (e) {
+          console.warn(`createMonth: recurring "${exp.vendor}" failed:`, e.message);
+        }
+      }
+      await store.delete(key);
+      console.log(`whatsapp-webhook: NEW MONTH ${wizard.monthName} created with ${logged} recurring by ${phone}`);
+      return twilioResponse(`✅ ${wizard.monthName} ready!\n${logged} recurring expense${logged !== 1 ? 's' : ''} logged.`);
+    }
+
+    if (normalized === 'SKIP') {
+      await store.delete(key);
+      console.log(`whatsapp-webhook: NEW MONTH ${wizard.monthName} created (recurring skipped) by ${phone}`);
+      return twilioResponse(`✅ ${wizard.monthName} created!\nRecurring expenses skipped.`);
+    }
+
+    return twilioResponse('Reply YES to log recurring expenses, or SKIP.');
+  }
+
+  await store.delete(key);
+  return twilioResponse('Wizard expired. Try NEW MONTH again.');
+}
+
+function buildNewMonthSummary(wizard) {
+  const lines = [`New month: ${wizard.monthName}\n`, `Salary: $${wizard.salary}`, '', 'Budgets:'];
+  for (const cat of wizard.prevBudgets) {
+    const amt = wizard.budgetChanges[cat.name] ?? cat.budget;
+    const changed = wizard.budgetChanges[cat.name] != null && wizard.budgetChanges[cat.name] !== cat.budget;
+    lines.push(`  ${cat.name}: $${amt}${changed ? ' ←' : ''}`);
+  }
+  if (wizard.recurringExpenses.length > 0) {
+    lines.push('', `${wizard.recurringExpenses.length} recurring expense(s) will be asked after creation.`);
+  }
+  lines.push('', 'Reply YES to create, or CANCEL.');
+  return lines.join('\n');
 }
 
 function looksLikeTransactionText(text) {

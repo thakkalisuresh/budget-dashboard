@@ -3,7 +3,7 @@
  * Serverless equivalent of sheetExpenses.js + sheetApi.js.
  * Files starting with "_" are NOT deployed as functions by Netlify.
  */
-import { getAccessToken } from './_drive.mjs';
+import { getAccessToken, copyFile, shareWithEmails } from './_drive.mjs';
 
 const SHEETS_API    = 'https://sheets.googleapis.com/v4/spreadsheets';
 const TEMPLATE_ID   = process.env.VITE_TEMPLATE_SHEET_ID;
@@ -379,6 +379,152 @@ export async function addCategory(sheetId, { name, budget, type }) {
     amount: budget,
     details: `Custom category "${name}" added via WhatsApp (${type || 'want'}, budget $${Number(budget).toFixed(2)})`,
   });
+}
+
+// ── Month creation helpers ─────────────────────────────────────────────────
+
+async function deleteMonthsTabFromSheet(sheetId) {
+  const meta = await sheetsRequest(sheetId, '?fields=sheets.properties');
+  const monthsSheet = (meta.sheets || []).find(s => s.properties?.title === 'Months');
+  if (!monthsSheet) return;
+  await sheetsRequest(sheetId, ':batchUpdate', {
+    method: 'POST',
+    body: JSON.stringify({
+      requests: [{ deleteSheet: { sheetId: monthsSheet.properties.sheetId } }],
+    }),
+  });
+}
+
+async function updateMonthColumnsInSheet(newSheetId, monthName) {
+  const parts = monthName.split(' ');
+  const month = parts[0];
+  const year = parts[1] || '';
+  const uniqueSheets = [...new Set(Object.values(SHEET_MAP).map(c => c.sheet))];
+
+  for (const sheetName of uniqueSheets) {
+    try {
+      const range = encodeURIComponent(`'${sheetName}'`);
+      const data = await sheetsRequest(newSheetId, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
+      const rows = data.values || [];
+
+      const updates = [];
+      rows.slice(1).forEach((row, i) => {
+        const hasContent = row.some((cell, ci) => ci >= 2 && cell !== '' && cell != null);
+        if (!hasContent) return;
+        updates.push({
+          range: `'${sheetName}'!A${i + 2}:B${i + 2}`,
+          values: [[month, year]],
+        });
+      });
+
+      if (updates.length === 0) continue;
+
+      await sheetsRequest(newSheetId, '/values:batchUpdate', {
+        method: 'POST',
+        body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data: updates }),
+      });
+    } catch (e) {
+      console.warn(`updateMonthColumns: skipped ${sheetName}`, e.message);
+    }
+  }
+}
+
+async function clearNotesCellInSheet(sheetId) {
+  try {
+    const range = encodeURIComponent("'Totals'!I4");
+    await sheetsRequest(sheetId, `/values/${range}:clear`, { method: 'POST' });
+  } catch { /* non-critical */ }
+}
+
+async function registerMonth(monthName, sheetId) {
+  const range = encodeURIComponent("'Months'!A:B");
+  await sheetsRequest(TEMPLATE_ID, `/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+    method: 'POST',
+    body: JSON.stringify({ values: [[monthName, sheetId]] }),
+  });
+}
+
+export async function checkMonthExists(monthName) {
+  try {
+    await getCurrentMonthSheetId(monthName);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function getLatestMonthData() {
+  if (!TEMPLATE_ID) throw new Error('VITE_TEMPLATE_SHEET_ID not configured');
+  const range = encodeURIComponent("'Months'!A2:B50");
+  const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
+  const rows = (data.values || []).filter(r => r[0] && r[1]);
+
+  if (rows.length === 0) return null;
+
+  rows.sort((a, b) => {
+    const toDate = name => { try { return new Date(`${name} 1`).getTime(); } catch { return 0; } };
+    return toDate(b[0]) - toDate(a[0]);
+  });
+
+  const totals = await getTotals(rows[0][1]);
+
+  return {
+    monthName: rows[0][0],
+    sheetId: rows[0][1],
+    salary: totals.salary,
+    budgets: totals.categories,
+  };
+}
+
+export async function getUserSettings() {
+  if (!TEMPLATE_ID || ALLOWED_EMAILS.length === 0) return {};
+  const userId = ALLOWED_EMAILS[0];
+  const range = encodeURIComponent("'UserSettings'!A:B");
+  const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
+  const rows = data.values || [];
+  const row = rows.find(r => r[0] === userId);
+  if (!row) return {};
+  try { return JSON.parse(row[1] || '{}'); } catch { return {}; }
+}
+
+export async function createMonth({ monthName, salary, budgetChanges }) {
+  const { id: newSheetId } = await copyFile(TEMPLATE_ID, monthName);
+
+  await deleteMonthsTabFromSheet(newSheetId);
+  await updateMonthColumnsInSheet(newSheetId, monthName);
+  await clearNotesCellInSheet(newSheetId);
+
+  const settings = await getUserSettings();
+  const customCats = settings.customCategories || [];
+  for (const catName of customCats) {
+    if (!SHEET_MAP[catName]) {
+      try {
+        const catBudget = budgetChanges?.[catName] || 0;
+        await addCategory(newSheetId, { name: catName, budget: catBudget, type: 'want' });
+      } catch (e) {
+        console.warn(`createMonth: custom category "${catName}" failed:`, e.message);
+      }
+    }
+  }
+
+  if (salary && salary > 0) {
+    await writeSalaryAmount(newSheetId, salary);
+  }
+
+  if (budgetChanges) {
+    for (const [cat, amt] of Object.entries(budgetChanges)) {
+      try {
+        await writeBudgetAmount(newSheetId, cat, amt);
+      } catch (e) {
+        console.warn(`createMonth: budget for "${cat}" failed:`, e.message);
+      }
+    }
+  }
+
+  await shareWithEmails(newSheetId, ALLOWED_EMAILS);
+  await registerMonth(monthName, newSheetId);
+
+  return { sheetId: newSheetId };
 }
 
 async function addCategoryToUserSettings(categoryName) {
