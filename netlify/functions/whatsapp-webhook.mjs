@@ -10,7 +10,7 @@ import {
 } from './_whatsapp.mjs';
 import { extractReceipt, extractTransactionText, CATEGORIES } from './_extraction.mjs';
 import { uploadReceiptImage, moveFile, buildFolderPath } from './_drive.mjs';
-import { getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID } from './_sheets.mjs';
+import { getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID, getTotals, writeSalaryAmount, writeBudgetAmount } from './_sheets.mjs';
 import { convertToUSD } from './_currency.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
 
@@ -299,6 +299,12 @@ async function handleTextReply(store, phone, text) {
   // ── CANCEL ──
   if (normalized === 'CANCEL') {
     let cancelledAny = false;
+    for (const key of [`salary_pending:${phone}`, `budget_pending:${phone}`]) {
+      try {
+        const val = await store.get(key, { type: 'json' });
+        if (val) { await store.delete(key); cancelledAny = true; }
+      } catch { /* no pending */ }
+    }
     for (const prefix of [`confirm:${phone}:`, `transfer_pending:${phone}:`]) {
       const { blobs } = await store.list({ prefix });
       for (const b of (blobs || [])) {
@@ -307,11 +313,45 @@ async function handleTextReply(store, phone, text) {
       }
     }
     console.log(`whatsapp-webhook: CANCEL by ${phone} (cleaned ${cancelledAny ? 'pending' : 'nothing'})`);
-    return twilioResponse(cancelledAny ? 'Receipt cancelled.' : 'Nothing to cancel.');
+    return twilioResponse(cancelledAny ? 'Cancelled.' : 'Nothing to cancel.');
   }
 
   // ── YES ──
   if (normalized === 'YES') {
+    // Check salary/budget pending first (most recent interaction takes priority)
+    const salaryPending = await store.get(`salary_pending:${phone}`, { type: 'json' }).catch(() => null);
+    if (salaryPending) {
+      try {
+        await writeSalaryAmount(salaryPending.sheetId, salaryPending.amount);
+      } catch (e) {
+        console.error('whatsapp-webhook: salary write failed', e.message);
+        await store.delete(`salary_pending:${phone}`);
+        return twilioResponse('Failed to update salary. Try again or use the dashboard.');
+      }
+      await store.delete(`salary_pending:${phone}`);
+      console.log(`whatsapp-webhook: salary updated to ${salaryPending.amount} by ${phone}`);
+      return twilioResponse(
+        `✅ Salary updated to $${salaryPending.amount} for ${salaryPending.monthName} (was $${salaryPending.currentSalary}).`
+      );
+    }
+
+    const budgetPending = await store.get(`budget_pending:${phone}`, { type: 'json' }).catch(() => null);
+    if (budgetPending) {
+      try {
+        await writeBudgetAmount(budgetPending.sheetId, budgetPending.category, budgetPending.amount);
+      } catch (e) {
+        console.error('whatsapp-webhook: budget write failed', e.message);
+        await store.delete(`budget_pending:${phone}`);
+        return twilioResponse('Failed to update budget. Try again or use the dashboard.');
+      }
+      await store.delete(`budget_pending:${phone}`);
+      console.log(`whatsapp-webhook: ${budgetPending.category} budget updated to ${budgetPending.amount} by ${phone}`);
+      return twilioResponse(
+        `✅ ${budgetPending.category} budget updated to $${budgetPending.amount} for ${budgetPending.monthName} (was $${budgetPending.currentBudget}).`
+      );
+    }
+
+    // Fall through to receipt confirmation
     const { blobs } = await store.list({ prefix: `confirm:${phone}:` });
 
     if (!blobs || blobs.length === 0) {
@@ -319,7 +359,7 @@ async function handleTextReply(store, phone, text) {
       if (transferBlobs && transferBlobs.length > 0) {
         return twilioResponse("Pick a category first (e.g. 'Misc' or 'Investment').");
       }
-      return twilioResponse("No pending receipt to confirm. Send a receipt image to get started.");
+      return twilioResponse("No pending action to confirm.");
     }
 
     const key     = blobs[0].key;
@@ -437,6 +477,18 @@ async function handleTextReply(store, phone, text) {
     return twilioResponse(
       `Send the receipt photo for:\n${lastlog.vendor} · $${lastlog.amount} (${lastlog.category})`
     );
+  }
+
+  // ── SET SALARY ──
+  const salaryMatch = text.trim().match(/^set\s+salary\s+\$?([\d,]+(?:\.\d{1,2})?)$/i);
+  if (salaryMatch) {
+    return await handleSetSalary(store, phone, salaryMatch[1]);
+  }
+
+  // ── SET BUDGET ──
+  const budgetMatch = text.trim().match(/^set\s+budget\s+(.+?)\s+\$?([\d,]+(?:\.\d{1,2})?)$/i);
+  if (budgetMatch) {
+    return await handleSetBudget(store, phone, budgetMatch[1].trim(), budgetMatch[2]);
   }
 
   // ── Budget query (J1-J4) ──
@@ -616,11 +668,97 @@ async function handleTextReply(store, phone, text) {
   // ── Help ──
   if (text.trim().length > 0) {
     return twilioResponse(
-      'Send a receipt image, wallet/bank screenshot, or paste a transaction SMS.\n\nOr type "Store Amount Category" for manual entry.\n\nCommands: YES, CANCEL, UNDO, ATTACH\nEdit pending: "category: Travel" or "amount: 52.10"\nQuery: "? budget", "? last 5", "how much on grocery?"'
+      'Send a receipt image, wallet/bank screenshot, or paste a transaction SMS.\n\nOr type "Store Amount Category" for manual entry.\n\nCommands: YES, CANCEL, UNDO, ATTACH\nEdit pending: "category: Travel" or "amount: 52.10"\nBudget: "SET SALARY 5500" or "SET BUDGET Grocery 400"\nQuery: "? budget", "? last 5", "how much on grocery?"'
     );
   }
 
   return emptyTwiml();
+}
+
+// ── SET SALARY handler ──────────────────────────────────────────────────────
+
+async function handleSetSalary(store, phone, amountStr) {
+  const amount = parseFloat(amountStr.replace(/,/g, ''));
+  if (isNaN(amount) || amount <= 0) {
+    return twilioResponse("Invalid amount. Use: SET SALARY 5500");
+  }
+
+  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  let sheetId;
+  try {
+    sheetId = await getCurrentMonthSheetId(monthName);
+  } catch {
+    return twilioResponse(`No sheet found for ${monthName}. Create the month first.`);
+  }
+
+  const totals = await getTotals(sheetId);
+
+  if (totals.salary && totals.salary > 0) {
+    await store.setJSON(`salary_pending:${phone}`, {
+      amount, sheetId, monthName,
+      currentSalary: totals.salary,
+      createdAt: new Date().toISOString(),
+    });
+    return twilioResponse(
+      `Salary is currently $${totals.salary} for ${monthName}.\nUpdate to $${amount}? Reply YES to confirm or CANCEL.`
+    );
+  }
+
+  try {
+    await writeSalaryAmount(sheetId, amount);
+  } catch (e) {
+    console.error('whatsapp-webhook: salary write failed', e.message);
+    return twilioResponse('Failed to set salary. Try again or use the dashboard.');
+  }
+  console.log(`whatsapp-webhook: salary set to ${amount} for ${monthName} by ${phone}`);
+  return twilioResponse(`✅ Salary set to $${amount} for ${monthName}.`);
+}
+
+// ── SET BUDGET handler ─────────────────────────────────────────────────────
+
+async function handleSetBudget(store, phone, categoryInput, amountStr) {
+  const amount = parseFloat(amountStr.replace(/,/g, ''));
+  if (isNaN(amount) || amount <= 0) {
+    return twilioResponse("Invalid amount. Use: SET BUDGET Grocery 400");
+  }
+
+  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  let sheetId;
+  try {
+    sheetId = await getCurrentMonthSheetId(monthName);
+  } catch {
+    return twilioResponse(`No sheet found for ${monthName}. Create the month first.`);
+  }
+
+  const totals = await getTotals(sheetId);
+  const matchedCat = totals.categories.find(
+    c => c.name.toLowerCase() === categoryInput.toLowerCase()
+  );
+
+  if (!matchedCat) {
+    const names = totals.categories.map(c => c.name).join(', ');
+    return twilioResponse(`Unknown category "${categoryInput}".\nAvailable: ${names}`);
+  }
+
+  if (matchedCat.budget > 0) {
+    await store.setJSON(`budget_pending:${phone}`, {
+      category: matchedCat.name, amount, sheetId, monthName,
+      currentBudget: matchedCat.budget,
+      createdAt: new Date().toISOString(),
+    });
+    return twilioResponse(
+      `${matchedCat.name} budget is currently $${matchedCat.budget} for ${monthName}.\nUpdate to $${amount}? Reply YES to confirm or CANCEL.`
+    );
+  }
+
+  try {
+    await writeBudgetAmount(sheetId, matchedCat.name, amount);
+  } catch (e) {
+    console.error('whatsapp-webhook: budget write failed', e.message);
+    return twilioResponse('Failed to set budget. Try again or use the dashboard.');
+  }
+  console.log(`whatsapp-webhook: ${matchedCat.name} budget set to ${amount} for ${monthName} by ${phone}`);
+  return twilioResponse(`✅ ${matchedCat.name} budget set to $${amount} for ${monthName}.`);
 }
 
 function looksLikeTransactionText(text) {

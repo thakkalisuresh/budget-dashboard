@@ -113,16 +113,16 @@ export async function appendExpense({ category, vendor, amount, txDate, sheetId,
   return { uuid, row };
 }
 
-async function appendHistory(sheetId, { action, category, vendor, amount, uuid, txDate }) {
+async function appendHistory(sheetId, { action, category, vendor, amount, uuid, txDate, details }) {
   const now = new Date().toISOString();
   const row = [
     now,
     safeString(action),
     safeString(category),
-    safeString(vendor),
+    safeString(vendor || ''),
     amount,
-    `Receipt via WhatsApp`,
-    uuid,
+    details || 'Receipt via WhatsApp',
+    uuid || '',
     'whatsapp-bot',
   ];
 
@@ -229,5 +229,63 @@ export async function deleteExpenseByUUID({ category, uuid, sheetId }) {
         },
       }],
     }),
+  });
+}
+
+export async function writeSalaryAmount(sheetId, amount) {
+  const range = encodeURIComponent("'Totals'!A1:J30");
+  const data = await sheetsRequest(sheetId, `/values/${range}?valueRenderOption=UNFORMATTED_VALUE`);
+  const rows = data.values || [];
+
+  let salaryRowNum = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const label = (rows[i][5] || '').toString().toLowerCase();
+    if (label.includes('salary received')) {
+      salaryRowNum = i + 1;
+      break;
+    }
+  }
+  if (salaryRowNum < 0) throw new Error('Salary row not found in Totals');
+
+  const cell = encodeURIComponent(`'Totals'!G${salaryRowNum}`);
+  await sheetsRequest(sheetId, `/values/${cell}?valueInputOption=USER_ENTERED`, {
+    method: 'PUT',
+    body: JSON.stringify({ values: [[amount]] }),
+  });
+
+  await appendHistory(sheetId, {
+    action: 'Budget Updated',
+    category: 'Salary',
+    amount,
+    details: `Salary set to $${Number(amount).toFixed(2)} via WhatsApp`,
+  });
+}
+
+export async function writeBudgetAmount(sheetId, categoryName, amount) {
+  const range = encodeURIComponent("'Totals'!A2:C21");
+  const data = await sheetsRequest(sheetId, `/values/${range}?valueRenderOption=UNFORMATTED_VALUE`);
+  const rows = data.values || [];
+
+  let catRowNum = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const name = (rows[i][0] || '').toString().trim();
+    if (name.toLowerCase() === categoryName.trim().toLowerCase()) {
+      catRowNum = i + 2;
+      break;
+    }
+  }
+  if (catRowNum < 0) throw new Error(`Category "${categoryName}" not found in Totals`);
+
+  const cell = encodeURIComponent(`'Totals'!C${catRowNum}`);
+  await sheetsRequest(sheetId, `/values/${cell}?valueInputOption=USER_ENTERED`, {
+    method: 'PUT',
+    body: JSON.stringify({ values: [[`=${Number(amount) || 0}-B${catRowNum}`]] }),
+  });
+
+  await appendHistory(sheetId, {
+    action: 'Budget Updated',
+    category: categoryName,
+    amount,
+    details: `Budget set to $${Number(amount).toFixed(2)} via WhatsApp`,
   });
 }

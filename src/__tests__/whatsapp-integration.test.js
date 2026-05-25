@@ -301,7 +301,7 @@ describe('webhook handler — text reply confirmation', () => {
     const params = { From: 'whatsapp:+919567791515', Body: 'CANCEL', NumMedia: '0' };
     const res = await handler(buildRequest(params));
     const text = await res.text();
-    expect(text).toContain('cancelled');
+    expect(text).toContain('Cancelled');
     expect(mockStore.data.has('confirm:+919567791515:receipt-xyz')).toBe(false);
   });
 
@@ -309,7 +309,7 @@ describe('webhook handler — text reply confirmation', () => {
     const params = { From: 'whatsapp:+919567791515', Body: 'YES', NumMedia: '0' };
     const res = await handler(buildRequest(params));
     const text = await res.text();
-    expect(text).toContain('No pending receipt');
+    expect(text).toContain('No pending action');
   });
 
   it('is case-insensitive (yes/Yes/YES all work)', async () => {
@@ -776,7 +776,7 @@ describe('webhook handler — CANCEL clears transfer_pending', () => {
     const params = { From: 'whatsapp:+919567791515', Body: 'CANCEL', NumMedia: '0' };
     const res = await handler(buildRequest(params));
     const text = await res.text();
-    expect(text).toContain('cancelled');
+    expect(text).toContain('Cancelled');
     expect(mockStore.data.has('transfer_pending:+919567791515:transfer-99')).toBe(false);
   });
 });
