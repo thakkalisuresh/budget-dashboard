@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 vi.stubEnv('TWILIO_AUTH_TOKEN', 'test-auth-token');
 vi.stubEnv('TWILIO_ACCOUNT_SID', 'ACtest123');
 vi.stubEnv('WHATSAPP_ALLOWED_PHONES', '+919567791515,+18285107202');
+vi.stubEnv('GEMINI_API_KEY', 'test-gemini-key');
 vi.stubEnv('ANTHROPIC_API_KEY', 'sk-test');
 vi.stubEnv('GOOGLE_CLIENT_ID', 'test-client-id');
 vi.stubEnv('GOOGLE_CLIENT_SECRET', 'test-secret');
@@ -167,14 +168,14 @@ describe('webhook handler — receipt extraction flow', () => {
       if (url.includes('twilio.com/media')) {
         return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(jpegBytes()) });
       }
-      if (url.includes('api.anthropic.com')) {
+      if (url.includes('generativelanguage.googleapis.com')) {
         if (extractionResult === 'fail') {
           return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: { message: 'fail' } }) });
         }
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({
-            content: [{ type: 'text', text: JSON.stringify(extractionResult) }],
+            candidates: [{ content: { parts: [{ text: JSON.stringify(extractionResult) }] } }],
           }),
         });
       }
@@ -626,18 +627,18 @@ describe('webhook handler — YES stores lastlog for UNDO/ATTACH', () => {
 describe('webhook handler — transaction text parsing (I1)', () => {
   it('parses a bank SMS and creates confirmation', async () => {
     mockFetch.mockImplementation((url) => {
-      if (url.includes('api.anthropic.com')) {
+      if (url.includes('generativelanguage.googleapis.com')) {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({
-            content: [{ type: 'text', text: JSON.stringify({
+            candidates: [{ content: { parts: [{ text: JSON.stringify({
               store_name: 'WALMART',
               purchase_date: '2026-05-24',
               total_amount: 45.23,
               currency: 'USD',
               reward_category: 'Grocery',
               is_transfer: false,
-            }) }],
+            }) }] } }],
           }),
         });
       }
@@ -660,18 +661,18 @@ describe('webhook handler — transaction text parsing (I1)', () => {
 
   it('asks for category on detected transfer (e.g. Zelle)', async () => {
     mockFetch.mockImplementation((url) => {
-      if (url.includes('api.anthropic.com')) {
+      if (url.includes('generativelanguage.googleapis.com')) {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({
-            content: [{ type: 'text', text: JSON.stringify({
+            candidates: [{ content: { parts: [{ text: JSON.stringify({
               store_name: 'John Doe',
               purchase_date: '2026-05-24',
               total_amount: 50,
               currency: 'USD',
               reward_category: null,
               is_transfer: true,
-            }) }],
+            }) }] } }],
           }),
         });
       }
@@ -721,18 +722,18 @@ describe('webhook handler — transaction text parsing (I1)', () => {
 
   it('converts foreign currency and shows conversion in confirmation', async () => {
     mockFetch.mockImplementation((url) => {
-      if (url.includes('api.anthropic.com')) {
+      if (url.includes('generativelanguage.googleapis.com')) {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve({
-            content: [{ type: 'text', text: JSON.stringify({
+            candidates: [{ content: { parts: [{ text: JSON.stringify({
               store_name: 'Zara',
               purchase_date: '2026-05-24',
               total_amount: 1500,
               currency: 'INR',
               reward_category: 'Misc',
               is_transfer: false,
-            }) }],
+            }) }] } }],
           }),
         });
       }

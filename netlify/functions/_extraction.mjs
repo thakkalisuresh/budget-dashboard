@@ -1,15 +1,20 @@
 /**
- * Claude receipt extraction for serverless (WhatsApp) context.
- * Calls Anthropic API directly — no edge function proxy needed.
+ * AI-powered receipt extraction — Gemini primary, Claude fallback.
+ * Fallback chain: gemini-2.0-flash → gemini-1.5-pro → gemini-2.5-pro
+ *               → claude-sonnet-4-6 → claude-haiku-4-5
  * Files starting with "_" are NOT deployed as functions by Netlify.
  */
+
+const GEMINI_API_KEY    = process.env.GEMINI_API_KEY;
+const GEMINI_URL        = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ANTHROPIC_URL     = 'https://api.anthropic.com/v1/messages';
 
-const PRIMARY_MODEL  = 'claude-sonnet-4-6';
-const FALLBACK_MODEL = 'claude-haiku-4-5';
-const MAX_RETRIES    = 2;
+const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-2.5-pro'];
+const CLAUDE_MODELS = ['claude-sonnet-4-6', 'claude-haiku-4-5'];
+const PRIMARY_MODEL = GEMINI_MODELS[0];
+const MAX_RETRIES   = 2;
 
 const CATEGORIES = [
   'Grocery', 'Eating Out', 'Misc', 'Travel', 'Thakkali', 'Entertainment',
@@ -59,7 +64,7 @@ Rules:
 - purchase_date: Date in YYYY-MM-DD if mentioned. If not, use null
 - total_amount: The charge amount. Positive number, no currency symbol
 - tax_amount: null (text usually doesn't mention tax separately)
-- currency: 3-letter ISO code (USD, INR, EUR, GBP, etc.). Detect from symbols ($, ₹, €, £) or text. Default "USD"
+- currency: 3-letter ISO code (USD, INR, EUR, GBP, etc.). Detect from symbols ($, \\u20b9, \\u20ac, \\u00a3) or text. Default "USD"
 - items: Always empty []
 - reward_category: MUST be exactly one of: ${CATEGORIES.join(', ')}. Pick closest match based on merchant. Use "Misc" if unclear. For transfers, set to null.
 - is_transfer: true if this is a peer-to-peer payment (Zelle, Venmo, PayPal P2P, bank transfer "to" someone). false for merchant charges.
@@ -69,6 +74,8 @@ If the text doesn't look like a transaction notification (e.g., random text, gre
 
 Respond with ONLY the JSON object. No other text.`;
 }
+
+/* ── sanitization ── */
 
 export function sanitizeExtraction(data) {
   if (!data || typeof data !== 'object') return data;
@@ -115,6 +122,71 @@ function safeString(value) {
   return value;
 }
 
+function parseJSON(text) {
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('No JSON in response');
+  return JSON.parse(match[0]);
+}
+
+/* ── Gemini API ── */
+
+async function callGemini(model, base64, mediaType) {
+  if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured');
+
+  const url = `${GEMINI_URL}/${model}:generateContent?key=${GEMINI_API_KEY}`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [
+        { inline_data: { mime_type: mediaType, data: base64 } },
+        { text: buildUserPrompt() },
+      ] }],
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      generationConfig: { responseMimeType: 'application/json' },
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const msg = err?.error?.message || `HTTP ${res.status}`;
+    throw new Error(`Gemini API (${model}): ${msg}`);
+  }
+
+  const data = await res.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  return parseJSON(text);
+}
+
+async function callGeminiText(model, text) {
+  if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured');
+
+  const url = `${GEMINI_URL}/${model}:generateContent?key=${GEMINI_API_KEY}`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: buildTextPrompt(text) }] }],
+      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      generationConfig: { responseMimeType: 'application/json' },
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const msg = err?.error?.message || `HTTP ${res.status}`;
+    throw new Error(`Gemini API (${model}): ${msg}`);
+  }
+
+  const data = await res.json();
+  const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  return parseJSON(responseText);
+}
+
+/* ── Claude API ── */
+
 async function callClaude(model, base64, mediaType) {
   if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not configured');
 
@@ -148,33 +220,7 @@ async function callClaude(model, base64, mediaType) {
 
   const data = await res.json();
   const text = data.content?.[0]?.text || '';
-
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error('No JSON in Claude response');
-
-  return JSON.parse(match[0]);
-}
-
-export async function extractReceipt(base64, mediaType) {
-  let lastError;
-
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const raw = await callClaude(PRIMARY_MODEL, base64, mediaType);
-      return { ok: true, data: sanitizeExtraction(raw), model: PRIMARY_MODEL };
-    } catch (e) {
-      lastError = e;
-      console.warn(`extractReceipt: ${PRIMARY_MODEL} attempt ${attempt + 1} failed:`, e.message);
-    }
-  }
-
-  try {
-    const raw = await callClaude(FALLBACK_MODEL, base64, mediaType);
-    return { ok: true, data: sanitizeExtraction(raw), model: FALLBACK_MODEL };
-  } catch (e) {
-    console.error('extractReceipt: fallback failed:', e.message);
-    return { ok: false, error: 'illegible', message: lastError?.message || e.message };
-  }
+  return parseJSON(text);
 }
 
 async function callClaudeText(model, text) {
@@ -206,18 +252,58 @@ async function callClaudeText(model, text) {
 
   const data = await res.json();
   const responseText = data.content?.[0]?.text || '';
-  const match = responseText.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error('No JSON in Claude response');
+  return parseJSON(responseText);
+}
 
-  return JSON.parse(match[0]);
+/* ── public extraction with full fallback chain ── */
+
+export async function extractReceipt(base64, mediaType) {
+  let lastError;
+
+  // 1. Gemini primary: gemini-2.0-flash with retries
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const raw = await callGemini(PRIMARY_MODEL, base64, mediaType);
+      return { ok: true, data: sanitizeExtraction(raw), model: PRIMARY_MODEL };
+    } catch (e) {
+      lastError = e;
+      console.warn(`extractReceipt: ${PRIMARY_MODEL} attempt ${attempt + 1} failed:`, e.message);
+    }
+  }
+
+  // 2. Gemini fallbacks: gemini-1.5-pro, gemini-2.5-pro (one try each)
+  for (const model of GEMINI_MODELS.slice(1)) {
+    try {
+      const raw = await callGemini(model, base64, mediaType);
+      return { ok: true, data: sanitizeExtraction(raw), model };
+    } catch (e) {
+      lastError = e;
+      console.warn(`extractReceipt: ${model} failed:`, e.message);
+    }
+  }
+
+  // 3. Claude fallbacks: sonnet, haiku (one try each)
+  for (const model of CLAUDE_MODELS) {
+    try {
+      const raw = await callClaude(model, base64, mediaType);
+      return { ok: true, data: sanitizeExtraction(raw), model };
+    } catch (e) {
+      lastError = e;
+      console.warn(`extractReceipt: ${model} failed:`, e.message);
+    }
+  }
+
+  console.error('extractReceipt: all models exhausted:', lastError?.message);
+  return { ok: false, error: 'illegible', message: lastError?.message };
 }
 
 export async function extractTransactionText(text) {
   let lastError;
 
+  // 1. Gemini primary: gemini-2.0-flash with retries
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const raw = await callClaudeText(PRIMARY_MODEL, text);
+      const raw = await callGeminiText(PRIMARY_MODEL, text);
       return { ok: true, data: sanitizeExtraction(raw), model: PRIMARY_MODEL };
     } catch (e) {
       lastError = e;
@@ -225,13 +311,30 @@ export async function extractTransactionText(text) {
     }
   }
 
-  try {
-    const raw = await callClaudeText(FALLBACK_MODEL, text);
-    return { ok: true, data: sanitizeExtraction(raw), model: FALLBACK_MODEL };
-  } catch (e) {
-    console.error('extractTransactionText: fallback failed:', e.message);
-    return { ok: false, error: 'illegible', message: lastError?.message || e.message };
+  // 2. Gemini fallbacks: gemini-1.5-pro, gemini-2.5-pro (one try each)
+  for (const model of GEMINI_MODELS.slice(1)) {
+    try {
+      const raw = await callGeminiText(model, text);
+      return { ok: true, data: sanitizeExtraction(raw), model };
+    } catch (e) {
+      lastError = e;
+      console.warn(`extractTransactionText: ${model} failed:`, e.message);
+    }
   }
+
+  // 3. Claude fallbacks: sonnet, haiku (one try each)
+  for (const model of CLAUDE_MODELS) {
+    try {
+      const raw = await callClaudeText(model, text);
+      return { ok: true, data: sanitizeExtraction(raw), model };
+    } catch (e) {
+      lastError = e;
+      console.warn(`extractTransactionText: ${model} failed:`, e.message);
+    }
+  }
+
+  console.error('extractTransactionText: all models exhausted:', lastError?.message);
+  return { ok: false, error: 'illegible', message: lastError?.message };
 }
 
 export { CATEGORIES };
