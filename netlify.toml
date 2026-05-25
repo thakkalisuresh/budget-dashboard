@@ -2,6 +2,9 @@
   publish = "dist"
   command = "npm run build"
 
+[build.environment]
+  SECRETS_SCAN_OMIT_PATHS = "dist"
+
 [functions]
   directory = "netlify/functions"
 
