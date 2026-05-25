@@ -1138,6 +1138,207 @@ describe('webhook handler — NEW MONTH wizard', () => {
   });
 });
 
+describe('webhook handler — DELETE (3-layer security)', () => {
+  const phone = '+919567791515';
+  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+  function mockSheetsForDelete() {
+    mockFetch.mockImplementation((url, opts) => {
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      if (url.includes('Months')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [[monthName, 'sheet-cur']] }) });
+      }
+      if (url.includes('History')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [
+          ['Header', 'Action', 'Category', 'Vendor', 'Amount', 'Details', 'UUID', 'Source'],
+          ['2026-05-25T10:00:00Z', 'WhatsApp Receipt', 'Grocery', 'Walmart', 45.23, 'Receipt via WhatsApp', 'tx_4523_abc1', 'whatsapp-bot'],
+          ['2026-05-24T09:00:00Z', 'WhatsApp Receipt', 'Misc', 'Target', 22.50, 'Receipt via WhatsApp', 'tx_2250_def2', 'whatsapp-bot'],
+        ] }) });
+      }
+      if (url.includes('fields=sheets.properties')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({
+          sheets: [{ properties: { title: 'Grocery', sheetId: 10 } }],
+        }) });
+      }
+      if (url.includes('Grocery') && (url.includes('F:F') || url.includes('F%3AF'))) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [
+          ['UUID'], ['tx_4523_abc1'],
+        ] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+  }
+
+  it('DELETE shows recent expenses list', async () => {
+    mockSheetsForDelete();
+    const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'DELETE', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('#1');
+    expect(text).toContain('Walmart');
+    expect(text).toContain('$45.23');
+    expect(text).toContain('DELETE #N');
+  });
+
+  it('DELETE last starts 3-layer flow from lastlog', async () => {
+    mockSheetsForDelete();
+    mockStore.data.set(`lastlog:${phone}`, {
+      uuid: 'tx_4523_abc1', category: 'Grocery', vendor: 'Walmart',
+      amount: 45.23, sheetId: 'sheet-cur', loggedAt: new Date().toISOString(),
+    });
+
+    const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'DELETE last', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('Delete this expense');
+    expect(text).toContain('Walmart');
+    expect(text).toContain('$45.23');
+    expect(text).toContain('CONFIRM DELETE');
+
+    const pending = mockStore.data.get(`delete_pending:${phone}`);
+    expect(pending.stage).toBe(1);
+    expect(pending.target.uuid).toBe('tx_4523_abc1');
+  });
+
+  it('DELETE #1 targets first recent expense', async () => {
+    mockSheetsForDelete();
+    const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'DELETE #1', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('Delete this expense');
+    expect(text).toContain('Target');
+    expect(text).toContain('$22.50');
+  });
+
+  it('Layer 2: rejects wrong phrase', async () => {
+    mockSheetsForDelete();
+    mockStore.data.set(`delete_pending:${phone}`, {
+      stage: 1,
+      target: { category: 'Grocery', vendor: 'Walmart', amount: 45.23, uuid: 'tx_4523_abc1' },
+      sheetId: 'sheet-cur', monthName,
+      expires: new Date(Date.now() + 600000).toISOString(),
+    });
+
+    const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'YES', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('CONFIRM DELETE');
+    expect(mockStore.data.get(`delete_pending:${phone}`).stage).toBe(1);
+  });
+
+  it('Layer 2: CONFIRM DELETE advances to amount echo', async () => {
+    mockSheetsForDelete();
+    mockStore.data.set(`delete_pending:${phone}`, {
+      stage: 1,
+      target: { category: 'Grocery', vendor: 'Walmart', amount: 45.23, uuid: 'tx_4523_abc1' },
+      sheetId: 'sheet-cur', monthName,
+      expires: new Date(Date.now() + 600000).toISOString(),
+    });
+
+    const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'CONFIRM DELETE', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('Final verification');
+    expect(text).toContain('$45.23');
+    expect(mockStore.data.get(`delete_pending:${phone}`).stage).toBe(2);
+  });
+
+  it('Layer 3: rejects wrong amount', async () => {
+    mockSheetsForDelete();
+    mockStore.data.set(`delete_pending:${phone}`, {
+      stage: 2,
+      target: { category: 'Grocery', vendor: 'Walmart', amount: 45.23, uuid: 'tx_4523_abc1' },
+      sheetId: 'sheet-cur', monthName,
+      expires: new Date(Date.now() + 600000).toISOString(),
+    });
+
+    const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: '99.99', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain("doesn't match");
+  });
+
+  it('Layer 3: correct amount deletes the expense', async () => {
+    mockSheetsForDelete();
+    mockStore.data.set(`delete_pending:${phone}`, {
+      stage: 2,
+      target: { category: 'Grocery', vendor: 'Walmart', amount: 45.23, uuid: 'tx_4523_abc1' },
+      sheetId: 'sheet-cur', monthName,
+      expires: new Date(Date.now() + 600000).toISOString(),
+    });
+
+    const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: '45.23', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('Deleted');
+    expect(text).toContain('Walmart');
+    expect(text).toContain('$45.23');
+    expect(mockStore.data.has(`delete_pending:${phone}`)).toBe(false);
+  });
+
+  it('Layer 3: accepts dollar-sign prefix', async () => {
+    mockSheetsForDelete();
+    mockStore.data.set(`delete_pending:${phone}`, {
+      stage: 2,
+      target: { category: 'Grocery', vendor: 'Walmart', amount: 45.23, uuid: 'tx_4523_abc1' },
+      sheetId: 'sheet-cur', monthName,
+      expires: new Date(Date.now() + 600000).toISOString(),
+    });
+
+    const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: '$45.23', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('Deleted');
+  });
+
+  it('CANCEL clears delete pending', async () => {
+    mockStore.data.set(`delete_pending:${phone}`, {
+      stage: 1,
+      target: { category: 'Grocery', vendor: 'Walmart', amount: 45.23, uuid: 'tx_4523_abc1' },
+      sheetId: 'sheet-cur', monthName,
+      expires: new Date(Date.now() + 600000).toISOString(),
+    });
+
+    const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'CANCEL', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('Cancelled');
+    expect(mockStore.data.has(`delete_pending:${phone}`)).toBe(false);
+  });
+
+  it('full 3-layer flow end-to-end', async () => {
+    mockSheetsForDelete();
+    mockStore.data.set(`lastlog:${phone}`, {
+      uuid: 'tx_4523_abc1', category: 'Grocery', vendor: 'Walmart',
+      amount: 45.23, sheetId: 'sheet-cur', loggedAt: new Date().toISOString(),
+    });
+
+    // Layer 1: intent
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'DELETE last', NumMedia: '0' }));
+    expect(mockStore.data.get(`delete_pending:${phone}`).stage).toBe(1);
+
+    // Layer 2: CONFIRM DELETE
+    await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'CONFIRM DELETE', NumMedia: '0' }));
+    expect(mockStore.data.get(`delete_pending:${phone}`).stage).toBe(2);
+
+    // Layer 3: amount echo
+    const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: '45.23', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('Deleted');
+    expect(mockStore.data.has(`delete_pending:${phone}`)).toBe(false);
+    expect(mockStore.data.has(`lastlog:${phone}`)).toBe(false);
+  });
+
+  it('expired delete pending is cleared', async () => {
+    mockSheetsForDelete();
+    mockStore.data.set(`delete_pending:${phone}`, {
+      stage: 1,
+      target: { category: 'Grocery', vendor: 'Walmart', amount: 45.23, uuid: 'tx_4523_abc1' },
+      sheetId: 'sheet-cur', monthName,
+      expires: new Date(Date.now() - 1000).toISOString(),
+    });
+
+    // Expired delete should be ignored, text falls through to help
+    const res = await handler(buildRequest({ From: `whatsapp:${phone}`, Body: 'CONFIRM DELETE', NumMedia: '0' }));
+    const text = await res.text();
+    expect(text).toContain('Send a receipt image');
+    expect(mockStore.data.has(`delete_pending:${phone}`)).toBe(false);
+  });
+});
+
 describe('webhook handler — generic text messages', () => {
   it('shows help for unrecognized text', async () => {
     const params = { From: 'whatsapp:+919567791515', Body: 'hello there', NumMedia: '0' };

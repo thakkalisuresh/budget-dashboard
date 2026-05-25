@@ -28,10 +28,8 @@ export async function undoHistoryEntry(sheetId, accessToken, entry) {
       if (entry.uuid) {
         idx = row.uuids.findIndex(u => u === entry.uuid);
       }
-      if (idx < 0) {
-        idx = row.amounts.findIndex(a => Math.abs(a - amount) < 0.005);
-      }
-      const newAmounts = idx >= 0 ? row.amounts.filter((_, i) => i !== idx) : row.amounts;
+      if (idx < 0) return;
+      const newAmounts = row.amounts.filter((_, i) => i !== idx);
       const config = SHEET_MAP[category];
       if (config) {
         if (newAmounts.length === 0) {

@@ -10,7 +10,7 @@ import {
 } from './_whatsapp.mjs';
 import { extractReceipt, extractTransactionText, CATEGORIES } from './_extraction.mjs';
 import { uploadReceiptImage, moveFile, buildFolderPath } from './_drive.mjs';
-import { getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID, getTotals, writeSalaryAmount, writeBudgetAmount, addCategory, checkMonthExists, getLatestMonthData, getUserSettings, createMonth } from './_sheets.mjs';
+import { getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID, getTotals, getRecentExpenses, writeSalaryAmount, writeBudgetAmount, addCategory, checkMonthExists, getLatestMonthData, getUserSettings, createMonth } from './_sheets.mjs';
 import { convertToUSD } from './_currency.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
 
@@ -299,7 +299,7 @@ async function handleTextReply(store, phone, text) {
   // ── CANCEL ──
   if (normalized === 'CANCEL') {
     let cancelledAny = false;
-    for (const key of [`salary_pending:${phone}`, `budget_pending:${phone}`, `new_month_wizard:${phone}`]) {
+    for (const key of [`salary_pending:${phone}`, `budget_pending:${phone}`, `new_month_wizard:${phone}`, `delete_pending:${phone}`]) {
       try {
         const val = await store.get(key, { type: 'json' });
         if (val) { await store.delete(key); cancelledAny = true; }
@@ -323,6 +323,15 @@ async function handleTextReply(store, phone, text) {
       return await handleNewMonthWizard(store, phone, text, wizardState);
     }
     await store.delete(`new_month_wizard:${phone}`);
+  }
+
+  // ── DELETE pending (3-layer security) ──
+  const deletePending = await store.get(`delete_pending:${phone}`, { type: 'json' }).catch(() => null);
+  if (deletePending) {
+    if (new Date(deletePending.expires) > new Date()) {
+      return await handleDeletePending(store, phone, text, deletePending);
+    }
+    await store.delete(`delete_pending:${phone}`);
   }
 
   // ── YES ──
@@ -512,6 +521,15 @@ async function handleTextReply(store, phone, text) {
     return await handleNewMonth(store, phone, monthMatch[1].trim());
   }
 
+  // ── DELETE ──
+  const deleteMatch = text.trim().match(/^delete(?:\s+(last|#?\d+))?$/i);
+  if (deleteMatch) {
+    const arg = deleteMatch[1];
+    if (!arg) return await handleDelete(store, phone, 'list');
+    if (arg.toLowerCase() === 'last') return await handleDelete(store, phone, 'last');
+    return await handleDelete(store, phone, arg.replace('#', ''));
+  }
+
   // ── Budget query (J1-J4) ──
   if (looksLikeQuery(text)) {
     try {
@@ -689,7 +707,7 @@ async function handleTextReply(store, phone, text) {
   // ── Help ──
   if (text.trim().length > 0) {
     return twilioResponse(
-      'Send a receipt image, wallet/bank screenshot, or paste a transaction SMS.\n\nOr type "Store Amount Category" for manual entry.\n\nCommands: YES, CANCEL, UNDO, ATTACH\nEdit pending: "category: Travel" or "amount: 52.10"\nBudget: "SET SALARY 5500" or "SET BUDGET Grocery 400"\nNew: "ADD CATEGORY Subscriptions 80 Want"\nMonth: "NEW MONTH June 2026"\nQuery: "? budget", "? last 5", "how much on grocery?"'
+      'Send a receipt image, wallet/bank screenshot, or paste a transaction SMS.\n\nOr type "Store Amount Category" for manual entry.\n\nCommands: YES, CANCEL, UNDO, ATTACH\nEdit pending: "category: Travel" or "amount: 52.10"\nBudget: "SET SALARY 5500" or "SET BUDGET Grocery 400"\nNew: "ADD CATEGORY Subscriptions 80 Want"\nMonth: "NEW MONTH June 2026"\nDelete: "DELETE", "DELETE last", "DELETE #3"\nQuery: "? budget", "? last 5", "how much on grocery?"'
     );
   }
 
@@ -821,6 +839,128 @@ async function handleAddCategory(store, phone, nameInput, budgetStr, type) {
   return twilioResponse(
     `✅ Category "${name}" added for ${monthName}.\nBudget: $${budget} · Type: ${typeLabel}\n\nYou can now log expenses: "${name} 25.50 ${name}"`
   );
+}
+
+// ── DELETE handler (3-layer security) ──────────────────────────────────────
+
+async function handleDelete(store, phone, target) {
+  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  let sheetId;
+  try {
+    sheetId = await getCurrentMonthSheetId(monthName);
+  } catch {
+    return twilioResponse(`No sheet found for ${monthName}.`);
+  }
+
+  if (target === 'list') {
+    const expenses = await getRecentExpenses(sheetId, 5);
+    if (expenses.length === 0) {
+      return twilioResponse('No recent expenses to delete.');
+    }
+    const lines = ['Recent expenses:'];
+    expenses.forEach((e, i) => {
+      lines.push(`#${i + 1} ${e.vendor} · $${Number(e.amount).toFixed(2)} (${e.category})`);
+    });
+    lines.push('', 'Reply DELETE #N or DELETE last.');
+    return twilioResponse(lines.join('\n'));
+  }
+
+  let expense;
+  let targetSheetId = sheetId;
+
+  if (target === 'last') {
+    const lastlog = await store.get(`lastlog:${phone}`, { type: 'json' }).catch(() => null);
+    if (lastlog && lastlog.uuid) {
+      expense = { category: lastlog.category, vendor: lastlog.vendor, amount: lastlog.amount, uuid: lastlog.uuid };
+      targetSheetId = lastlog.sheetId || sheetId;
+    } else {
+      const expenses = await getRecentExpenses(sheetId, 1);
+      if (expenses.length === 0) {
+        return twilioResponse('No recent expenses to delete.');
+      }
+      expense = expenses[0];
+    }
+  } else {
+    const idx = parseInt(target) - 1;
+    const expenses = await getRecentExpenses(sheetId, 10);
+    if (idx < 0 || idx >= expenses.length) {
+      return twilioResponse(`No expense at #${parseInt(target)}. Send DELETE to see the list.`);
+    }
+    expense = expenses[idx];
+  }
+
+  if (!expense.uuid) {
+    return twilioResponse('Cannot delete this entry (no tracking ID). Use the dashboard instead.');
+  }
+
+  await store.setJSON(`delete_pending:${phone}`, {
+    stage: 1,
+    target: { category: expense.category, vendor: expense.vendor, amount: expense.amount, uuid: expense.uuid },
+    sheetId: targetSheetId,
+    monthName,
+    expires: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+  });
+
+  const displayAmt = Number(expense.amount).toFixed(2);
+  return twilioResponse(
+    `⚠️ Delete this expense?\n\n${expense.vendor} · $${displayAmt}\nCategory: ${expense.category}\n\nType CONFIRM DELETE to proceed, or CANCEL.`
+  );
+}
+
+async function handleDeletePending(store, phone, text, pending) {
+  const normalized = text.trim().toUpperCase();
+  const key = `delete_pending:${phone}`;
+
+  if (pending.stage === 1) {
+    if (normalized !== 'CONFIRM DELETE') {
+      return twilioResponse('Type CONFIRM DELETE to proceed, or CANCEL.');
+    }
+    pending.stage = 2;
+    await store.setJSON(key, pending);
+    const fmtAmt = Number(pending.target.amount).toFixed(2);
+    return twilioResponse(
+      `Final verification: type the exact amount ($${fmtAmt}) to delete.`
+    );
+  }
+
+  if (pending.stage === 2) {
+    const input = parseFloat(text.trim().replace(/[\$,]/g, ''));
+    const expected = Math.round(pending.target.amount * 100) / 100;
+    const actual = Math.round(input * 100) / 100;
+    if (isNaN(actual) || actual !== expected) {
+      const expectAmt = Number(pending.target.amount).toFixed(2);
+      return twilioResponse(
+        `Amount doesn't match. Type exactly $${expectAmt} to confirm, or CANCEL.`
+      );
+    }
+
+    try {
+      await deleteExpenseByUUID({
+        category: pending.target.category,
+        uuid: pending.target.uuid,
+        sheetId: pending.sheetId,
+      });
+    } catch (e) {
+      console.error('whatsapp-webhook: DELETE failed', e.message);
+      await store.delete(key);
+      return twilioResponse('Failed to delete. The entry may have been modified. Check the dashboard.');
+    }
+
+    const lastlog = await store.get(`lastlog:${phone}`, { type: 'json' }).catch(() => null);
+    if (lastlog && lastlog.uuid === pending.target.uuid) {
+      await store.delete(`lastlog:${phone}`);
+    }
+
+    await store.delete(key);
+    const delAmt = Number(pending.target.amount).toFixed(2);
+    console.log(`whatsapp-webhook: DELETE — ${pending.target.vendor} $${delAmt} (${pending.target.category}) by ${phone}`);
+    return twilioResponse(
+      `✅ Deleted: ${pending.target.vendor} · $${delAmt} (${pending.target.category})`
+    );
+  }
+
+  await store.delete(key);
+  return twilioResponse('Delete expired. Try DELETE again.');
 }
 
 // ── NEW MONTH handler ──────────────────────────────────────────────────────

@@ -187,6 +187,7 @@ export async function getRecentExpenses(sheetId, limit = 10) {
       category:  row[2] || '',
       vendor:    row[3] || '',
       amount:    typeof row[4] === 'number' ? row[4] : null,
+      uuid:      row[6] || '',
       txDate:    row[9] || '',
     }))
     .filter(e => e.amount && /receipt|expense/i.test(e.action))
