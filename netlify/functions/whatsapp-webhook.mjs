@@ -10,12 +10,13 @@ import {
 } from './_whatsapp.mjs';
 import { extractReceipt } from './_extraction.mjs';
 import { uploadReceiptImage, moveFile, buildFolderPath } from './_drive.mjs';
-import { getCurrentMonthSheetId, appendExpense } from './_sheets.mjs';
+import { getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID } from './_sheets.mjs';
 
 const TWILIO_AUTH_TOKEN     = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_ACCOUNT_SID    = process.env.TWILIO_ACCOUNT_SID;
 const ALLOWED_PHONES        = (process.env.WHATSAPP_ALLOWED_PHONES || '').split(',').map(p => p.trim()).filter(Boolean);
 const DAILY_LIMIT           = 50;
+const UNDO_WINDOW_MS        = 10 * 60 * 1000;
 
 async function getRateCount(store, phone) {
   const key = `rate:${phone}:${new Date().toISOString().slice(0, 10)}`;
@@ -75,6 +76,16 @@ export default async function handler(req) {
 
   if (numMedia === 0) {
     return await handleTextReply(store, phone, msgBody);
+  }
+
+  // Check for ATTACH mode — user sending a receipt photo to attach to last entry
+  const attachState = await store.get(`awaiting_attach:${phone}`, { type: 'json' }).catch(() => null);
+  if (attachState) {
+    const elapsed = Date.now() - new Date(attachState.requestedAt).getTime();
+    if (elapsed <= UNDO_WINDOW_MS) {
+      return await handleAttachPhoto(store, phone, params, attachState);
+    }
+    await store.delete(`awaiting_attach:${phone}`);
   }
 
   const rateCount = await getRateCount(store, phone);
@@ -166,14 +177,71 @@ export default async function handler(req) {
     `Total: $${data.total_amount ?? '?'}`,
     '',
     'Reply YES to log, or CANCEL',
+    'Edit: "category: Travel" or "amount: 52.10"',
   ].join('\n');
 
   return twilioResponse(confirmMsg);
 }
 
+// ── ATTACH photo handler ────────────────────────────────────────────────────
+
+async function handleAttachPhoto(store, phone, params, attachState) {
+  const mediaUrl  = params.MediaUrl0 || '';
+  const mediaType = params.MediaContentType0 || '';
+
+  if (!ALLOWED_MEDIA_TYPES.has(mediaType)) {
+    return twilioResponse('Unsupported file type. Send a photo (JPEG, PNG, WebP) or PDF.');
+  }
+
+  let mediaBuffer;
+  try {
+    mediaBuffer = await downloadMedia(mediaUrl);
+  } catch (e) {
+    return twilioResponse('Could not download the image. Try again.');
+  }
+
+  if (!validateMagicBytes(mediaBuffer, mediaType)) {
+    return twilioResponse('File content mismatch. Send a valid receipt image or PDF.');
+  }
+
+  const base64 = Buffer.from(mediaBuffer).toString('base64');
+  const { year, month, category, vendor, amount } = attachState;
+
+  let driveResult;
+  try {
+    const fileName = `receipt-${Date.now()}.${mediaType === 'application/pdf' ? 'pdf' : 'jpg'}`;
+    driveResult = await uploadReceiptImage({
+      year, month, category, fileName, mimeType: mediaType, base64,
+    });
+  } catch (e) {
+    console.error('whatsapp-webhook: ATTACH Drive upload failed', e.message);
+    return twilioResponse('Failed to upload receipt to Drive. Try again.');
+  }
+
+  const lastlog = await store.get(`lastlog:${phone}`, { type: 'json' }).catch(() => null);
+  if (lastlog && lastlog.uuid === attachState.uuid) {
+    lastlog.driveFileId = driveResult.fileId;
+    lastlog.driveShareLink = driveResult.shareLink;
+    await store.setJSON(`lastlog:${phone}`, lastlog);
+  }
+
+  await store.delete(`awaiting_attach:${phone}`);
+  console.log(`whatsapp-webhook: ATTACH — receipt uploaded for ${vendor} $${amount} by ${phone}`);
+
+  return twilioResponse(
+    `Receipt attached!\n${vendor} · $${amount} (${category})\nView: ${driveResult.shareLink}`
+  );
+}
+
+// ── Text reply handler ──────────────────────────────────────────────────────
+
 async function handleTextReply(store, phone, text) {
+  // Any text message clears an awaiting ATTACH state
+  await store.delete(`awaiting_attach:${phone}`).catch(() => {});
+
   const normalized = text.trim().toUpperCase();
 
+  // ── YES / CANCEL ──
   if (normalized === 'YES' || normalized === 'CANCEL') {
     const { blobs } = await store.list({ prefix: `confirm:${phone}:` });
 
@@ -210,8 +278,9 @@ async function handleTextReply(store, phone, text) {
       return twilioResponse(`Could not find sheet for ${monthName}. Please log this receipt via the dashboard.`);
     }
 
+    let result;
     try {
-      await appendExpense({ category, vendor, amount, txDate, sheetId, monthName });
+      result = await appendExpense({ category, vendor, amount, txDate, sheetId, monthName });
     } catch (e) {
       console.error('whatsapp-webhook: Sheets append failed', e.message);
       return twilioResponse('Failed to log receipt to spreadsheet. Please try via the dashboard.');
@@ -226,10 +295,21 @@ async function handleTextReply(store, phone, text) {
       }
     }
 
+    await store.setJSON(`lastlog:${phone}`, {
+      uuid: result.uuid, category, vendor, amount, txDate,
+      sheetId, monthName, year, month,
+      driveFileId: driveFileId || null,
+      driveShareLink: pending.driveShareLink || null,
+      loggedAt: new Date().toISOString(),
+    });
+
     await store.delete(key);
     console.log(`whatsapp-webhook: receipt ${pending.id} confirmed — ${vendor} $${amount} → ${category}`);
 
     const DASHBOARD_URL = process.env.SITE_URL || 'https://budget-dashboard-tracker.netlify.app';
+    const hints = ['UNDO to reverse'];
+    if (!driveFileId) hints.push('ATTACH to add receipt photo');
+
     const summary = [
       'Receipt logged!',
       '',
@@ -239,55 +319,161 @@ async function handleTextReply(store, phone, text) {
       `Total: $${amount}`,
       ...(pending.driveShareLink ? [`View Receipt: ${pending.driveShareLink}`] : []),
       `Dashboard: ${DASHBOARD_URL}`,
+      '',
+      hints.join(' · '),
     ].join('\n');
 
     return twilioResponse(summary);
   }
 
-  // Manual clarification: "Walmart 45.23 Grocery" after extraction failed
+  // ── UNDO ──
+  if (normalized === 'UNDO') {
+    const lastlog = await store.get(`lastlog:${phone}`, { type: 'json' }).catch(() => null);
+    if (!lastlog) {
+      return twilioResponse("Nothing to undo.");
+    }
+
+    const elapsed = Date.now() - new Date(lastlog.loggedAt).getTime();
+    if (elapsed > UNDO_WINDOW_MS) {
+      return twilioResponse("Undo window expired (10 min). Edit the entry in the dashboard instead.");
+    }
+
+    try {
+      await deleteExpenseByUUID({ category: lastlog.category, uuid: lastlog.uuid, sheetId: lastlog.sheetId });
+    } catch (e) {
+      console.error('whatsapp-webhook: UNDO delete failed', e.message);
+      return twilioResponse('Could not undo. The entry may have been modified. Check the dashboard.');
+    }
+
+    await store.delete(`lastlog:${phone}`);
+    console.log(`whatsapp-webhook: UNDO — ${lastlog.vendor} $${lastlog.amount} removed by ${phone}`);
+
+    return twilioResponse(`Undone: ${lastlog.vendor} $${lastlog.amount} (${lastlog.category}) removed.`);
+  }
+
+  // ── ATTACH ──
+  if (normalized === 'ATTACH') {
+    const lastlog = await store.get(`lastlog:${phone}`, { type: 'json' }).catch(() => null);
+    if (!lastlog) {
+      return twilioResponse("No recent entry to attach a receipt to.");
+    }
+    if (lastlog.driveFileId) {
+      return twilioResponse("Your last entry already has a receipt attached.");
+    }
+
+    await store.setJSON(`awaiting_attach:${phone}`, {
+      ...lastlog,
+      requestedAt: new Date().toISOString(),
+    });
+
+    return twilioResponse(
+      `Send the receipt photo for:\n${lastlog.vendor} · $${lastlog.amount} (${lastlog.category})`
+    );
+  }
+
+  // ── Field edit: "category: X", "amount: X", "store: X", "date: X" ──
+  const editMatch = text.trim().match(/^(category|amount|store|date)\s*:\s*(.+)$/i);
+  if (editMatch) {
+    const { blobs } = await store.list({ prefix: `confirm:${phone}:` });
+    if (!blobs || blobs.length === 0) {
+      return twilioResponse("No pending receipt to edit. Send a receipt image first.");
+    }
+
+    const key     = blobs[0].key;
+    const pending = await store.get(key, { type: 'json' });
+    if (!pending) {
+      return twilioResponse("No pending receipt to edit.");
+    }
+
+    const field = editMatch[1].toLowerCase();
+    const value = editMatch[2].trim();
+
+    if (field === 'category') {
+      const { CATEGORIES } = await import('./_extraction.mjs');
+      const matched = CATEGORIES.find(c => c.toLowerCase() === value.toLowerCase());
+      if (!matched) {
+        const { CATEGORIES: cats } = await import('./_extraction.mjs');
+        return twilioResponse(`Unknown category. Choose from:\n${cats.join(', ')}`);
+      }
+      pending.extraction.reward_category = matched;
+    } else if (field === 'amount') {
+      const num = parseFloat(value);
+      if (isNaN(num) || num <= 0) {
+        return twilioResponse("Invalid amount. Use a positive number (e.g., 'amount: 52.10')");
+      }
+      pending.extraction.total_amount = num;
+    } else if (field === 'store') {
+      pending.extraction.store_name = value;
+    } else if (field === 'date') {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        return twilioResponse("Date must be YYYY-MM-DD (e.g., 'date: 2026-05-20')");
+      }
+      pending.extraction.purchase_date = value;
+      pending.year = new Date(value).getFullYear();
+      pending.month = new Date(value).toLocaleString('en-US', { month: 'long' });
+    }
+
+    await store.setJSON(key, pending);
+
+    const e = pending.extraction;
+    return twilioResponse(
+      `Updated!\nStore: ${e.store_name || 'Unknown'}\nDate: ${e.purchase_date || 'Unknown'}\nCategory: ${e.reward_category || 'Misc'}\nTotal: $${e.total_amount ?? '?'}\n\nReply YES to log, or CANCEL`
+    );
+  }
+
+  // ── Manual entry: "Walmart 45.23 Grocery" ──
   const manualMatch = text.trim().match(/^(.+?)\s+([\d.]+)\s+(\w[\w\s-]*)$/);
   if (manualMatch) {
+    const [, vendor, amountStr, category] = manualMatch;
+    const amount = parseFloat(amountStr);
+    if (isNaN(amount) || amount <= 0) {
+      return twilioResponse("Invalid amount. Use: StoreName Amount Category (e.g., 'Walmart 45.23 Grocery')");
+    }
+
+    const { CATEGORIES } = await import('./_extraction.mjs');
+    const matchedCat = CATEGORIES.find(c => c.toLowerCase() === category.trim().toLowerCase()) || 'Misc';
+    const now = new Date();
+
+    // Check for failed pending extraction (preserves image data if available)
     const { blobs } = await store.list({ prefix: 'pending:' });
     const failedBlob = await findFailedPending(store, blobs, phone);
 
+    let pendingData = {};
     if (failedBlob) {
-      const [, vendor, amountStr, category] = manualMatch;
-      const amount = parseFloat(amountStr);
-      if (isNaN(amount) || amount <= 0) {
-        return twilioResponse("Couldn't parse amount. Reply with: Store name, amount, category (e.g., 'Walmart 45.23 Grocery')");
-      }
-
-      const { CATEGORIES } = await import('./_extraction.mjs');
-      const matchedCat = CATEGORIES.find(c => c.toLowerCase() === category.trim().toLowerCase()) || 'Misc';
-
       const pending = await store.get(failedBlob.key, { type: 'json' });
-      const now = new Date();
-
+      pendingData = { mediaType: pending.mediaType, base64: pending.base64 };
       await store.delete(failedBlob.key);
-      await store.setJSON(`confirm:${phone}:${pending.id}`, {
-        ...pending,
-        extraction: {
-          store_name: vendor.trim(),
-          purchase_date: now.toISOString().slice(0, 10),
-          total_amount: amount,
-          tax_amount: null,
-          currency: 'USD',
-          items: [],
-          reward_category: matchedCat,
-        },
-        year: now.getFullYear(),
-        month: now.toLocaleString('en-US', { month: 'long' }),
-        status: 'awaiting_confirmation',
-      });
-
-      return twilioResponse(
-        `Got it:\nStore: ${vendor.trim()}\nCategory: ${matchedCat}\nTotal: $${amount}\n\nReply YES to log, or CANCEL`
-      );
     }
+
+    const receiptId = crypto.randomUUID();
+    await store.setJSON(`confirm:${phone}:${receiptId}`, {
+      id: receiptId,
+      phone,
+      ...pendingData,
+      extraction: {
+        store_name: vendor.trim(),
+        purchase_date: now.toISOString().slice(0, 10),
+        total_amount: amount,
+        tax_amount: null,
+        currency: 'USD',
+        items: [],
+        reward_category: matchedCat,
+      },
+      year: now.getFullYear(),
+      month: now.toLocaleString('en-US', { month: 'long' }),
+      status: 'awaiting_confirmation',
+    });
+
+    return twilioResponse(
+      `Got it:\nStore: ${vendor.trim()}\nCategory: ${matchedCat}\nTotal: $${amount}\n\nReply YES to log, or CANCEL`
+    );
   }
 
+  // ── Help ──
   if (text.trim().length > 0) {
-    return twilioResponse("Send a receipt image to log an expense, or reply YES/CANCEL to confirm a pending receipt.");
+    return twilioResponse(
+      'Send a receipt image or type "Store Amount Category" to log.\n\nCommands: YES, CANCEL, UNDO, ATTACH\nEdit pending: "category: Travel" or "amount: 52.10"'
+    );
   }
 
   return emptyTwiml();

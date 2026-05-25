@@ -4,6 +4,7 @@
 
 [build.environment]
   SECRETS_SCAN_OMIT_PATHS = "dist,src/__tests__"
+  SECRETS_SCAN_OMIT_KEYS = "WHATSAPP_ALLOWED_PHONES"
 
 [functions]
   directory = "netlify/functions"

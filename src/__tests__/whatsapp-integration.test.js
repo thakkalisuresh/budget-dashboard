@@ -381,6 +381,247 @@ describe('webhook handler — manual clarification', () => {
   });
 });
 
+describe('webhook handler — direct manual entry (H1)', () => {
+  it('creates confirmation from text without a pending photo', async () => {
+    const params = { From: 'whatsapp:+919567791515', Body: 'Target 32.50 Grocery', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Target');
+    expect(text).toContain('Grocery');
+    expect(text).toContain('$32.5');
+    expect(text).toContain('Reply YES to log');
+  });
+});
+
+describe('webhook handler — edit before confirming (H2)', () => {
+  it('updates category on pending receipt', async () => {
+    mockStore.data.set('confirm:+919567791515:edit-test', {
+      id: 'edit-test',
+      phone: '+919567791515',
+      extraction: {
+        store_name: 'Costco',
+        purchase_date: '2026-05-22',
+        total_amount: 89.99,
+        reward_category: 'Misc',
+      },
+    });
+
+    const params = { From: 'whatsapp:+919567791515', Body: 'category: Grocery', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Updated!');
+    expect(text).toContain('Grocery');
+    const updated = mockStore.data.get('confirm:+919567791515:edit-test');
+    expect(updated.extraction.reward_category).toBe('Grocery');
+  });
+
+  it('updates amount on pending receipt', async () => {
+    mockStore.data.set('confirm:+919567791515:edit-amt', {
+      id: 'edit-amt',
+      phone: '+919567791515',
+      extraction: {
+        store_name: 'Target',
+        purchase_date: '2026-05-22',
+        total_amount: 10,
+        reward_category: 'Misc',
+      },
+    });
+
+    const params = { From: 'whatsapp:+919567791515', Body: 'amount: 52.10', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Updated!');
+    expect(text).toContain('$52.1');
+  });
+
+  it('updates store name on pending receipt', async () => {
+    mockStore.data.set('confirm:+919567791515:edit-store', {
+      id: 'edit-store',
+      phone: '+919567791515',
+      extraction: {
+        store_name: 'Walmaart',
+        purchase_date: '2026-05-22',
+        total_amount: 45,
+        reward_category: 'Misc',
+      },
+    });
+
+    const params = { From: 'whatsapp:+919567791515', Body: 'store: Walmart', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Updated!');
+    expect(text).toContain('Walmart');
+  });
+
+  it('rejects invalid category', async () => {
+    mockStore.data.set('confirm:+919567791515:edit-bad', {
+      id: 'edit-bad',
+      phone: '+919567791515',
+      extraction: { store_name: 'X', total_amount: 5, reward_category: 'Misc' },
+    });
+
+    const params = { From: 'whatsapp:+919567791515', Body: 'category: FakeCategory', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Unknown category');
+  });
+
+  it('returns error when no pending receipt to edit', async () => {
+    const params = { From: 'whatsapp:+919567791515', Body: 'category: Grocery', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('No pending receipt to edit');
+  });
+});
+
+describe('webhook handler — UNDO (H3)', () => {
+  it('undoes the last logged entry within 10 minutes', async () => {
+    mockStore.data.set('lastlog:+919567791515', {
+      uuid: 'tx_4523_abc12345',
+      category: 'Grocery',
+      vendor: 'Walmart',
+      amount: 45.23,
+      sheetId: 'sheet-123',
+      loggedAt: new Date().toISOString(),
+    });
+
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      if (url.includes('values') && url.includes('F%3AF')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['Header'], ['tx_4523_abc12345']] }) });
+      }
+      if (url.includes('fields=sheets.properties')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ sheets: [{ properties: { title: 'Grocery', sheetId: 0 } }] }) });
+      }
+      if (url.includes('batchUpdate')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    const params = { From: 'whatsapp:+919567791515', Body: 'UNDO', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Undone');
+    expect(text).toContain('Walmart');
+    expect(text).toContain('$45.23');
+    expect(mockStore.data.has('lastlog:+919567791515')).toBe(false);
+  });
+
+  it('rejects UNDO with no last entry', async () => {
+    const params = { From: 'whatsapp:+919567791515', Body: 'UNDO', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Nothing to undo');
+  });
+
+  it('rejects UNDO after 10-minute window', async () => {
+    mockStore.data.set('lastlog:+919567791515', {
+      uuid: 'tx_1000_old',
+      category: 'Misc',
+      vendor: 'OldStore',
+      amount: 10,
+      sheetId: 'sheet-123',
+      loggedAt: new Date(Date.now() - 11 * 60 * 1000).toISOString(),
+    });
+
+    const params = { From: 'whatsapp:+919567791515', Body: 'UNDO', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('expired');
+  });
+});
+
+describe('webhook handler — ATTACH (H4)', () => {
+  it('sets awaiting_attach state', async () => {
+    mockStore.data.set('lastlog:+919567791515', {
+      uuid: 'tx_5000_xyz',
+      category: 'Grocery',
+      vendor: 'Costco',
+      amount: 50,
+      year: 2026,
+      month: 'May',
+      loggedAt: new Date().toISOString(),
+    });
+
+    const params = { From: 'whatsapp:+919567791515', Body: 'ATTACH', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Send the receipt photo');
+    expect(text).toContain('Costco');
+    expect(mockStore.data.has('awaiting_attach:+919567791515')).toBe(true);
+  });
+
+  it('rejects ATTACH when last entry already has a receipt', async () => {
+    mockStore.data.set('lastlog:+919567791515', {
+      uuid: 'tx_5000_xyz',
+      category: 'Grocery',
+      vendor: 'Costco',
+      amount: 50,
+      driveFileId: 'already-uploaded',
+      loggedAt: new Date().toISOString(),
+    });
+
+    const params = { From: 'whatsapp:+919567791515', Body: 'ATTACH', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('already has a receipt');
+  });
+
+  it('rejects ATTACH with no last entry', async () => {
+    const params = { From: 'whatsapp:+919567791515', Body: 'ATTACH', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('No recent entry');
+  });
+});
+
+describe('webhook handler — YES stores lastlog for UNDO/ATTACH', () => {
+  it('stores lastlog blob after confirming YES', async () => {
+    mockStore.data.set('confirm:+919567791515:receipt-log', {
+      id: 'receipt-log',
+      phone: '+919567791515',
+      extraction: {
+        store_name: 'Target',
+        purchase_date: '2026-05-24',
+        total_amount: 25,
+        reward_category: 'Misc',
+      },
+      year: 2026,
+      month: 'May',
+    });
+
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      if (url.includes('sheets.googleapis.com')) {
+        if (url.includes('Months')) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['May 2026', 'sheet-may-id']] }) });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ updates: { updatedRows: 1 } }) });
+      }
+      if (url.includes('googleapis.com/drive')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'folder-1', files: [{ id: 'folder-1' }], parents: ['old-parent'] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    const params = { From: 'whatsapp:+919567791515', Body: 'yes', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Receipt logged!');
+    expect(text).toContain('UNDO to reverse');
+
+    const lastlog = mockStore.data.get('lastlog:+919567791515');
+    expect(lastlog).toBeTruthy();
+    expect(lastlog.vendor).toBe('Target');
+    expect(lastlog.amount).toBe(25);
+  });
+});
+
 describe('webhook handler — generic text messages', () => {
   it('shows help for unrecognized text', async () => {
     const params = { From: 'whatsapp:+919567791515', Body: 'hello there', NumMedia: '0' };

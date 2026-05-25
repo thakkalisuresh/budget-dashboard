@@ -136,3 +136,42 @@ async function appendHistory(sheetId, { action, category, vendor, amount, uuid, 
     console.warn('History append failed (non-fatal):', e.message);
   }
 }
+
+export async function deleteExpenseByUUID({ category, uuid, sheetId }) {
+  const config = SHEET_MAP[category];
+  if (!config) throw new Error(`Unknown category: ${category}`);
+
+  const range = encodeURIComponent(`'${config.sheet}'!F:F`);
+  const data = await sheetsRequest(sheetId, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
+  const rows = data.values || [];
+
+  let rowIndex = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i][0] === uuid) {
+      rowIndex = i;
+      break;
+    }
+  }
+
+  if (rowIndex === -1) throw new Error(`Row with UUID ${uuid} not found`);
+
+  const meta = await sheetsRequest(sheetId, '?fields=sheets.properties');
+  const sheet = meta.sheets.find(s => s.properties.title === config.sheet);
+  if (!sheet) throw new Error(`Sheet tab not found: ${config.sheet}`);
+
+  await sheetsRequest(sheetId, ':batchUpdate', {
+    method: 'POST',
+    body: JSON.stringify({
+      requests: [{
+        deleteDimension: {
+          range: {
+            sheetId: sheet.properties.sheetId,
+            dimension: 'ROWS',
+            startIndex: rowIndex,
+            endIndex: rowIndex + 1,
+          },
+        },
+      }],
+    }),
+  });
+}
