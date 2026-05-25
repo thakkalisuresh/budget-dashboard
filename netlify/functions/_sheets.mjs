@@ -137,6 +137,62 @@ async function appendHistory(sheetId, { action, category, vendor, amount, uuid, 
   }
 }
 
+export async function getTotals(sheetId) {
+  const range = encodeURIComponent("'Totals'!A2:G21");
+  const data = await sheetsRequest(sheetId, `/values/${range}?valueRenderOption=UNFORMATTED_VALUE`);
+  const rows = data.values || [];
+
+  const categories = [];
+  let salary = null;
+  let leftFromSalary = null;
+
+  for (const row of rows) {
+    const name      = row[0];
+    const spent     = typeof row[1] === 'number' ? row[1] : 0;
+    const remaining = typeof row[2] === 'number' ? row[2] : 0;
+    const label     = (row[5] || '').toString().toLowerCase();
+    const labelVal  = typeof row[6] === 'number' ? row[6] : null;
+
+    if (label.includes('salary received') && labelVal != null) {
+      salary = labelVal;
+    }
+    if (label.includes('left from salary') && labelVal != null) {
+      leftFromSalary = labelVal;
+    }
+
+    if (name && typeof name === 'string' && name.trim().length > 0) {
+      categories.push({
+        name: name.trim(),
+        spent: Math.round(spent * 100) / 100,
+        remaining: Math.round(remaining * 100) / 100,
+        budget: Math.round((spent + remaining) * 100) / 100,
+      });
+    }
+  }
+
+  return { categories, salary, leftFromSalary };
+}
+
+export async function getRecentExpenses(sheetId, limit = 10) {
+  const range = encodeURIComponent("'History'!A:J");
+  const data = await sheetsRequest(sheetId, `/values/${range}?valueRenderOption=UNFORMATTED_VALUE`);
+  const rows = data.values || [];
+  if (rows.length <= 1) return [];
+
+  return rows.slice(1)
+    .map(row => ({
+      timestamp: row[0] || '',
+      action:    row[1] || '',
+      category:  row[2] || '',
+      vendor:    row[3] || '',
+      amount:    typeof row[4] === 'number' ? row[4] : null,
+      txDate:    row[9] || '',
+    }))
+    .filter(e => e.amount && /receipt|expense/i.test(e.action))
+    .reverse()
+    .slice(0, limit);
+}
+
 export async function deleteExpenseByUUID({ category, uuid, sheetId }) {
   const config = SHEET_MAP[category];
   if (!config) throw new Error(`Unknown category: ${category}`);

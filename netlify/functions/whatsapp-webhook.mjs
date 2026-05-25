@@ -12,6 +12,7 @@ import { extractReceipt, extractTransactionText, CATEGORIES } from './_extractio
 import { uploadReceiptImage, moveFile, buildFolderPath } from './_drive.mjs';
 import { getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID } from './_sheets.mjs';
 import { convertToUSD } from './_currency.mjs';
+import { looksLikeQuery, answerQuery } from './_query.mjs';
 
 const TWILIO_AUTH_TOKEN     = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_ACCOUNT_SID    = process.env.TWILIO_ACCOUNT_SID;
@@ -438,6 +439,17 @@ async function handleTextReply(store, phone, text) {
     );
   }
 
+  // ── Budget query (J1-J4) ──
+  if (looksLikeQuery(text)) {
+    try {
+      const answer = await answerQuery(text);
+      return twilioResponse(answer);
+    } catch (e) {
+      console.error('whatsapp-webhook: query failed', e.message);
+      return twilioResponse("Couldn't answer that query right now. Try '? help' for examples.");
+    }
+  }
+
   // ── Category selection (completes a transfer flow) ──
   const matchedCategory = CATEGORIES.find(c => c.toUpperCase() === normalized);
   if (matchedCategory) {
@@ -604,7 +616,7 @@ async function handleTextReply(store, phone, text) {
   // ── Help ──
   if (text.trim().length > 0) {
     return twilioResponse(
-      'Send a receipt image, wallet/bank screenshot, or paste a transaction SMS.\n\nOr type "Store Amount Category" for manual entry.\n\nCommands: YES, CANCEL, UNDO, ATTACH\nEdit pending: "category: Travel" or "amount: 52.10"'
+      'Send a receipt image, wallet/bank screenshot, or paste a transaction SMS.\n\nOr type "Store Amount Category" for manual entry.\n\nCommands: YES, CANCEL, UNDO, ATTACH\nEdit pending: "category: Travel" or "amount: 52.10"\nQuery: "? budget", "? last 5", "how much on grocery?"'
     );
   }
 

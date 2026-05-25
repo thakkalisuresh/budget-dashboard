@@ -781,6 +781,166 @@ describe('webhook handler — CANCEL clears transfer_pending', () => {
   });
 });
 
+describe('webhook handler — budget queries (J1)', () => {
+  it('answers "? help" with help text', async () => {
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      if (url.includes('Months')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [[new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' }), 'sheet-may-id']] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [] }) });
+    });
+
+    const params = { From: 'whatsapp:+919567791515', Body: '? help', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Ask a question');
+    expect(text).toContain('budget');
+  });
+
+  it('answers "? total" with month totals', async () => {
+    const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      if (url.includes('Months')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [[monthName, 'sheet-may-id']] }) });
+      }
+      if (url.includes('Totals')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [
+          ['Grocery', 200, 100, null, null, null, null],
+          ['Eating Out', 50, 150, null, null, null, null],
+          [null, null, null, null, null, 'Salary received', 5000],
+        ] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    const params = { From: 'whatsapp:+919567791515', Body: '? total', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Total spent: $250');
+    expect(text).toContain('Salary: $5000');
+  });
+
+  it('answers "? budget" with remaining per category', async () => {
+    const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      if (url.includes('Months')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [[monthName, 'sheet-may-id']] }) });
+      }
+      if (url.includes('Totals')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [
+          ['Grocery', 200, 100, null, null, null, null],
+          ['Eating Out', 50, 150, null, null, null, null],
+        ] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    const params = { From: 'whatsapp:+919567791515', Body: '? budget', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Budget remaining');
+    expect(text).toContain('Grocery');
+    expect(text).toContain('Eating Out');
+  });
+
+  it('answers "? Grocery" with single category status', async () => {
+    const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      if (url.includes('Months')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [[monthName, 'sheet-may-id']] }) });
+      }
+      if (url.includes('Totals')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [
+          ['Grocery', 200, 100, null, null, null, null],
+        ] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    const params = { From: 'whatsapp:+919567791515', Body: '? Grocery', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Grocery');
+    expect(text).toContain('Spent: $200');
+    expect(text).toContain('Budget: $300');
+    expect(text).toContain('Remaining: $100');
+  });
+
+  it('answers "? top" with top spending categories', async () => {
+    const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      if (url.includes('Months')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [[monthName, 'sheet-may-id']] }) });
+      }
+      if (url.includes('Totals')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [
+          ['Grocery', 200, 100, null, null, null, null],
+          ['Eating Out', 80, 20, null, null, null, null],
+          ['Misc', 30, 70, null, null, null, null],
+        ] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    const params = { From: 'whatsapp:+919567791515', Body: '? top', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Top');
+    expect(text).toContain('Grocery');
+    expect(text).toContain('$200');
+  });
+
+  it('falls back to Claude for natural-language questions', async () => {
+    const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      if (url.includes('Months')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [[monthName, 'sheet-may-id']] }) });
+      }
+      if (url.includes('Totals')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [
+          ['Grocery', 200, 100, null, null, null, null],
+        ] }) });
+      }
+      if (url.includes('History')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [] }) });
+      }
+      if (url.includes('api.anthropic.com')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            content: [{ type: 'text', text: 'You spent $200 on Grocery this month.' }],
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    const params = { From: 'whatsapp:+919567791515', Body: 'how much did I spend on grocery?', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Grocery');
+    expect(text).toContain('$200');
+  });
+});
+
 describe('webhook handler — generic text messages', () => {
   it('shows help for unrecognized text', async () => {
     const params = { From: 'whatsapp:+919567791515', Body: 'hello there', NumMedia: '0' };
