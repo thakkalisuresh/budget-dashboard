@@ -37,6 +37,7 @@ describe('sanitizeExtraction', () => {
       currency: 'USD',
       items: [{ name: 'Bananas', amount: 2.99 }],
       reward_category: 'Grocery',
+      is_transfer: false,
     };
     const result = sanitizeExtraction(input);
     expect(result).toEqual(input);

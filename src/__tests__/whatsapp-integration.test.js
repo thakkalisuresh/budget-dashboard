@@ -622,6 +622,165 @@ describe('webhook handler — YES stores lastlog for UNDO/ATTACH', () => {
   });
 });
 
+describe('webhook handler — transaction text parsing (I1)', () => {
+  it('parses a bank SMS and creates confirmation', async () => {
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('api.anthropic.com')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            content: [{ type: 'text', text: JSON.stringify({
+              store_name: 'WALMART',
+              purchase_date: '2026-05-24',
+              total_amount: 45.23,
+              currency: 'USD',
+              reward_category: 'Grocery',
+              is_transfer: false,
+            }) }],
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    const params = {
+      From: 'whatsapp:+919567791515',
+      Body: 'Your Chase card ending in 1234 was charged $45.23 at WALMART on 05/24/2026',
+      NumMedia: '0',
+    };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Transaction found');
+    expect(text).toContain('WALMART');
+    expect(text).toContain('Grocery');
+    expect(text).toContain('$45.23');
+    expect(text).toContain('Reply YES to log');
+  });
+
+  it('asks for category on detected transfer (e.g. Zelle)', async () => {
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('api.anthropic.com')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            content: [{ type: 'text', text: JSON.stringify({
+              store_name: 'John Doe',
+              purchase_date: '2026-05-24',
+              total_amount: 50,
+              currency: 'USD',
+              reward_category: null,
+              is_transfer: true,
+            }) }],
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    const params = {
+      From: 'whatsapp:+919567791515',
+      Body: 'Zelle payment of $50.00 to John Doe completed',
+      NumMedia: '0',
+    };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Transfer detected');
+    expect(text).toContain('John Doe');
+    expect(text).toContain('What category');
+    expect(mockStore.data.has(`transfer_pending:+919567791515:${[...mockStore.data.keys()].find(k => k.startsWith('transfer_pending:'))?.split(':')[2]}`)).toBeTruthy();
+  });
+
+  it('user picks a category to complete a transfer', async () => {
+    const transferId = 'tx-pending-1';
+    mockStore.data.set(`transfer_pending:+919567791515:${transferId}`, {
+      id: transferId,
+      phone: '+919567791515',
+      extraction: {
+        store_name: 'John Doe',
+        purchase_date: '2026-05-24',
+        total_amount: 50,
+        currency: 'USD',
+        reward_category: null,
+        is_transfer: true,
+      },
+      year: 2026,
+      month: 'May',
+    });
+
+    const params = { From: 'whatsapp:+919567791515', Body: 'Investment', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Got it');
+    expect(text).toContain('John Doe');
+    expect(text).toContain('Investment');
+    expect(text).toContain('Reply YES to log');
+    expect(mockStore.data.has(`transfer_pending:+919567791515:${transferId}`)).toBe(false);
+    expect(mockStore.data.has(`confirm:+919567791515:${transferId}`)).toBe(true);
+  });
+
+  it('converts foreign currency and shows conversion in confirmation', async () => {
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('api.anthropic.com')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            content: [{ type: 'text', text: JSON.stringify({
+              store_name: 'Zara',
+              purchase_date: '2026-05-24',
+              total_amount: 1500,
+              currency: 'INR',
+              reward_category: 'Misc',
+              is_transfer: false,
+            }) }],
+          }),
+        });
+      }
+      if (url.includes('open.er-api.com')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ rates: { INR: 83.5, EUR: 0.92, USD: 1 } }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    const params = {
+      From: 'whatsapp:+919567791515',
+      Body: 'Your card was charged ₹1500.00 at Zara on 05/24/2026',
+      NumMedia: '0',
+    };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Zara');
+    expect(text).toContain('Converted from INR 1500');
+    // 1500 / 83.5 ≈ 17.96
+    expect(text).toContain('$17.96');
+  });
+
+  it('ignores text without currency indicators', async () => {
+    const params = { From: 'whatsapp:+919567791515', Body: 'hey how are you doing today', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('Send a receipt image');
+  });
+});
+
+describe('webhook handler — CANCEL clears transfer_pending', () => {
+  it('cancels a pending transfer', async () => {
+    mockStore.data.set('transfer_pending:+919567791515:transfer-99', {
+      id: 'transfer-99',
+      phone: '+919567791515',
+      extraction: { store_name: 'X', total_amount: 10, is_transfer: true },
+    });
+
+    const params = { From: 'whatsapp:+919567791515', Body: 'CANCEL', NumMedia: '0' };
+    const res = await handler(buildRequest(params));
+    const text = await res.text();
+    expect(text).toContain('cancelled');
+    expect(mockStore.data.has('transfer_pending:+919567791515:transfer-99')).toBe(false);
+  });
+});
+
 describe('webhook handler — generic text messages', () => {
   it('shows help for unrecognized text', async () => {
     const params = { From: 'whatsapp:+919567791515', Body: 'hello there', NumMedia: '0' };

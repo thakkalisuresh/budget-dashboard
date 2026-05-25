@@ -8,9 +8,10 @@ import {
   emptyTwiml,
   isAllowedPhone,
 } from './_whatsapp.mjs';
-import { extractReceipt } from './_extraction.mjs';
+import { extractReceipt, extractTransactionText, CATEGORIES } from './_extraction.mjs';
 import { uploadReceiptImage, moveFile, buildFolderPath } from './_drive.mjs';
 import { getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID } from './_sheets.mjs';
+import { convertToUSD } from './_currency.mjs';
 
 const TWILIO_AUTH_TOKEN     = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_ACCOUNT_SID    = process.env.TWILIO_ACCOUNT_SID;
@@ -138,6 +139,9 @@ export default async function handler(req) {
     ? new Date(data.purchase_date).toLocaleString('en-US', { month: 'long' })
     : now.toLocaleString('en-US', { month: 'long' });
 
+  // Currency conversion (I2)
+  const conversionInfo = await maybeConvertCurrency(data);
+
   let driveResult = null;
   try {
     driveResult = await uploadReceiptImage({
@@ -152,12 +156,32 @@ export default async function handler(req) {
     console.error('whatsapp-webhook: Drive upload failed', e.message);
   }
 
+  // Transfer detected — ask user to pick category before logging
+  if (data.is_transfer) {
+    await store.setJSON(`transfer_pending:${phone}:${receiptId}`, {
+      id: receiptId,
+      phone,
+      mediaType,
+      base64,
+      extraction: data,
+      conversionInfo,
+      driveFileId: driveResult?.fileId || null,
+      driveFolderId: driveResult?.folderId || null,
+      driveShareLink: driveResult?.shareLink || null,
+      year,
+      month,
+      receivedAt: now.toISOString(),
+    });
+    return twilioResponse(buildTransferPrompt(data, conversionInfo));
+  }
+
   await store.setJSON(`confirm:${phone}:${receiptId}`, {
     id: receiptId,
     phone,
     mediaType,
     base64,
     extraction: data,
+    conversionInfo,
     driveFileId: driveResult?.fileId || null,
     driveFolderId: driveResult?.folderId || null,
     driveShareLink: driveResult?.shareLink || null,
@@ -169,18 +193,48 @@ export default async function handler(req) {
 
   console.log(`whatsapp-webhook: receipt ${receiptId} extracted for ${phone} — ${data.store_name} $${data.total_amount}`);
 
-  const confirmMsg = [
-    'Receipt found:',
+  return twilioResponse(buildConfirmPrompt(data, conversionInfo));
+}
+
+// ── Helpers for currency + transfer ─────────────────────────────────────────
+
+async function maybeConvertCurrency(data) {
+  if (!data.currency || data.currency === 'USD') return null;
+  if (typeof data.total_amount !== 'number' || data.total_amount <= 0) return null;
+  try {
+    const info = await convertToUSD(data.total_amount, data.currency);
+    data.total_amount = info.amount;
+    return info;
+  } catch (e) {
+    console.warn('whatsapp-webhook: currency conversion failed', e.message);
+    return null;
+  }
+}
+
+function buildConfirmPrompt(data, conversionInfo) {
+  const lines = [
+    'Transaction found:',
     `Store: ${data.store_name || 'Unknown'}`,
     `Date: ${data.purchase_date || 'Unknown'}`,
     `Category: ${data.reward_category || 'Misc'}`,
     `Total: $${data.total_amount ?? '?'}`,
-    '',
-    'Reply YES to log, or CANCEL',
-    'Edit: "category: Travel" or "amount: 52.10"',
-  ].join('\n');
+  ];
+  if (conversionInfo) {
+    lines.push(`(Converted from ${conversionInfo.originalCurrency} ${conversionInfo.original} · rate ${conversionInfo.rate.toFixed(4)})`);
+  }
+  lines.push('', 'Reply YES to log, or CANCEL', 'Edit: "category: Travel" or "amount: 52.10"');
+  return lines.join('\n');
+}
 
-  return twilioResponse(confirmMsg);
+function buildTransferPrompt(data, conversionInfo) {
+  const lines = [
+    `Transfer detected: $${data.total_amount} to ${data.store_name || 'Unknown'}`,
+  ];
+  if (conversionInfo) {
+    lines.push(`(Converted from ${conversionInfo.originalCurrency} ${conversionInfo.original} · rate ${conversionInfo.rate.toFixed(4)})`);
+  }
+  lines.push('', 'What category?', CATEGORIES.join(', '), '', '(or CANCEL)');
+  return lines.join('\n');
 }
 
 // ── ATTACH photo handler ────────────────────────────────────────────────────
@@ -241,11 +295,29 @@ async function handleTextReply(store, phone, text) {
 
   const normalized = text.trim().toUpperCase();
 
-  // ── YES / CANCEL ──
-  if (normalized === 'YES' || normalized === 'CANCEL') {
+  // ── CANCEL ──
+  if (normalized === 'CANCEL') {
+    let cancelledAny = false;
+    for (const prefix of [`confirm:${phone}:`, `transfer_pending:${phone}:`]) {
+      const { blobs } = await store.list({ prefix });
+      for (const b of (blobs || [])) {
+        await store.delete(b.key);
+        cancelledAny = true;
+      }
+    }
+    console.log(`whatsapp-webhook: CANCEL by ${phone} (cleaned ${cancelledAny ? 'pending' : 'nothing'})`);
+    return twilioResponse(cancelledAny ? 'Receipt cancelled.' : 'Nothing to cancel.');
+  }
+
+  // ── YES ──
+  if (normalized === 'YES') {
     const { blobs } = await store.list({ prefix: `confirm:${phone}:` });
 
     if (!blobs || blobs.length === 0) {
+      const { blobs: transferBlobs } = await store.list({ prefix: `transfer_pending:${phone}:` });
+      if (transferBlobs && transferBlobs.length > 0) {
+        return twilioResponse("Pick a category first (e.g. 'Misc' or 'Investment').");
+      }
       return twilioResponse("No pending receipt to confirm. Send a receipt image to get started.");
     }
 
@@ -255,12 +327,6 @@ async function handleTextReply(store, phone, text) {
     if (!pending) {
       await store.delete(key);
       return twilioResponse("No pending receipt to confirm. Send a receipt image to get started.");
-    }
-
-    if (normalized === 'CANCEL') {
-      await store.delete(key);
-      console.log(`whatsapp-webhook: receipt ${pending.id} cancelled by ${phone}`);
-      return twilioResponse('Receipt cancelled.');
     }
 
     const { extraction, driveFileId, year, month } = pending;
@@ -317,6 +383,7 @@ async function handleTextReply(store, phone, text) {
       `Date: ${txDate || 'Today'}`,
       `Category: ${category}`,
       `Total: $${amount}`,
+      ...(pending.conversionInfo ? [`(Converted from ${pending.conversionInfo.originalCurrency} ${pending.conversionInfo.original} · rate ${pending.conversionInfo.rate.toFixed(4)})`] : []),
       ...(pending.driveShareLink ? [`View Receipt: ${pending.driveShareLink}`] : []),
       `Dashboard: ${DASHBOARD_URL}`,
       '',
@@ -371,6 +438,34 @@ async function handleTextReply(store, phone, text) {
     );
   }
 
+  // ── Category selection (completes a transfer flow) ──
+  const matchedCategory = CATEGORIES.find(c => c.toUpperCase() === normalized);
+  if (matchedCategory) {
+    const { blobs } = await store.list({ prefix: `transfer_pending:${phone}:` });
+    if (blobs && blobs.length > 0) {
+      const key     = blobs[0].key;
+      const pending = await store.get(key, { type: 'json' });
+      if (pending) {
+        pending.extraction.reward_category = matchedCategory;
+        await store.delete(key);
+        await store.setJSON(`confirm:${phone}:${pending.id}`, {
+          ...pending,
+          status: 'awaiting_confirmation',
+        });
+        const e = pending.extraction;
+        const lines = [
+          `Got it: $${e.total_amount} to ${e.store_name || 'Unknown'}`,
+          `Category: ${matchedCategory}`,
+        ];
+        if (pending.conversionInfo) {
+          lines.push(`(Converted from ${pending.conversionInfo.originalCurrency} ${pending.conversionInfo.original} · rate ${pending.conversionInfo.rate.toFixed(4)})`);
+        }
+        lines.push('', 'Reply YES to log, or CANCEL');
+        return twilioResponse(lines.join('\n'));
+      }
+    }
+  }
+
   // ── Field edit: "category: X", "amount: X", "store: X", "date: X" ──
   const editMatch = text.trim().match(/^(category|amount|store|date)\s*:\s*(.+)$/i);
   if (editMatch) {
@@ -389,11 +484,9 @@ async function handleTextReply(store, phone, text) {
     const value = editMatch[2].trim();
 
     if (field === 'category') {
-      const { CATEGORIES } = await import('./_extraction.mjs');
       const matched = CATEGORIES.find(c => c.toLowerCase() === value.toLowerCase());
       if (!matched) {
-        const { CATEGORIES: cats } = await import('./_extraction.mjs');
-        return twilioResponse(`Unknown category. Choose from:\n${cats.join(', ')}`);
+        return twilioResponse(`Unknown category. Choose from:\n${CATEGORIES.join(', ')}`);
       }
       pending.extraction.reward_category = matched;
     } else if (field === 'amount') {
@@ -430,7 +523,6 @@ async function handleTextReply(store, phone, text) {
       return twilioResponse("Invalid amount. Use: StoreName Amount Category (e.g., 'Walmart 45.23 Grocery')");
     }
 
-    const { CATEGORIES } = await import('./_extraction.mjs');
     const matchedCat = CATEGORIES.find(c => c.toLowerCase() === category.trim().toLowerCase()) || 'Misc';
     const now = new Date();
 
@@ -469,14 +561,61 @@ async function handleTextReply(store, phone, text) {
     );
   }
 
+  // ── Transaction text parsing (bank SMS / payment notification) ──
+  if (looksLikeTransactionText(text)) {
+    const result = await extractTransactionText(text);
+    if (result.ok && result.data?.total_amount != null && result.data.total_amount > 0) {
+      const data = result.data;
+      const conversionInfo = await maybeConvertCurrency(data);
+      const now = new Date();
+      const year  = data.purchase_date ? new Date(data.purchase_date).getFullYear() : now.getFullYear();
+      const month = data.purchase_date
+        ? new Date(data.purchase_date).toLocaleString('en-US', { month: 'long' })
+        : now.toLocaleString('en-US', { month: 'long' });
+      const receiptId = crypto.randomUUID();
+
+      if (data.is_transfer) {
+        await store.setJSON(`transfer_pending:${phone}:${receiptId}`, {
+          id: receiptId,
+          phone,
+          extraction: data,
+          conversionInfo,
+          year,
+          month,
+          receivedAt: now.toISOString(),
+        });
+        return twilioResponse(buildTransferPrompt(data, conversionInfo));
+      }
+
+      await store.setJSON(`confirm:${phone}:${receiptId}`, {
+        id: receiptId,
+        phone,
+        extraction: data,
+        conversionInfo,
+        year,
+        month,
+        status: 'awaiting_confirmation',
+      });
+      return twilioResponse(buildConfirmPrompt(data, conversionInfo));
+    }
+    // Fall through to help if extraction didn't yield useful data
+  }
+
   // ── Help ──
   if (text.trim().length > 0) {
     return twilioResponse(
-      'Send a receipt image or type "Store Amount Category" to log.\n\nCommands: YES, CANCEL, UNDO, ATTACH\nEdit pending: "category: Travel" or "amount: 52.10"'
+      'Send a receipt image, wallet/bank screenshot, or paste a transaction SMS.\n\nOr type "Store Amount Category" for manual entry.\n\nCommands: YES, CANCEL, UNDO, ATTACH\nEdit pending: "category: Travel" or "amount: 52.10"'
     );
   }
 
   return emptyTwiml();
+}
+
+function looksLikeTransactionText(text) {
+  const trimmed = (text || '').trim();
+  if (trimmed.length < 15) return false;
+  // Currency symbols, "USD"/"INR" etc., or amounts with cents
+  return /[\$₹€£¥]|\b(usd|inr|eur|gbp|aed|jpy|cad|aud)\b|\d+\.\d{2}/i.test(trimmed);
 }
 
 async function findFailedPending(store, blobs, phone) {

@@ -16,24 +16,56 @@ const CATEGORIES = [
   'Investment', 'Car Payments', 'Utilities', 'Rent', 'Health', 'Furniture', 'Holiday', 'Wi-Fi',
 ];
 
-const SYSTEM_PROMPT = `You are a receipt parser for a personal budget tracker. Extract structured data from receipt images and return ONLY valid JSON — no markdown, no explanation, no preamble.`;
+const SYSTEM_PROMPT = `You are a transaction parser for a personal budget tracker. Extract structured data from images (receipt photos, wallet app screenshots like Apple Pay/Google Pay/Samsung Pay, bank app screenshots, SMS notification screenshots) and return ONLY valid JSON — no markdown, no explanation, no preamble.`;
 
 function buildUserPrompt() {
-  return `Extract data from this receipt image. Return EXACTLY this JSON structure:
+  return `Extract data from this transaction image. The image could be:
+- A physical receipt photo
+- A wallet app screenshot (Apple Pay, Google Pay, Samsung Pay, Venmo, Zelle, PayPal, etc.)
+- A bank app or SMS notification screenshot showing a charge or transfer
 
-{"store_name":"Store Name","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":3.50,"currency":"USD","items":[{"name":"Item name","amount":5.99}],"reward_category":"Grocery"}
+Return EXACTLY this JSON structure:
+
+{"store_name":"Store Name","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":3.50,"currency":"USD","items":[{"name":"Item name","amount":5.99}],"reward_category":"Grocery","is_transfer":false}
 
 Rules:
-- store_name: The merchant/vendor name as shown on receipt
+- store_name: The merchant/vendor name (for transfers, use the recipient name)
 - purchase_date: Date in YYYY-MM-DD format. If unclear, use null
-- total_amount: Final total including tax. Must be a positive number, no $ sign
+- total_amount: Final total/charge amount. Must be a positive number, no currency symbol
 - tax_amount: Tax amount if shown, else null
-- currency: 3-letter ISO code visible on receipt (default "USD" if not shown)
-- items: Array of line items with name and amount. Empty array [] if not legible
-- reward_category: MUST be exactly one of: ${CATEGORIES.join(', ')}. Pick the closest match. Use "Misc" if none fit.
+- currency: 3-letter ISO code visible (USD, INR, EUR, GBP, etc.). Default "USD" if not shown
+- items: Array of line items with name and amount. Empty array [] for non-receipt images
+- reward_category: MUST be exactly one of: ${CATEGORIES.join(', ')}. Pick the closest match. Use "Misc" if none fit. For transfers (is_transfer=true), set to null (user will pick).
+- is_transfer: true if this is a peer-to-peer payment, money transfer, or sending money (Zelle, Venmo, PayPal P2P, bank transfer, "sent to" someone). false for purchases at merchants.
 
 If the image is completely unreadable, return:
-{"store_name":null,"purchase_date":null,"total_amount":null,"tax_amount":null,"currency":"USD","items":[],"reward_category":null}
+{"store_name":null,"purchase_date":null,"total_amount":null,"tax_amount":null,"currency":"USD","items":[],"reward_category":null,"is_transfer":false}
+
+Respond with ONLY the JSON object. No other text.`;
+}
+
+function buildTextPrompt(text) {
+  return `Extract transaction data from this text (likely a bank SMS, payment notification, or transaction alert):
+
+"""
+${text}
+"""
+
+Return EXACTLY this JSON structure:
+{"store_name":"...","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":null,"currency":"USD","items":[],"reward_category":"...","is_transfer":false}
+
+Rules:
+- store_name: Merchant/vendor name from the text (for transfers, use the recipient name)
+- purchase_date: Date in YYYY-MM-DD if mentioned. If not, use null
+- total_amount: The charge amount. Positive number, no currency symbol
+- tax_amount: null (text usually doesn't mention tax separately)
+- currency: 3-letter ISO code (USD, INR, EUR, GBP, etc.). Detect from symbols ($, ₹, €, £) or text. Default "USD"
+- items: Always empty []
+- reward_category: MUST be exactly one of: ${CATEGORIES.join(', ')}. Pick closest match based on merchant. Use "Misc" if unclear. For transfers, set to null.
+- is_transfer: true if this is a peer-to-peer payment (Zelle, Venmo, PayPal P2P, bank transfer "to" someone). false for merchant charges.
+
+If the text doesn't look like a transaction notification (e.g., random text, greetings), return:
+{"store_name":null,"purchase_date":null,"total_amount":null,"tax_amount":null,"currency":"USD","items":[],"reward_category":null,"is_transfer":false}
 
 Respond with ONLY the JSON object. No other text.`;
 }
@@ -59,6 +91,14 @@ export function sanitizeExtraction(data) {
       name: typeof item.name === 'string' ? safeString(item.name) : item.name,
       amount: typeof item.amount === 'number' ? Math.abs(item.amount) : item.amount,
     }));
+  }
+  if (typeof result.is_transfer !== 'boolean') {
+    result.is_transfer = false;
+  }
+  if (typeof result.currency !== 'string' || result.currency.length !== 3) {
+    result.currency = 'USD';
+  } else {
+    result.currency = result.currency.toUpperCase();
   }
   return result;
 }
@@ -133,6 +173,63 @@ export async function extractReceipt(base64, mediaType) {
     return { ok: true, data: sanitizeExtraction(raw), model: FALLBACK_MODEL };
   } catch (e) {
     console.error('extractReceipt: fallback failed:', e.message);
+    return { ok: false, error: 'illegible', message: lastError?.message || e.message };
+  }
+}
+
+async function callClaudeText(model, text) {
+  if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not configured');
+
+  const res = await fetch(ANTHROPIC_URL, {
+    method: 'POST',
+    headers: {
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 1024,
+      system: SYSTEM_PROMPT,
+      messages: [{
+        role: 'user',
+        content: [{ type: 'text', text: buildTextPrompt(text) }],
+      }],
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const msg = err?.error?.message || `HTTP ${res.status}`;
+    throw new Error(`Claude API (${model}): ${msg}`);
+  }
+
+  const data = await res.json();
+  const responseText = data.content?.[0]?.text || '';
+  const match = responseText.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('No JSON in Claude response');
+
+  return JSON.parse(match[0]);
+}
+
+export async function extractTransactionText(text) {
+  let lastError;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const raw = await callClaudeText(PRIMARY_MODEL, text);
+      return { ok: true, data: sanitizeExtraction(raw), model: PRIMARY_MODEL };
+    } catch (e) {
+      lastError = e;
+      console.warn(`extractTransactionText: ${PRIMARY_MODEL} attempt ${attempt + 1} failed:`, e.message);
+    }
+  }
+
+  try {
+    const raw = await callClaudeText(FALLBACK_MODEL, text);
+    return { ok: true, data: sanitizeExtraction(raw), model: FALLBACK_MODEL };
+  } catch (e) {
+    console.error('extractTransactionText: fallback failed:', e.message);
     return { ok: false, error: 'illegible', message: lastError?.message || e.message };
   }
 }
