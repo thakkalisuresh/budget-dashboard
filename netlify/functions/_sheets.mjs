@@ -7,6 +7,7 @@ import { getAccessToken } from './_drive.mjs';
 
 const SHEETS_API    = 'https://sheets.googleapis.com/v4/spreadsheets';
 const TEMPLATE_ID   = process.env.VITE_TEMPLATE_SHEET_ID;
+const ALLOWED_EMAILS = (process.env.VITE_ALLOWED_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
 
 const SHEET_MAP = {
   'Grocery':       { sheet: 'Grocery' },
@@ -288,4 +289,123 @@ export async function writeBudgetAmount(sheetId, categoryName, amount) {
     amount,
     details: `Budget set to $${Number(amount).toFixed(2)} via WhatsApp`,
   });
+}
+
+function escapeSheetRef(name) {
+  return String(name).replace(/'/g, "''");
+}
+
+function escapeFormulaString(name) {
+  return String(name).replace(/"/g, '""');
+}
+
+export async function addCategory(sheetId, { name, budget, type }) {
+  // Step 1: Create detail sheet tab with headers + SUM formula
+  await sheetsRequest(sheetId, ':batchUpdate', {
+    method: 'POST',
+    body: JSON.stringify({
+      requests: [{ addSheet: { properties: { title: name } } }],
+    }),
+  });
+
+  const headerRange = encodeURIComponent(`'${escapeSheetRef(name)}'!A1:E1`);
+  await sheetsRequest(sheetId, `/values/${headerRange}?valueInputOption=USER_ENTERED`, {
+    method: 'PUT',
+    body: JSON.stringify({ values: [['Month', 'Year', 'Date', 'Description', 'Amount']] }),
+  });
+
+  const sumRange = encodeURIComponent(`'${escapeSheetRef(name)}'!F1`);
+  await sheetsRequest(sheetId, `/values/${sumRange}?valueInputOption=USER_ENTERED`, {
+    method: 'PUT',
+    body: JSON.stringify({ values: [['=SUM(E2:E1000)']] }),
+  });
+
+  // Step 2: Add row to Totals (name, 0 spent, =budget-B{row} remaining)
+  const totalsRange = encodeURIComponent("'Totals'!A2:A21");
+  const totalsData = await sheetsRequest(sheetId, `/values/${totalsRange}?valueRenderOption=FORMATTED_VALUE`);
+  const filledRows = totalsData.values || [];
+
+  if (filledRows.length >= 20) throw new Error('Totals sheet is full (max 20 categories).');
+
+  const existing = filledRows.map(r => (r[0] || '').toLowerCase());
+  if (existing.includes(name.toLowerCase())) throw new Error(`Category "${name}" already exists.`);
+
+  const rowNum = filledRows.length + 2;
+  const writeRange = encodeURIComponent(`'Totals'!A${rowNum}:C${rowNum}`);
+  await sheetsRequest(sheetId, `/values/${writeRange}?valueInputOption=USER_ENTERED`, {
+    method: 'PUT',
+    body: JSON.stringify({ values: [[safeString(name), 0, `=${Number(budget) || 0}-B${rowNum}`]] }),
+  });
+
+  // Step 3: Link detail sheet to Totals col B (spent = detail sheet total)
+  const linkRange = encodeURIComponent(`'Totals'!B${rowNum}`);
+  await sheetsRequest(sheetId, `/values/${linkRange}?valueInputOption=USER_ENTERED`, {
+    method: 'PUT',
+    body: JSON.stringify({ values: [[`='${escapeSheetRef(name)}'!F1`]] }),
+  });
+
+  // Step 4: Add to 50/30/20 sheet
+  const TYPE_COLS = {
+    need:   { desc: 'A', amt: 'B' },
+    want:   { desc: 'D', amt: 'E' },
+    saving: { desc: 'G', amt: 'H' },
+  };
+  const cols = TYPE_COLS[type || 'want'];
+  if (cols) {
+    const colRange = encodeURIComponent(`'50/30/20'!${cols.desc}2:${cols.desc}10`);
+    const colData = await sheetsRequest(sheetId, `/values/${colRange}?valueRenderOption=FORMATTED_VALUE`).catch(() => ({ values: [] }));
+    const filled = colData.values || [];
+    if (filled.length < 9) {
+      const r = filled.length + 2;
+      const descCell = encodeURIComponent(`'50/30/20'!${cols.desc}${r}`);
+      await sheetsRequest(sheetId, `/values/${descCell}?valueInputOption=USER_ENTERED`, {
+        method: 'PUT',
+        body: JSON.stringify({ values: [[safeString(name)]] }),
+      });
+      const amtCell = encodeURIComponent(`'50/30/20'!${cols.amt}${r}`);
+      await sheetsRequest(sheetId, `/values/${amtCell}?valueInputOption=USER_ENTERED`, {
+        method: 'PUT',
+        body: JSON.stringify({ values: [[`=SUMIF(Totals!A:A,"${escapeFormulaString(name)}",Totals!B:B)`]] }),
+      });
+    }
+  }
+
+  // Step 5: Update UserSettings in template to persist custom category
+  await addCategoryToUserSettings(name);
+
+  await appendHistory(sheetId, {
+    action: 'Category Added',
+    category: name,
+    amount: budget,
+    details: `Custom category "${name}" added via WhatsApp (${type || 'want'}, budget $${Number(budget).toFixed(2)})`,
+  });
+}
+
+async function addCategoryToUserSettings(categoryName) {
+  if (!TEMPLATE_ID || ALLOWED_EMAILS.length === 0) return;
+  const userId = ALLOWED_EMAILS[0];
+
+  try {
+    const range = encodeURIComponent("'UserSettings'!A:B");
+    const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
+    const rows = data.values || [];
+
+    const rowIndex = rows.findIndex(r => r[0] === userId);
+    if (rowIndex < 0) return;
+
+    const settings = JSON.parse(rows[rowIndex][1] || '{}');
+    const customs = settings.customCategories || [];
+    if (customs.some(c => c.toLowerCase() === categoryName.toLowerCase())) return;
+
+    customs.push(categoryName);
+    settings.customCategories = customs;
+
+    const writeRange = encodeURIComponent(`'UserSettings'!B${rowIndex + 1}`);
+    await sheetsRequest(TEMPLATE_ID, `/values/${writeRange}?valueInputOption=RAW`, {
+      method: 'PUT',
+      body: JSON.stringify({ values: [[JSON.stringify(settings)]] }),
+    });
+  } catch (e) {
+    console.warn('addCategoryToUserSettings failed (non-fatal):', e.message);
+  }
 }

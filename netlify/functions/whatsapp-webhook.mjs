@@ -10,7 +10,7 @@ import {
 } from './_whatsapp.mjs';
 import { extractReceipt, extractTransactionText, CATEGORIES } from './_extraction.mjs';
 import { uploadReceiptImage, moveFile, buildFolderPath } from './_drive.mjs';
-import { getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID, getTotals, writeSalaryAmount, writeBudgetAmount } from './_sheets.mjs';
+import { getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID, getTotals, writeSalaryAmount, writeBudgetAmount, addCategory } from './_sheets.mjs';
 import { convertToUSD } from './_currency.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
 
@@ -491,6 +491,12 @@ async function handleTextReply(store, phone, text) {
     return await handleSetBudget(store, phone, budgetMatch[1].trim(), budgetMatch[2]);
   }
 
+  // ── ADD CATEGORY ──
+  const catMatch = text.trim().match(/^add\s+category\s+(.+?)\s+\$?([\d,]+(?:\.\d{1,2})?)\s*(need|want|saving)?$/i);
+  if (catMatch) {
+    return await handleAddCategory(store, phone, catMatch[1].trim(), catMatch[2], (catMatch[3] || 'want').toLowerCase());
+  }
+
   // ── Budget query (J1-J4) ──
   if (looksLikeQuery(text)) {
     try {
@@ -668,7 +674,7 @@ async function handleTextReply(store, phone, text) {
   // ── Help ──
   if (text.trim().length > 0) {
     return twilioResponse(
-      'Send a receipt image, wallet/bank screenshot, or paste a transaction SMS.\n\nOr type "Store Amount Category" for manual entry.\n\nCommands: YES, CANCEL, UNDO, ATTACH\nEdit pending: "category: Travel" or "amount: 52.10"\nBudget: "SET SALARY 5500" or "SET BUDGET Grocery 400"\nQuery: "? budget", "? last 5", "how much on grocery?"'
+      'Send a receipt image, wallet/bank screenshot, or paste a transaction SMS.\n\nOr type "Store Amount Category" for manual entry.\n\nCommands: YES, CANCEL, UNDO, ATTACH\nEdit pending: "category: Travel" or "amount: 52.10"\nBudget: "SET SALARY 5500" or "SET BUDGET Grocery 400"\nNew: "ADD CATEGORY Subscriptions 80 Want"\nQuery: "? budget", "? last 5", "how much on grocery?"'
     );
   }
 
@@ -759,6 +765,47 @@ async function handleSetBudget(store, phone, categoryInput, amountStr) {
   }
   console.log(`whatsapp-webhook: ${matchedCat.name} budget set to ${amount} for ${monthName} by ${phone}`);
   return twilioResponse(`✅ ${matchedCat.name} budget set to $${amount} for ${monthName}.`);
+}
+
+// ── ADD CATEGORY handler ───────────────────────────────────────────────────
+
+async function handleAddCategory(store, phone, nameInput, budgetStr, type) {
+  const budget = parseFloat(budgetStr.replace(/,/g, ''));
+  if (isNaN(budget) || budget < 0) {
+    return twilioResponse("Invalid budget. Use: ADD CATEGORY Subscriptions 80 Want");
+  }
+
+  const name = nameInput.replace(/[*?:\\/[\]]/g, '').trim();
+  if (!name || name.length > 80) {
+    return twilioResponse("Category name is invalid or too long (max 80 chars).");
+  }
+
+  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  let sheetId;
+  try {
+    sheetId = await getCurrentMonthSheetId(monthName);
+  } catch {
+    return twilioResponse(`No sheet found for ${monthName}. Create the month first.`);
+  }
+
+  try {
+    await addCategory(sheetId, { name, budget, type });
+  } catch (e) {
+    if (e.message.includes('already exists')) {
+      return twilioResponse(`Category "${name}" already exists.`);
+    }
+    if (e.message.includes('full')) {
+      return twilioResponse('Totals sheet is full (max 20 categories). Remove one first.');
+    }
+    console.error('whatsapp-webhook: add category failed', e.message);
+    return twilioResponse('Failed to add category. Try again or use the dashboard.');
+  }
+
+  const typeLabel = { need: 'Need', want: 'Want', saving: 'Saving' }[type] || 'Want';
+  console.log(`whatsapp-webhook: category "${name}" added ($${budget} ${typeLabel}) for ${monthName} by ${phone}`);
+  return twilioResponse(
+    `✅ Category "${name}" added for ${monthName}.\nBudget: $${budget} · Type: ${typeLabel}\n\nYou can now log expenses: "${name} 25.50 ${name}"`
+  );
 }
 
 function looksLikeTransactionText(text) {
