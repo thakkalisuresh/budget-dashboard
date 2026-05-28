@@ -178,7 +178,13 @@ define: {
 
 ## 🟡 Medium Priority
 
-### 3. Spending Trends
+### 3. Git Push Fail Review
+
+**Context TBD** — placeholder, user to add details.
+
+---
+
+### 4. Spending Trends
 Month-over-month comparison chart. "You spent $200 more on Eating Out than last month." Pulls data from multiple month sheets.
 
 ### 4. Budget Forecasting
