@@ -7,89 +7,178 @@ Fundient is a personal budget dashboard built with React + Vite, deployed on Net
 ```
 Browser (React SPA)
   |
-  |-- Google OAuth 2.0 (login, token refresh)
-  |-- Google Sheets API (read/write budget data)
-  |-- Google Drive API (copy template sheet for new months)
+  |── Google OAuth 2.0 (login, silent token refresh)
+  |── Google Sheets API (read/write budget data)
+  |── Google Drive API (copy template sheet for new months)
   |
-  |-- Netlify Edge Functions
-  |     |-- /api/verify-user   (email allowlist check)
-  |     |-- /api/claude        (Anthropic API proxy for receipt scanning)
+  |── Netlify Edge Functions (Deno, runs at CDN edge)
+  |     |── /api/verify-user   (email allowlist check, returns role)
+  |     |── /api/claude        (Anthropic API proxy — receipt scanning, chat)
   |
-  |-- Netlify Functions
-  |     |-- push-subscribe     (save push subscription to Netlify Blobs)
-  |     |-- push-unsubscribe   (remove push subscription)
-  |     |-- push-alert         (send push notification on budget threshold)
-  |     |-- push-digest        (scheduled weekly spending digest)
+  |── Netlify Functions (Node.js)
+  |     |── push-subscribe     (save Web Push subscription to Netlify Blobs)
+  |     |── push-unsubscribe   (remove push subscription)
+  |     |── push-alert         (send push notification on budget threshold)
+  |     |── push-digest        (scheduled weekly spending digest)
   |
-  |-- Service Worker (Workbox)
-  |     |-- Precache app shell
-  |     |-- NetworkFirst for Sheets API (1h / 50-entry cap)
-  |     |-- Push notification handler
+  |── Service Worker (Workbox)
+  |     |── Precache app shell (offline-capable)
+  |     |── NetworkFirst for Sheets API (1h / 50-entry cap)
+  |     |── Background Sync handler (drains offline queue on reconnect)
+  |     |── Push notification handler
   |
-  |-- localStorage / sessionStorage
-        |-- Auth tokens, PIN hash, encryption salt
-        |-- Offline queue, smart rules, custom categories
-        |-- Theme, settings, FX rate cache
+  |── localStorage / sessionStorage
+        |── Auth profile cache, PIN hash, AES encryption salt
+        |── Offline expense queue, smart rules, custom categories
+        |── Budget data cache (per sheet), FX rate cache
+        |── Theme, settings, accent hue
 ```
 
 ## Client Architecture
 
 ### Entry Point
-`main.jsx` wraps the app in `GoogleOAuthProvider` and renders `App.jsx`.
+
+`main.jsx` wraps the app in `GoogleOAuthProvider` and an `ErrorBoundary`, then renders `App`.
 
 ### App.jsx (orchestrator)
-Manages top-level state (~30 variables) via custom hooks:
-- `useAuth` -- Google OAuth, session management, PIN/biometric unlock, token encryption
-- `useSheetData` -- fetches budget data from Sheets, caches in state
-- `useMonths` -- month navigation, template-based month creation
-- `useTheme` -- dark mode, accent color, font size
-- `useSettings` -- user preferences (lock timeout, shortcuts, non-monthly tracking)
-- `useOfflineSync` -- queues writes when offline, replays on reconnect
-- `usePush` -- push notification subscription management
-- `useMessages` -- in-app notification system
 
-### Data Layer (sheetsApi.js barrel)
-`sheetsApi.js` re-exports from 9 focused modules:
-- `sheetHelpers` -- constants, SHEET_MAP, pure utilities
-- `sheetApi` -- low-level Sheets API wrappers (batchGet, batchUpdate)
-- `sheetDetail` -- detail row cache and reads
-- `sheetHistory` -- history sheet ensure/append/fetch
-- `sheetUndo` -- undo support
-- `sheetTotals` -- totals sheet CRUD
-- `sheetExpenses` -- expense add/update/rename/delete
-- `sheetNonMonthly` -- non-monthly expense tracking
-- `sheetCategories` -- category CRUD
+`App` resolves the top-level auth state and delegates rendering to one of three screens:
+
+```
+pendingOfflineUnlock → OfflineUnlockScreen (biometric gate)
+!user               → LoginScreen (Google Sign-In)
+user                → Dashboard (full app)
+```
+
+`Dashboard` manages ~30 state variables via custom hooks:
+
+| Hook | Responsibility |
+|---|---|
+| `useAuth` | Google OAuth, session lifecycle, PIN/biometric unlock, offline session upgrade |
+| `useSheetData` | Sheets API fetch, localStorage warm-start cache |
+| `useMonthSelection` | Month navigation, template-based month creation |
+| `useSettings` | User preferences (currency, lock timeout, shortcuts, icons) |
+| `useTheme` | Dark mode, accent hue, font size |
+| `useOfflineSync` | Offline queue drain, Background Sync message handler |
+| `usePush` | Web Push subscription management |
+| `useMessages` | In-app notification system (budget alerts, insights) |
+| `useBudgetSummary` | Derived totals (totalActual, overallRemaining, salary calcs) |
+| `useDashboardHandlers` | Event handlers for budget/salary edits, icon picker |
+| `useNonMonthlyExpenses` | Non-monthly (annual/one-off) expense tracking |
+
+### Auth State Machine
+
+```
+No session + no cache             → LoginScreen (Google Sign-In)
+No session + cache + biometric    → OfflineUnlockScreen
+  └─ biometric passes             → isOfflineSession (cached data, queue writes)
+  └─ internet returns             → silent Google refresh → full session
+No session + cache, no biometric  → LoginScreen
+Active session (sessionStorage)   → Dashboard
+Active session, app backgrounded  → PIN lock (if set) → PinLockScreen
+```
+
+`useAuth` stores:
+- Full session in `sessionStorage` (`budget_auth`): `{ email, name, picture, role, accessToken, expiresAt, encToken? }`
+- Profile only in `localStorage` (`budget_auth_cache`): `{ email, name, picture, role, expiresAt }` — no token
+
+The offline session (`isOfflineSession: true`) carries the profile but no `accessToken`. Sheets API calls are skipped; writes go to the offline queue. The session upgrades silently when the `online` event fires and Google's silent refresh succeeds.
+
+### Offline Architecture
+
+**Write queue (`offlineQueue.js`)**
+- `enqueue(item)` → writes to `localStorage` + registers a `budget-sync-expenses` Background Sync tag
+- `dequeue(id)` → removes a processed item
+- Background Sync registration is best-effort (`reg.sync?.register(...)`) — silently skipped if the API is unavailable
+
+**Service worker Background Sync (`sw.js`)**
+- `sync` event for tag `budget-sync-expenses` → posts `{ type: 'DRAIN_OFFLINE_QUEUE' }` to all open window clients
+- On Android Chrome: fires when connectivity returns, even with the app in the background
+- On iOS Safari: Background Sync API is not supported; drains on next app open via the `online` event listener
+
+**Queue drain (`useOfflineSync.js`)**
+- Listens for `online` events and SW `DRAIN_OFFLINE_QUEUE` messages
+- Requires `user.accessToken` (won't drain during an offline session)
+- Uses `navigator.locks` to prevent cross-tab duplicate writes
+- Sets `syncedCount` on completion → Dashboard shows a "N expenses synced" toast for 4 seconds
+
+### Animation Architecture
+
+**Budget bars — CSS `@property` + `clip-path`**
+
+`--bar-pct` is registered as an animatable `<number>` property via `@property` in `index.css`. The `.bar-gradient-fill` class applies a fixed `linear-gradient` (green → amber → red) clipped with `clip-path: inset(0 calc((100 - var(--bar-pct)) * 1%) 0 0)`. The transition on `--bar-pct` drives the reveal animation — no JS colour logic.
+
+**Donut chart — imperative D3 arc morphing**
+
+`DonutChart` uses `useLayoutEffect` keyed on `dataKey` (a string of `name:actual` pairs). The effect:
+1. Snapshots starting arc angles from `currentArcs` ref (supports mid-tween resume) or `prevArcs` (last settled state)
+2. Synchronously sets each `<path d>` to the starting state before paint (no blank-frame flash)
+3. Runs a 700ms RAF tween with ease-out-quart interpolation, updating `<path d>` imperatively
+4. Settles `prevArcs` and `currentArcs` refs on completion
+
+Paths are keyed by `d.data.name` (not index) so ref stability holds across data changes.
+
+**Other animations**
+
+| Element | Mechanism |
+|---|---|
+| Live status dot | CSS `@keyframes sonar` — scale + opacity ring, 2s loop |
+| Tab indicator | Single `<div>` with `translateX(calc(tabIdx * 100%))`, 150ms |
+| Button press | Global `button:active { transform: scale(0.97) }` |
+| Month switch | `animate-crossfade-in` class swap on the data container |
+| User menu open | `animate-dropdown` — translateY(-4px)→0 + opacity 0→1 |
+| Bar/legend entrance | `opacity + translateY` with staggered `transitionDelay` |
+
+All animations respect `prefers-reduced-motion` — the DonutChart tween and BudgetBarsChart mount animation both snap to final state when reduced motion is preferred.
+
+### Data Layer
+
+`sheetsApi.js` is a barrel that re-exports from 9 focused modules:
+
+| Module | Responsibility |
+|---|---|
+| `sheetHelpers` | Constants, `SHEET_MAP`, `safeText()`, pure utilities |
+| `sheetApi` | Low-level `batchGet` / `batchUpdate` wrappers |
+| `sheetDetail` | Per-category transaction cache and reads |
+| `sheetHistory` | History sheet ensure / append / fetch |
+| `sheetUndo` | Undo support |
+| `sheetTotals` | Totals sheet CRUD |
+| `sheetExpenses` | Expense add / update / rename / delete, offline enqueue |
+| `sheetNonMonthly` | Non-monthly expense tracking |
+| `sheetCategories` | Category CRUD |
 
 ### Key UI Components
-- `ExpenseTable` -- main budget table with inline editing
-- `DetailPanel` -- per-category transaction detail view
-- `DashboardGrid` -- draggable grid layout (react-grid-layout)
-- `ReceiptScanner` -- camera/file receipt scanning and statement import via Claude
-- `ReconcileDialog` -- bank statement reconciliation (CSV + PDF)
-- `ChatAgent` -- AI chat for budget questions
-- `PinLock` -- PIN entry, PBKDF2 hashing, AES-GCM token encryption
-- `SettingsPanel` -- user preferences
+
+| Component | Purpose |
+|---|---|
+| `LoginScreen` | Google Sign-In, also exports `OfflineUnlockScreen` |
+| `HeaderBar` | Nav, month picker, theme toggle, accent colour picker, user menu |
+| `StatCard` | Hero metric card (total spent, budget, remaining, salary) |
+| `BudgetBarsChart` | Animated gradient budget bars, over-budget alert |
+| `DonutChart` | Spending distribution with D3 arc morphing |
+| `ExpenseTable` | Budget table with inline editing |
+| `DetailPanel` | Per-category transaction detail view |
+| `HistoryTab` | Month-over-month trend charts |
+| `LedgerTab` | Full transaction log with search/filter |
+| `AddExpenseDialog` | Add expense form with receipt scanning |
+| `ReconcileDialog` | Bank statement reconciliation (CSV + PDF) |
+| `ChatAgent` | AI budget assistant |
+| `PinLock` / `PinLockScreen` | PIN hashing, AES-GCM encryption, WebAuthn, lock screen |
+| `SettingsPanel` | User preferences |
+| `ThemePicker` | OKLCH hue slider (accent colour) |
+| `SpeedDial` | Floating action button (mobile) |
+| `OnboardingWizard` | First-run setup flow |
 
 ## Server Architecture
 
-### Edge Functions (Deno, runs at CDN edge)
-- **verify-user.js**: Validates Google access tokens against `ALLOWED_EMAILS` env var. Returns user role (owner/viewer). No secrets in client bundle.
-- **claude.js**: Proxies requests to Anthropic API. Validates auth, enforces model allowlist (`claude-haiku-4-5`), caps `max_tokens` at 4096, enforces 8MB body limit. Dual-layer rate limiting (IP: 20/min, email: 10/min).
+### Edge Functions (Deno)
 
-### Functions (Node.js, runs on Netlify Functions)
-- **_auth.mjs**: Shared auth helpers (origin check, sec-fetch-site, bearer verification with cached token hashes). NOT deployed as a function (underscore prefix).
-- **push-*.mjs**: Web Push notification management using `@netlify/blobs` for subscription storage and `web-push` for delivery.
+- **verify-user.js**: validates Google access tokens against Google's userinfo endpoint. Checks email against `ALLOWED_EMAILS`. Returns `{ allowed, email, name, picture, role }`. Token hashes cached for 5 minutes (500-entry FIFO cap). Failed tokens cached with 30s TTL (50-entry cap, SEC-15).
+- **claude.js**: Anthropic API proxy. Validates bearer token, enforces model allowlist (`claude-haiku-4-5`), caps `max_tokens` at 4096, enforces 8MB body limit. Dual-layer rate limiting: IP 20 req/min, email 10 req/min. Requires `sec-fetch-site: same-origin` header.
 
-## Offline Support
-- Service Worker (Workbox) precaches the app shell and caches Sheets API responses with NetworkFirst strategy
-- `offlineQueue.js` queues failed writes to localStorage, replays them on reconnect
-- `navigator.locks` prevents cross-tab duplicate replays
+### Functions (Node.js)
 
-## Security Layers
-See [SECURITY.md](../SECURITY.md) for the token storage tradeoff. Additional layers:
-- CSP headers in `netlify.toml` (no unsafe-inline for scripts)
-- `sec-fetch-site` validation on edge functions blocks non-browser requests
-- MIME validation via magic bytes (not file extension) for uploads
-- Formula injection prevention (`safeText`) on all Sheets writes
-- PBKDF2 (200k iterations) for PIN hashing, AES-GCM for token encryption
-- FX rate plausibility bounds prevent malicious rate injection
+- **_auth.mjs**: shared auth helpers (origin check, `sec-fetch-site` validation, bearer token verification). Not deployed (underscore prefix).
+- **push-subscribe / push-unsubscribe**: Web Push subscription storage via `@netlify/blobs`.
+- **push-alert**: sends a push notification on budget threshold breach.
+- **push-digest**: scheduled weekly spending summary.

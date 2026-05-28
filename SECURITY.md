@@ -24,3 +24,42 @@ stored in `sessionStorage` as plaintext when biometric unlock is active.
 Accepted as a known architectural limitation (SEC-11, reviewed 2026-05-24).
 Biometric unlock remains enabled; the convenience tradeoff is appropriate for this
 app's threat model.
+
+---
+
+## Offline biometric session
+
+When the PWA is reopened without an internet connection and a prior session exists,
+`useAuth` loads a cached profile from `localStorage` (`budget_auth_cache`) after a
+successful WebAuthn assertion (Face ID / fingerprint). This is distinct from the
+PIN/biometric **lock screen** — it gates access to cached data when no live Google
+session exists at all.
+
+**What the offline session contains**
+- `email`, `name`, `picture`, `role`, `expiresAt` (from last successful auth)
+- No `accessToken` — no Google API calls can be made
+
+**What it does not protect**
+- `localStorage` itself is readable by anyone with physical device access and dev
+  tools. The offline session's biometric gate protects the UI, not the raw storage.
+- If biometric is not registered (no PIN was ever set), the offline session is not
+  available — the user must be online to authenticate.
+
+**Write queue behaviour**
+Expenses added during an offline session are queued in `localStorage`
+(`budget_offline_queue`). They are only synced to Google Sheets after a real
+OAuth token is established (silent refresh on reconnect). No data reaches Google's
+servers without a valid access token.
+
+**Session upgrade**
+When the `online` event fires, `useAuth` attempts a silent Google token refresh.
+On success the offline session is replaced with a full session transparently.
+On failure (wrong account, token revoked) the session stays offline until the user
+explicitly signs in.
+
+### Decision
+
+Accepted. The biometric gate raises the bar meaningfully above "no gate at all" for
+the primary threat model (unattended device), while the underlying `localStorage`
+data was already accessible to anyone who could open dev tools regardless of the UI
+gate. Reviewed 2026-05-27.
