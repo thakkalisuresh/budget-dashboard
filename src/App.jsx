@@ -23,6 +23,7 @@ import { useGlobalShortcuts } from './useGlobalShortcuts.js';
 import { SalaryEditDialog } from './SalaryEditDialog.jsx';
 
 // Heavy components — loaded only when first rendered
+const SpendingMap      = lazy(() => import('./SpendingMap.jsx').then(m => ({ default: m.SpendingMap })));
 const DetailPanel      = lazy(() => import('./DetailPanel.jsx').then(m => ({ default: m.DetailPanel })));
 const AddExpenseDialog = lazy(() => import('./AddExpenseDialog.jsx').then(m => ({ default: m.AddExpenseDialog })));
 const NewMonthDialog   = lazy(() => import('./NewMonthDialog.jsx').then(m => ({ default: m.NewMonthDialog })));
@@ -590,6 +591,15 @@ function Dashboard({ auth }) {
                 />
               )}
 
+              {/* Spending map */}
+              {settings.geoTagEnabled && settings.visibility.map !== false && (
+                <Suspense fallback={null}>
+                  <SpendingMap
+                    transactionNotes={settings.transactionNotes || {}}
+                    currencySymbol={currencySymbol}
+                  />
+                </Suspense>
+              )}
 
             </div>
 
@@ -691,6 +701,8 @@ function Dashboard({ auth }) {
             ...prev,
             transactionNotes: { ...(prev.transactionNotes || {}), [key]: data },
           }))}
+          geoTagEnabled={settings.geoTagEnabled || false}
+          geoPrivacyBlur={settings.geoPrivacyBlur !== false}
         /></Suspense>
       )}
 

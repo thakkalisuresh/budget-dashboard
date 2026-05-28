@@ -13,6 +13,7 @@ const VISIBILITY_ITEMS = [
   { key: 'donutChart',     label: 'Spending Distribution', desc: 'Donut chart with category breakdown' },
   { key: 'barChart',       label: 'Actual vs Budget',      desc: 'Bar chart comparing spend to budget' },
   { key: 'insightCards',   label: 'Insight Cards',         desc: 'Balance without random & budget difference' },
+  { key: 'map',            label: 'Spending Map',          desc: 'Map of tagged expense locations (requires geo-tagging)' },
   { key: 'nonMonthlyTile', label: 'Non-Monthly Expenses',  desc: 'Random non-monthly expenses note' },
   { key: 'budgetRules',    label: '50/30/20 Rules',        desc: 'Budget rule breakdown section' },
 ];
@@ -443,6 +444,27 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                   desc={desc}
                 />
               ))}
+            </div>
+          </div>
+
+          {/* ── Geo-tagging ──────────────────────────────────────────────── */}
+          <div>
+            <SectionLabel>Location</SectionLabel>
+            <div className="space-y-2">
+              <Toggle
+                on={settings.geoTagEnabled || false}
+                onToggle={() => updateSettings(prev => ({ ...prev, geoTagEnabled: !prev.geoTagEnabled }))}
+                label="Geo-tag expenses"
+                desc="Show a 📍 button when adding expenses to capture approximate location"
+              />
+              {settings.geoTagEnabled && (
+                <Toggle
+                  on={settings.geoPrivacyBlur !== false}
+                  onToggle={() => updateSettings(prev => ({ ...prev, geoPrivacyBlur: prev.geoPrivacyBlur === false }))}
+                  label="Privacy blur"
+                  desc="Round coordinates to nearest ~500m to reduce location precision"
+                />
+              )}
             </div>
           </div>
 

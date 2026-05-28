@@ -30,7 +30,10 @@ export const DEFAULT_SETTINGS = {
     insightCards:   true,
     nonMonthlyTile: true,
     budgetRules:    true,
+    map:            true,
   },
+  geoTagEnabled:         false,
+  geoPrivacyBlur:        true,
   donutLegendCount:  5,
   barSortOrder:     'amount',
   categoryColors:   {},
@@ -41,7 +44,7 @@ export const DEFAULT_SETTINGS = {
   customCategories:  [],  // [categoryName, ...]
   recurringExpenses: [],  // [{ category, vendor, amount }]
   nonMonthlyItems:   {},  // { 'April 2026': ['Vendor1', 'Vendor2', ...] }
-  transactionNotes:  {},  // { 'sheetId_category_vendor': { note: '', tags: [] } }
+  transactionNotes:  {},  // { 'sheetId_category_vendor': { note: '', tags: [], location?: {lat,lng} } }
   smartRules:              [],  // [{ id, pattern, category }]
   messages:                [],  // [{ id, type, title, body, timestamp, read }]
   pushHour:                20,  // preferred local hour for daily push (18-22)
