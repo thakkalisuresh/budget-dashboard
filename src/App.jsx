@@ -23,6 +23,7 @@ import { useGlobalShortcuts } from './useGlobalShortcuts.js';
 import { SalaryEditDialog } from './SalaryEditDialog.jsx';
 
 // Heavy components — loaded only when first rendered
+const SpendingHeatmap  = lazy(() => import('./SpendingHeatmap.jsx').then(m => ({ default: m.SpendingHeatmap })));
 const DetailPanel      = lazy(() => import('./DetailPanel.jsx').then(m => ({ default: m.DetailPanel })));
 const AddExpenseDialog = lazy(() => import('./AddExpenseDialog.jsx').then(m => ({ default: m.AddExpenseDialog })));
 const NewMonthDialog   = lazy(() => import('./NewMonthDialog.jsx').then(m => ({ default: m.NewMonthDialog })));
@@ -613,6 +614,18 @@ function Dashboard({ auth }) {
                 />
               )}
 
+              {/* Spending heatmap calendar */}
+              {settings.visibility.heatmap !== false && (
+                <Suspense fallback={null}>
+                  <SpendingHeatmap
+                    sheetId={selectedSheetId}
+                    accessToken={user.accessToken}
+                    currencySymbol={currencySymbol}
+                    monthName={selectedMonth?.name}
+                    isDark={isDark}
+                  />
+                </Suspense>
+              )}
 
             </div>
 

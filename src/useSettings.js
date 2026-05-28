@@ -30,6 +30,7 @@ export const DEFAULT_SETTINGS = {
     insightCards:   true,
     nonMonthlyTile: true,
     budgetRules:    true,
+    heatmap:        true,
   },
   donutLegendCount:  5,
   barSortOrder:     'amount',
