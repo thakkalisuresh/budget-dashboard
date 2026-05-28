@@ -173,6 +173,7 @@ export function ChatAgent({
   open: controlledOpen,
   onOpenChange,
   hideButton = false,
+  initialQuery = '',
 }) {
   const [internalOpen, setInternalOpen] = useState(false);
   const open    = controlledOpen !== undefined ? controlledOpen : internalOpen;
@@ -202,10 +203,13 @@ export function ChatAgent({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Focus input when panel opens
+  // Focus input when panel opens; pre-fill initialQuery on first open
   useEffect(() => {
-    if (open && hasKey) setTimeout(() => inputRef.current?.focus(), 150);
-  }, [open, hasKey]);
+    if (open && hasKey) {
+      setTimeout(() => inputRef.current?.focus(), 150);
+      if (initialQuery && !input) setInput(initialQuery);
+    }
+  }, [open, hasKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Tool definitions ───────────────────────────────────────────────────────
 

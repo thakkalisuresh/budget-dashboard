@@ -112,8 +112,9 @@ function Dashboard({ auth }) {
   const [showReconcile, setShowReconcile]       = useState(false);
   const [showBulkRecurring, setShowBulkRecurring] = useState(false);
   const [showMessages, setShowMessages]         = useState(false);
-  const [chatOpen, setChatOpen]   = useState(false);
-  const [fabOpen, setFabOpen]     = useState(false);
+  const [chatOpen, setChatOpen]         = useState(false);
+  const [chatInitialQuery, setChatInitialQuery] = useState('');
+  const [fabOpen, setFabOpen]           = useState(false);
   const userMenuRef = useRef(null);
 
   // Per-user settings (saved to Google Sheets)
@@ -125,6 +126,27 @@ function Dashboard({ auth }) {
   // Theme (dark/light, font size, accent color) — extracted to useTheme hook
   const { isDark, setIsDark } = useTheme(settings, updateSettings);
 
+
+  // ── URI automation: handle ?action= deep-links ───────────────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const action = params.get('action');
+    if (!action) return;
+    window.history.replaceState({}, '', '/');
+    if (action === 'add' && !isReadOnly) {
+      setShowAddDialog({
+        prefillCategory: params.get('category') || null,
+        prefillVendor:   params.get('vendor')   || '',
+        prefillAmount:   params.get('amount')   || '',
+      });
+    } else if (action === 'chat') {
+      const q = params.get('q') || '';
+      if (q) setChatInitialQuery(q);
+      setChatOpen(true);
+    } else if (action === 'summary') {
+      setActiveTab('budget');
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close user menu on outside click
   useEffect(() => {
@@ -659,6 +681,8 @@ function Dashboard({ auth }) {
           monthName={selectedMonth?.name}
           categories={expenses.map(e => e.name)}
           prefillCategory={typeof showAddDialog === 'object' ? showAddDialog.prefillCategory : null}
+          prefillVendor={typeof showAddDialog === 'object' ? showAddDialog.prefillVendor || '' : ''}
+          prefillAmount={typeof showAddDialog === 'object' ? showAddDialog.prefillAmount || '' : ''}
           onClose={() => setShowAddDialog(false)}
           lockCategory={typeof showAddDialog === 'object' && !!showAddDialog.prefillCategory}
           onSuccess={(result) => {
@@ -736,6 +760,7 @@ function Dashboard({ auth }) {
         rulesData={rulesData}
         open={chatOpen}
         onOpenChange={setChatOpen}
+        initialQuery={chatInitialQuery}
       /></Suspense>
 
       {/* Reconcile dialog */}
