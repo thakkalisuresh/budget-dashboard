@@ -21,12 +21,12 @@ const VENDOR_EXAMPLES = {
   'Wi-Fi':         'e.g. Comcast, AT&T…',
 };
 
-export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess, categories: categoriesProp, onSaveRecurring, onSaveTransactionNote, smartRules = [], prefillCategory = null, lockCategory = false }) {
+export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess, categories: categoriesProp, onSaveRecurring, onSaveTransactionNote, smartRules = [], prefillCategory = null, lockCategory = false, prefillVendor = '', prefillAmount = '' }) {
   const categoryList = categoriesProp?.length ? categoriesProp : CATEGORIES;
   const [category, setCategory]         = useState(prefillCategory || '');
-  const [vendor, setVendor]             = useState('');
+  const [vendor, setVendor]             = useState(prefillVendor);
   const [ruleHint, setRuleHint]         = useState(''); // category auto-filled by a rule
-  const [amount, setAmount]             = useState('');
+  const [amount, setAmount]             = useState(prefillAmount);
   const [txDate, setTxDate]             = useState(todayIso);
   const [isNonMonthly, setIsNonMonthly] = useState(false);
   const [isRecurring, setIsRecurring]   = useState(false);
