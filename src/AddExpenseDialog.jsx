@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Plus, Zap } from 'lucide-react';
+import { X, Plus, Zap, Sparkles, Loader2 } from 'lucide-react';
 import { CATEGORIES, fetchDetailRows, checkExistingExpense, markNonMonthly, todayIso } from './sheetsApi.js';
 import { addOrUpdateExpense } from './useExpense.js';
 import { applySmartRules } from './smartRules.js';
@@ -55,6 +55,53 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
   const [loadingVendors, setLoadingVendors]   = useState(false);
   const vendorInputRef = useRef(null);
   const suggestionsRef = useRef(null);
+
+  // ── Natural-language quick-add ────────────────────────────────────────────
+  const [nlText, setNlText]       = useState('');
+  const [nlLoading, setNlLoading] = useState(false);
+  const [nlError, setNlError]     = useState('');
+
+  const parseNlExpense = async () => {
+    if (!nlText.trim()) return;
+    setNlLoading(true);
+    setNlError('');
+    try {
+      const res = await fetch('/api/claude', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5',
+          max_tokens: 256,
+          system: [
+            'You are an expense parser. Extract info from natural language expense descriptions.',
+            `Return ONLY valid JSON: {"vendor":string,"amount":number|null,"date":"YYYY-MM-DD"|null,"category":string|null}`,
+            `Today is ${todayIso}. Resolve relative dates like "yesterday" or "last monday" to ISO dates.`,
+            `Available categories: ${categoryList.join(', ')}.`,
+            'Use null for any field you cannot determine. No commentary, just JSON.',
+          ].join(' '),
+          messages: [{ role: 'user', content: nlText.trim() }],
+        }),
+      });
+      if (!res.ok) throw new Error('api error');
+      const data    = await res.json();
+      const text    = data.content?.[0]?.text || '';
+      const jsonStr = text.match(/\{[\s\S]*\}/)?.[0];
+      if (!jsonStr) throw new Error('no json');
+      const parsed = JSON.parse(jsonStr);
+      if (parsed.vendor)   setVendor(parsed.vendor);
+      if (parsed.amount != null) setAmount(String(parsed.amount));
+      if (parsed.category && categoryList.includes(parsed.category)) setCategory(parsed.category);
+      if (parsed.date)     setTxDate(parsed.date);
+      setNlText('');
+    } catch {
+      setNlError('Couldn\'t parse — try "coffee 4.50 today eating out"');
+    } finally {
+      setNlLoading(false);
+    }
+  };
 
   const inputCls = "w-full bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-400 transition-all placeholder:text-slate-400";
 
@@ -209,6 +256,32 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
 
           {/* Form */}
           <form onSubmit={handleSubmit} className="px-8 py-6 space-y-5 overflow-y-auto flex-1">
+
+            {/* Quick-add natural language input */}
+            <div className="space-y-1.5">
+              <div className="relative">
+                <Sparkles className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-indigo-400 pointer-events-none" />
+                <input
+                  type="text"
+                  value={nlText}
+                  onChange={e => { setNlText(e.target.value); setNlError(''); }}
+                  onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), parseNlExpense())}
+                  placeholder='Quick add — "coffee 4.50 today" then press Enter'
+                  disabled={nlLoading}
+                  className="w-full bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 text-slate-900 dark:text-slate-100 rounded-2xl pl-10 pr-12 py-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-400 transition-all placeholder:text-slate-400 disabled:opacity-60"
+                />
+                {nlLoading
+                  ? <Loader2 className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-indigo-400 animate-spin" />
+                  : nlText && (
+                    <button type="button" onClick={parseNlExpense}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-300 px-1">
+                      Parse
+                    </button>
+                  )
+                }
+              </div>
+              {nlError && <p className="text-xs text-rose-500 pl-1">{nlError}</p>}
+            </div>
 
             {/* Category */}
             <div className="space-y-1.5">
