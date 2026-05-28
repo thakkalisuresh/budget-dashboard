@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useGoogleLogin } from '@react-oauth/google';
+import { WifiOff } from 'lucide-react';
 
 export function LoginScreen({ onSuccess, onError, loading, denied }) {
   const login = useGoogleLogin({
@@ -64,6 +65,100 @@ export function LoginScreen({ onSuccess, onError, loading, denied }) {
           </button>
 
           <p className="text-[11px] text-slate-300 dark:text-slate-600">Private — access restricted to authorised users only</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function OfflineUnlockScreen({ onUnlock, onSignInInstead }) {
+  const [status, setStatus] = useState('idle'); // 'idle' | 'verifying' | 'failed'
+
+  const cached = useMemo(() => {
+    try { return JSON.parse(localStorage.getItem('budget_auth_cache') || 'null'); } catch { return null; }
+  }, []);
+
+  const attempt = useCallback(async () => {
+    setStatus('verifying');
+    const ok = await onUnlock();
+    if (!ok) setStatus('failed');
+    // on success, parent sets user → component unmounts
+  }, [onUnlock]);
+
+  // Auto-trigger on mount with a short delay so the screen renders first
+  useEffect(() => {
+    const t = setTimeout(attempt, 250);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-[#fcfdfe] dark:bg-slate-950 flex items-center justify-center p-6 transition-colors duration-300">
+      <div className="w-full max-w-sm">
+        <div className="bg-white dark:bg-slate-800 rounded-[2rem] border border-slate-100 dark:border-slate-700 shadow-[0_8px_40px_rgb(0,0,0,0.06)] dark:shadow-[0_8px_40px_rgb(0,0,0,0.3)] p-10 text-center space-y-6">
+
+          {/* Avatar or fallback icon */}
+          <div className="flex justify-center">
+            {cached?.picture ? (
+              <div className="relative">
+                <img src={cached.picture} alt="" className="w-16 h-16 rounded-2xl object-cover" referrerPolicy="no-referrer" />
+                <div className="absolute -bottom-1.5 -right-1.5 w-6 h-6 bg-slate-100 dark:bg-slate-700 rounded-lg flex items-center justify-center shadow-sm">
+                  <WifiOff className="w-3 h-3 text-slate-400" />
+                </div>
+              </div>
+            ) : (
+              <div className="w-16 h-16 bg-slate-100 dark:bg-slate-700 rounded-2xl flex items-center justify-center">
+                <WifiOff className="w-7 h-7 text-slate-400" />
+              </div>
+            )}
+          </div>
+
+          {/* Greeting */}
+          <div className="space-y-1.5">
+            <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
+              {cached?.name ? `Hi, ${cached.name.split(' ')[0]}` : 'You\'re offline'}
+            </h1>
+            <p className="text-sm text-slate-400">Verify to continue with cached data</p>
+          </div>
+
+          {/* Status area */}
+          {status === 'verifying' && (
+            <div className="flex items-center justify-center gap-2 text-sm text-slate-400 py-1">
+              <svg className="w-4 h-4 animate-spin flex-shrink-0" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+              Verifying…
+            </div>
+          )}
+
+          {status === 'idle' && (
+            <p className="text-xs text-slate-300 dark:text-slate-600 py-1">
+              Use Face ID or fingerprint to continue
+            </p>
+          )}
+
+          {status === 'failed' && (
+            <div className="space-y-3">
+              <p className="text-sm text-rose-500">Biometric verification failed</p>
+              <button
+                onClick={attempt}
+                className="w-full py-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl text-sm font-bold active:scale-[0.97] transition-all"
+              >
+                Try again
+              </button>
+              <button
+                onClick={onSignInInstead}
+                className="w-full py-2 text-sm text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+              >
+                Sign in with Google instead
+              </button>
+            </div>
+          )}
+
+          <p className="text-[11px] text-slate-300 dark:text-slate-600">
+            Read-only · Edits sync when reconnected
+          </p>
         </div>
       </div>
     </div>

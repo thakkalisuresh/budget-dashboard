@@ -1,47 +1,121 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useLayoutEffect, useRef } from 'react';
 import { pie, arc } from 'd3-shape';
 import { schemeTableau10 } from 'd3-scale-chromatic';
 
+const prefersReducedMotion = () =>
+  typeof window !== 'undefined' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 export function DonutChart({ expenses, totalActual, currencySymbol, isDark, categoryColors, donutLegendCount }) {
   const [hoveredSlice, setHoveredSlice] = useState(null);
-  const [mounted, setMounted] = useState(false);
-  const mountedRef = useRef(false);
-
-  useEffect(() => {
-    if (mountedRef.current) return;
-    mountedRef.current = true;
-    const id = requestAnimationFrame(() => setMounted(true));
-    return () => cancelAnimationFrame(id);
-  }, []);
-
-  // Re-trigger entrance when data key changes (month switch)
-  const dataKey = useMemo(() => expenses.map(e => e.actual).join(','), [expenses]);
-  const prevKey = useRef(dataKey);
-  useEffect(() => {
-    if (prevKey.current === dataKey) return;
-    prevKey.current = dataKey;
-    setMounted(false);
-    const id = requestAnimationFrame(() => setMounted(true));
-    return () => cancelAnimationFrame(id);
-  }, [dataKey]);
+  const [legendMounted, setLegendMounted] = useState(false);
 
   const chartExpenses = useMemo(
     () => [...expenses].filter(d => d.actual > 0).sort((a, b) => b.actual - a.actual),
     [expenses]
   );
 
+  const dataKey = useMemo(() => chartExpenses.map(e => `${e.name}:${e.actual}`).join(','), [chartExpenses]);
+
   const getCategoryColor = (name, idx) =>
     categoryColors?.[name] || schemeTableau10[idx % 10];
 
   const width = 200, height = 200;
   const radius = Math.min(width, height) / 2;
-  const pieFn    = pie().value(d => d.actual).sort(null);
-  const arcFn    = arc().innerRadius(radius * 0.65).outerRadius(radius);
-  const arcHover = arc().innerRadius(radius * 0.62).outerRadius(radius * 1.05);
-  const arcs = pieFn(chartExpenses);
+  const pieFn = useMemo(() => pie().value(d => d.actual).sort(null), []);
+  const arcFn = useMemo(() => arc().innerRadius(radius * 0.65).outerRadius(radius), [radius]);
+  const arcs = useMemo(() => pieFn(chartExpenses), [pieFn, chartExpenses]);
+
   const pct = hoveredSlice
     ? ((hoveredSlice.actual / totalActual) * 100).toFixed(1)
     : null;
+
+  // ── Imperative arc morphing ─────────────────────────────────────────────────
+  const pathRefs    = useRef(new Map()); // name -> SVGPathElement
+  const prevArcs    = useRef(new Map()); // name -> { startAngle, endAngle } (settled)
+  const currentArcs = useRef(new Map()); // name -> { startAngle, endAngle } (current displayed, updated each tick)
+  const tweenId     = useRef(null);
+  const arcsRef     = useRef(arcs);
+  const arcFnRef    = useRef(arcFn);
+  arcsRef.current   = arcs;
+  arcFnRef.current  = arcFn;
+
+  useLayoutEffect(() => {
+    if (tweenId.current) cancelAnimationFrame(tweenId.current);
+
+    const targetArcs = arcsRef.current;
+    const arcFnLocal = arcFnRef.current;
+
+    // Starting arc per slice: prefer current displayed state (mid-tween resume),
+    // then previously settled state, then zero-sweep at the new endAngle.
+    const startByName = new Map();
+    targetArcs.forEach(d => {
+      const cur  = currentArcs.current.get(d.data.name);
+      const prev = prevArcs.current.get(d.data.name);
+      startByName.set(d.data.name, cur || prev || { startAngle: d.endAngle, endAngle: d.endAngle });
+    });
+
+    // Snap to starting state synchronously so React's empty d doesn't flash
+    targetArcs.forEach(d => {
+      const node = pathRefs.current.get(d.data.name);
+      if (!node) return;
+      const s = startByName.get(d.data.name);
+      node.setAttribute('d', arcFnLocal({ ...d, startAngle: s.startAngle, endAngle: s.endAngle }));
+      currentArcs.current.set(d.data.name, { startAngle: s.startAngle, endAngle: s.endAngle });
+    });
+
+    const finalize = () => {
+      prevArcs.current.clear();
+      currentArcs.current.clear();
+      targetArcs.forEach(d => {
+        const final = { startAngle: d.startAngle, endAngle: d.endAngle };
+        prevArcs.current.set(d.data.name, final);
+        currentArcs.current.set(d.data.name, final);
+      });
+    };
+
+    if (prefersReducedMotion()) {
+      targetArcs.forEach(d => {
+        const node = pathRefs.current.get(d.data.name);
+        if (node) node.setAttribute('d', arcFnLocal(d));
+      });
+      finalize();
+      return;
+    }
+
+    const duration = 700;
+    const t0 = performance.now();
+    const tick = (now) => {
+      const p = Math.min((now - t0) / duration, 1);
+      const eased = 1 - Math.pow(1 - p, 4);
+      targetArcs.forEach(d => {
+        const node = pathRefs.current.get(d.data.name);
+        if (!node) return;
+        const s = startByName.get(d.data.name);
+        const sa = s.startAngle + (d.startAngle - s.startAngle) * eased;
+        const ea = s.endAngle   + (d.endAngle   - s.endAngle)   * eased;
+        node.setAttribute('d', arcFnLocal({ ...d, startAngle: sa, endAngle: ea }));
+        currentArcs.current.set(d.data.name, { startAngle: sa, endAngle: ea });
+      });
+      if (p < 1) {
+        tweenId.current = requestAnimationFrame(tick);
+      } else {
+        finalize();
+      }
+    };
+    tweenId.current = requestAnimationFrame(tick);
+
+    return () => {
+      if (tweenId.current) cancelAnimationFrame(tweenId.current);
+    };
+  }, [dataKey]);
+
+  // Legend fades in once after first paint, and on data change
+  useLayoutEffect(() => {
+    setLegendMounted(false);
+    const id = requestAnimationFrame(() => setLegendMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, [dataKey]);
 
   return (
     <div className="animate-enter bg-white dark:bg-slate-800 rounded-[1.25rem] shadow-[0_4px_20px_rgb(0,0,0,0.04)] dark:shadow-[0_4px_20px_rgb(0,0,0,0.2)] border border-slate-100 dark:border-slate-700 p-5 sm:p-8">
@@ -54,20 +128,23 @@ export function DonutChart({ expenses, totalActual, currencySymbol, isDark, cate
           <g transform={`translate(${width / 2}, ${height / 2})`}>
             {arcs.map((d, i) => {
               const isHovered = hoveredSlice?.name === d.data.name;
+              const isDimmed  = hoveredSlice && !isHovered;
               return (
                 <path
-                  key={`${d.data.name}-${i}`}
-                  d={isHovered ? arcHover(d) : arcFn(d)}
+                  ref={(el) => {
+                    if (el) pathRefs.current.set(d.data.name, el);
+                    else pathRefs.current.delete(d.data.name);
+                  }}
+                  key={d.data.name}
                   fill={getCategoryColor(d.data.name, i)}
                   stroke={isDark ? '#1e293b' : '#fff'}
                   strokeWidth="2"
                   style={{
-                    opacity: mounted ? (hoveredSlice && !isHovered ? 0.4 : 1) : 0,
-                    transform: mounted ? 'scale(1)' : 'scale(0.85)',
+                    opacity: isDimmed ? 0.4 : 1,
+                    transform: isHovered ? 'scale(1.04)' : 'scale(1)',
                     transformOrigin: 'center',
                     transformBox: 'fill-box',
-                    transition: `opacity 200ms ease, transform ${250 + i * 25}ms var(--ease-out)`,
-                    transitionDelay: mounted ? `${i * 30}ms` : '0ms',
+                    transition: `opacity 200ms ease, transform 250ms var(--ease-out)`,
                     cursor: 'pointer',
                   }}
                   onMouseEnter={() => setHoveredSlice(d.data)}
@@ -105,11 +182,11 @@ export function DonutChart({ expenses, totalActual, currencySymbol, isDark, cate
         </p>
         {chartExpenses.slice(0, donutLegendCount).map((d, i) => (
           <div
-            key={i}
+            key={d.name}
             className="flex items-center justify-between text-xs"
             style={{
-              opacity: mounted ? 1 : 0,
-              transform: mounted ? 'none' : 'translateX(-6px)',
+              opacity: legendMounted ? 1 : 0,
+              transform: legendMounted ? 'none' : 'translateX(-6px)',
               transition: `opacity var(--dur-normal) var(--ease-out), transform var(--dur-normal) var(--ease-out)`,
               transitionDelay: `${120 + i * 40}ms`,
             }}

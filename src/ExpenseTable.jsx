@@ -3,7 +3,7 @@ import { Check, X, GripVertical, FolderPlus, Plus, Pencil, Trash2, MoreHorizonta
 import { hasDetail } from './fetchDetail.js';
 import { ReceiptScanButton } from './ReceiptScanner.jsx';
 
-const inputCls = "bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500/30";
+const inputCls = "bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500/60";
 
 export function ExpenseTable({
   expenses, currencySymbol, categoryIcons,
@@ -54,7 +54,7 @@ export function ExpenseTable({
       </div>
 
       <div className="overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0">
-        <table className="w-full text-left border-collapse min-w-[480px] sm:min-w-0">
+        <table className="w-full text-left border-collapse">
           <thead>
             <tr className="text-slate-400 text-[11px] font-black uppercase tracking-[0.1em]">
               <th className="px-3 py-4 sm:px-8 sm:py-5">Expense Category</th>
@@ -83,6 +83,13 @@ export function ExpenseTable({
                 <td />
               </tr>
             )}
+            {expenses.length === 0 && !isAdding && (
+              <tr>
+                <td colSpan={6} className="px-8 py-12 text-center">
+                  <p className="text-sm font-semibold text-slate-400">No categories yet — add one to start tracking.</p>
+                </td>
+              </tr>
+            )}
             {expenses.map((item, rowIdx) => (
               <tr
                 key={item.index_}
@@ -109,7 +116,8 @@ export function ExpenseTable({
                       </button>
                       <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${item.remaining < 0 ? 'bg-rose-400' : item.remaining === 0 ? 'bg-amber-400' : 'bg-emerald-400'}`} />
                       <span
-                        className={`font-bold text-slate-700 dark:text-slate-200 text-sm sm:text-base ${hasDetail(item.name) ? 'cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 underline underline-offset-4 decoration-slate-200 dark:decoration-slate-600' : ''}`}
+                        className={`font-bold text-slate-700 dark:text-slate-200 text-sm sm:text-base truncate max-w-[200px] ${hasDetail(item.name) ? 'cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 underline underline-offset-4 decoration-slate-200 dark:decoration-slate-600' : ''}`}
+                        title={item.name}
                         onClick={() => onExpenseClick(item.name)}
                       >
                         {item.name}
@@ -134,7 +142,7 @@ export function ExpenseTable({
                   ) : (
                     <div className="flex items-center gap-1.5">
                       <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold tabular-nums bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
-                        {currencySymbol}{item.budget.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        {item.budget > 0 ? `${currencySymbol}${item.budget.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}
                       </span>
                       <button
                         onClick={e => { e.stopPropagation(); setEditingBudgetId(item.index_); setBudgetDraft(item.budget.toFixed(2)); }}

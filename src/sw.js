@@ -30,6 +30,18 @@ self.addEventListener('activate', event => {
   event.waitUntil(clients.claim());
 });
 
+// ── Background sync — drain offline queue when connectivity returns ───────────
+self.addEventListener('sync', event => {
+  if (event.tag !== 'budget-sync-expenses') return;
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windowClients => {
+      for (const client of windowClients) {
+        client.postMessage({ type: 'DRAIN_OFFLINE_QUEUE' });
+      }
+    })
+  );
+});
+
 // ── Push notification handler ─────────────────────────────────────────────────
 self.addEventListener('push', event => {
   let data = {};

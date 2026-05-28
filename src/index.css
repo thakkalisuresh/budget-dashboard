@@ -5,7 +5,6 @@
 :root {
   --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in:     cubic-bezier(0.4, 0, 1, 1);
-  --ease-spring: cubic-bezier(0.34, 1.36, 0.64, 1);
 
   --dur-fast:   150ms;
   --dur-normal: 250ms;
@@ -13,6 +12,22 @@
 
   /* enter-delay is set inline per element for staggering */
   --enter-delay: 0ms;
+}
+
+/* ── Accent color tokens (hue-driven, OKLCH) ───────────────────────────────── */
+:root {
+  --primary-hue: 30;
+  --color-accent:        oklch(65% 0.18 var(--primary-hue));
+  --color-accent-subtle: oklch(95% 0.06 var(--primary-hue));
+  --color-accent-border: oklch(75% 0.14 var(--primary-hue));
+  --color-accent-text:   oklch(45% 0.16 var(--primary-hue));
+}
+
+.dark {
+  --color-accent:        oklch(72% 0.18 var(--primary-hue));
+  --color-accent-subtle: oklch(22% 0.08 var(--primary-hue));
+  --color-accent-border: oklch(50% 0.14 var(--primary-hue));
+  --color-accent-text:   oklch(72% 0.16 var(--primary-hue));
 }
 
 /* ── Keyframes ─────────────────────────────────────────────────────────────── */
@@ -40,6 +55,55 @@
   to   { stroke-dashoffset: var(--dash-offset); }
 }
 
+@keyframes sonar {
+  0%   { transform: scale(1);   opacity: 0.6; }
+  100% { transform: scale(2.4); opacity: 0;   }
+}
+
+@keyframes crossfade-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+@keyframes crossfade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes dropdown-enter {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── @property animated bar fills (Phase 9, Direction B) ───────────────────── */
+@property --bar-pct {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
+}
+
+.bar-gradient-fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    to right,
+    oklch(70% 0.15 145) 0%,
+    oklch(70% 0.15 145) 65%,
+    oklch(78% 0.16 75)  85%,
+    oklch(63% 0.20 25)  100%
+  );
+  clip-path: inset(0 calc((100 - var(--bar-pct)) * 1%) 0 0);
+  transition: --bar-pct 800ms var(--ease-out);
+  will-change: --bar-pct;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar-gradient-fill {
+    transition: none !important;
+  }
+}
+
 /* ── Animation utility classes ─────────────────────────────────────────────── */
 .animate-enter {
   animation: enter var(--dur-slow) var(--ease-out) backwards;
@@ -49,6 +113,23 @@
 .animate-fade-in {
   animation: fade-in var(--dur-normal) var(--ease-out) backwards;
   animation-delay: var(--enter-delay, 0ms);
+}
+
+.animate-sonar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: currentColor;
+  animation: sonar 2s var(--ease-out) infinite;
+}
+
+.animate-dropdown {
+  animation: dropdown-enter 150ms var(--ease-out) both;
+}
+
+.animate-crossfade-in {
+  animation: crossfade-in 200ms var(--ease-out) both;
 }
 
 /* ── Skeleton shimmer ──────────────────────────────────────────────────────── */
@@ -77,10 +158,15 @@
 /* ── Reduced motion: kill all animations ──────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   .animate-enter,
-  .animate-fade-in {
+  .animate-fade-in,
+  .animate-dropdown,
+  .animate-crossfade-in {
     animation: none !important;
     opacity: 1;
     transform: none;
+  }
+  .animate-sonar::after {
+    animation: none !important;
   }
   .skeleton {
     animation: none !important;
@@ -102,9 +188,6 @@
   --bg: #fff;
   --border: #e5e4e7;
   --code-bg: #f4f3ec;
-  --accent: #e07c00;
-  --accent-bg: rgba(224, 124, 0, 0.1);
-  --accent-border: rgba(224, 124, 0, 0.45);
   --social-bg: rgba(244, 243, 236, 0.5);
   --shadow:
     rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
@@ -135,9 +218,6 @@
     --bg: #16171d;
     --border: #2e303a;
     --code-bg: #1f2028;
-    --accent: #f08c10;
-    --accent-bg: rgba(240, 140, 16, 0.15);
-    --accent-border: rgba(240, 140, 16, 0.5);
     --social-bg: rgba(47, 48, 58, 0.5);
     --shadow:
       rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
@@ -165,4 +245,10 @@ body {
 
 p {
   margin: 0;
+}
+
+/* Button active press scale */
+button:active {
+  transform: scale(0.97);
+  transition-duration: 75ms;
 }

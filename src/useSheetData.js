@@ -33,8 +33,11 @@ export function useSheetData(sheetId, accessToken) {
       const headers = { Authorization: `Bearer ${accessToken}` };
       const res = await fetch(url, { headers });
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error?.message || `HTTP ${res.status}`);
+        const err = await res.json().catch(() => ({}));
+        if (res.status === 429) throw new Error('Google Sheets rate limit hit — try again in a minute.');
+        if (res.status === 403) throw new Error('Access denied — check your spreadsheet sharing settings.');
+        if (res.status >= 500) throw new Error('Google Sheets is unavailable — showing cached data.');
+        throw new Error(err.error?.message || `Request failed (${res.status})`);
       }
       const json = await res.json();
       const parsed = parseValues(json.values || []);

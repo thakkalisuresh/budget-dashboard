@@ -1,5 +1,12 @@
 const QUEUE_KEY = 'budget_offline_queue';
 
+function requestBackgroundSync() {
+  if (!navigator.serviceWorker) return;
+  navigator.serviceWorker.ready
+    .then(reg => reg.sync?.register('budget-sync-expenses'))
+    .catch(() => {});
+}
+
 export function getQueue() {
   try {
     return JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
@@ -14,6 +21,7 @@ export function enqueue(item) {
   const q = getQueue();
   q.push({ ...item, id: crypto.randomUUID(), queuedAt: Date.now(), retries: 0 });
   saveQueue(q);
+  requestBackgroundSync();
 }
 
 export function dequeue(id) {

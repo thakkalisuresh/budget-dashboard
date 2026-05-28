@@ -1,6 +1,10 @@
 import React from 'react';
 import { Plus, Trash2, ChevronDown } from 'lucide-react';
 
+function abbreviateMonth(name) {
+  return name.replace(/^([A-Za-z]{3})[a-z]+(\s)/, '$1$2');
+}
+
 export function MonthPickerBar({ selectedSheetId, setSelectedSheetId, monthsLoading, months, selectedMonth, onNewMonth, onDeleteMonth }) {
   return (
     <div className="flex flex-wrap items-center gap-2.5">
@@ -14,7 +18,7 @@ export function MonthPickerBar({ selectedSheetId, setSelectedSheetId, monthsLoad
         >
           {monthsLoading && <option>Loading…</option>}
           {months.map(m => (
-            <option key={m.sheetId} value={m.sheetId}>{m.name}</option>
+            <option key={m.sheetId} value={m.sheetId}>{abbreviateMonth(m.name)}</option>
           ))}
         </select>
         <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />

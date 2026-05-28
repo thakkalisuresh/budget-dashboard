@@ -31,7 +31,7 @@ export function IconPickerModal({ categoryName, currentIcon, onPick, onClose }) 
               onChange={e => setSearch(e.target.value)}
               placeholder="Search  (e.g. food, car, home…)"
               autoFocus
-              className="w-full bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-2xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 placeholder:text-slate-300 dark:placeholder:text-slate-500"
+              className="w-full bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-2xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/60 focus:border-indigo-400 placeholder:text-slate-300 dark:placeholder:text-slate-500"
             />
           </div>
 

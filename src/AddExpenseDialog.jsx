@@ -31,6 +31,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
   const [isNonMonthly, setIsNonMonthly] = useState(false);
   const [isRecurring, setIsRecurring]   = useState(false);
   const [saving, setSaving]             = useState(false);
+  const submittingRef = useRef(false);
   const [error, setError]               = useState('');
   const [dupWarning, setDupWarning]     = useState(false);
   const [queued, setQueued]             = useState(false);
@@ -163,20 +164,23 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setError('');
     setDupWarning(false);
-    if (!category)      { setError('Please select a category.');                    return; }
-    if (!vendor.trim()) { setError('Please enter a vendor name.');                  return; }
+    if (!category)      { setError('Please select a category.');                    submittingRef.current = false; return; }
+    if (!vendor.trim()) { setError('Please enter a vendor name.');                  submittingRef.current = false; return; }
     const amt = parseFloat(amount);
-    if (!amt || amt <= 0) { setError('Please enter a valid amount greater than 0.'); return; }
+    if (!amt || amt <= 0) { setError('Please enter a valid amount greater than 0.'); submittingRef.current = false; return; }
 
     // Duplicate check
     setSaving(true);
     const isDuplicate = await checkExistingExpense(category, vendor.trim(), amt, accessToken, sheetId);
     setSaving(false);
-    if (isDuplicate) { setDupWarning(true); return; }
+    if (isDuplicate) { setDupWarning(true); submittingRef.current = false; return; }
 
     await doSave();
+    submittingRef.current = false;
   };
 
   return (

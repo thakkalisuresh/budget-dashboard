@@ -170,7 +170,7 @@ async function registerBiometric() {
 }
 
 /** Prompt biometric verification — returns true on success */
-async function verifyBiometric() {
+export async function verifyBiometric() {
   try {
     const storedId = localStorage.getItem(BIOMETRIC_KEY);
     if (!storedId) return false;

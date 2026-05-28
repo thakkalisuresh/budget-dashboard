@@ -550,12 +550,12 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
               <div className="px-6 py-4 space-y-3">
                 <textarea rows={3} placeholder="Add a note…" value={noteDraft.note}
                   onChange={e => setNoteDraft(d => ({ ...d, note: e.target.value }))}
-                  className="w-full bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-2xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/30 resize-none placeholder:text-slate-400" />
+                  className="w-full bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-2xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/60 resize-none placeholder:text-slate-400" />
                 <div className="flex gap-2">
                   <input type="text" placeholder="Add tag (Enter)"
                     value={noteTagInput} onChange={e => setNoteTagInput(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addNoteTag(); } }}
-                    className="flex-1 bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-2xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500/30 placeholder:text-slate-400" />
+                    className="flex-1 bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-2xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500/60 placeholder:text-slate-400" />
                   <button onClick={addNoteTag} className="px-3 py-2 bg-indigo-600 text-white text-xs font-bold rounded-2xl hover:bg-indigo-700 transition-colors">Add</button>
                 </div>
                 {noteDraft.tags.length > 0 && (

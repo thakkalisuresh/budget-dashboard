@@ -25,11 +25,11 @@ export function StatCard({
   if (hero) {
     return (
       <div
-        className="animate-enter bg-white dark:bg-slate-900 rounded-[1.25rem] border border-slate-100 dark:border-slate-800 p-8 sm:p-10"
+        className="animate-enter py-6 px-2"
         style={{ '--enter-delay': `${enterDelay}ms` }}
       >
-        <div className="flex items-center justify-between mb-6">
-          <p className="text-xs font-semibold text-slate-400 tracking-wide">{title}</p>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-xs font-semibold text-slate-400 tracking-widest uppercase">{title}</p>
           {onEdit && (
             <button
               onClick={onEdit}
@@ -41,12 +41,15 @@ export function StatCard({
           )}
         </div>
 
-        <p className={`text-5xl sm:text-6xl font-black tabular-nums leading-none tracking-tight ${numColor}`}>
+        <p
+          className={`font-extrabold tabular-nums leading-none tracking-tight ${numColor}`}
+          style={{ fontSize: 'clamp(2.5rem, 5vw, 3.5rem)' }}
+        >
           <FormattedValue value={value} currencySymbol={currencySymbol} />
         </p>
 
         {subtext && (
-          <div className="mt-5">
+          <div className="mt-4">
             <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
               isNeg
                 ? 'bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400'
@@ -70,7 +73,7 @@ export function StatCard({
         {subtext && <p className="text-[11px] text-slate-400 mt-0.5">{subtext}</p>}
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
-        <p className={`text-lg font-black tabular-nums ${numColor}`}>
+        <p className={`text-lg font-extrabold tabular-nums ${numColor}`}>
           <FormattedValue value={value} currencySymbol={currencySymbol} />
         </p>
         {onEdit && (

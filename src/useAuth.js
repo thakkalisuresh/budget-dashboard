@@ -3,7 +3,7 @@ import { clearQueue } from './offlineQueue.js';
 import { clearDriveTokenCache } from './driveAuth.js';
 import {
   derivePinKey, aesEncrypt, aesDecrypt, ensureEncSalt,
-  PIN_HASH_KEY, BIOMETRIC_KEY,
+  PIN_HASH_KEY, BIOMETRIC_KEY, verifyBiometric,
 } from './PinLock.jsx';
 
 const STORAGE_KEY    = 'budget_auth';
@@ -76,12 +76,19 @@ export function useAuth() {
   const [user, setUser]         = useState(() => {
     const stored = loadStored();
     if (stored) return stored;
-    if (!navigator.onLine) return loadOfflineCache();
     return null;
   });
   const [denied, setDenied]     = useState(false);
   const [loadingAuth, setLoading] = useState(false);
   const [sessionExpired, setSessionExpired] = useState(false);
+
+  // Biometric offline unlock — set when there's a cached profile + registered
+  // biometric but no active session (e.g. PWA reopened after tab close).
+  const [pendingOfflineUnlock, setPendingOfflineUnlock] = useState(() => {
+    if (loadStored()) return false;
+    if (!loadOfflineCache()) return false;
+    return !!localStorage.getItem(BIOMETRIC_KEY);
+  });
 
   // ── Localhost dev bypass ──────────────────────────────────────────────────
   // When VITE_DEV_ACCESS_TOKEN is set in .env, skip the OAuth popup entirely
@@ -303,14 +310,37 @@ export function useAuth() {
     }
   };
 
-  // Auto-clear expired sessions — but try silent refresh first (SEC-14)
+  // Biometric unlock — prompts Face ID / fingerprint, then loads offline cache
+  const unlockOffline = async () => {
+    const ok = await verifyBiometric();
+    if (!ok) return false;
+    const cached = loadOfflineCache();
+    if (!cached) return false;
+    setPendingOfflineUnlock(false);
+    setUser(cached);
+    if (navigator.onLine) attemptSilentRefresh();
+    return true;
+  };
+
+  const cancelOfflineUnlock = () => setPendingOfflineUnlock(false);
+
+  // Upgrade offline session to full session when internet returns
   useEffect(() => {
-    if (!user?.expiresAt) return;
+    if (!user?.isOfflineSession) return;
+    const upgrade = () => attemptSilentRefresh();
+    window.addEventListener('online', upgrade);
+    return () => window.removeEventListener('online', upgrade);
+  }, [user?.isOfflineSession]);
+
+  // Auto-clear expired sessions — but try silent refresh first (SEC-14)
+  // Skip for offline sessions: no token to refresh, expiry is stale
+  useEffect(() => {
+    if (!user?.expiresAt || user.isOfflineSession) return;
     const ms = user.expiresAt - Date.now();
     if (ms <= 0) { attemptSilentRefresh(); return; }
     const t = setTimeout(signOut, ms);
     return () => clearTimeout(t);
-  }, [user?.expiresAt]);
+  }, [user?.expiresAt, user?.isOfflineSession]);
 
   // Shared silent-refresh logic — used both by the scheduled pre-expiry
   // refresh and by the post-sleep catch-up path (SEC-14).
@@ -337,18 +367,20 @@ export function useAuth() {
 
   // Silent token refresh — fires 5 min before expiry, or immediately if
   // the window has already passed (e.g. laptop resumed from sleep).
+  // Skip for offline sessions: handled by the online event upgrade effect.
   useEffect(() => {
-    if (!user?.expiresAt) return;
+    if (!user?.expiresAt || user.isOfflineSession) return;
     const refreshIn = user.expiresAt - Date.now() - 5 * 60 * 1000;
     if (refreshIn <= 0) { attemptSilentRefresh(); return; }
 
     const t = setTimeout(attemptSilentRefresh, refreshIn);
     return () => clearTimeout(t);
-  }, [user?.expiresAt]);
+  }, [user?.expiresAt, user?.isOfflineSession]);
 
   return {
     user, denied, loadingAuth, onGoogleSuccess, onGoogleError, signOut,
     sessionExpired, setSessionExpired,
     lockToken, unlockToken, setupEncryption,
+    pendingOfflineUnlock, unlockOffline, cancelOfflineUnlock,
   };
 }

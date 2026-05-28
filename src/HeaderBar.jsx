@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, AlertCircle, Sun, Moon, Bell, ChevronDown, Settings as SettingsIcon, LogOut } from 'lucide-react';
-import { MessagesPanel } from './MessagesPanel.jsx';
+import { RefreshCw, AlertCircle, Sun, Moon, ChevronDown, Settings as SettingsIcon, LogOut } from 'lucide-react';
+import { ThemePicker } from './ThemePicker.jsx';
 
 function RelativeTime({ date }) {
   const [label, setLabel] = useState('');
@@ -57,7 +57,7 @@ export function HeaderBar({
         )}
         {lastUpdated && !error && (
           <div className="flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0" />
+            <span className="relative w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0 animate-sonar text-emerald-400" />
             <span className="text-xs text-slate-400">
               Live · <RelativeTime date={lastUpdated} />
             </span>
@@ -74,48 +74,17 @@ export function HeaderBar({
 
       {/* Controls — right */}
       <div className="flex items-center gap-2">
+        {/* Theme color picker */}
+        <ThemePicker />
+
         {/* Theme toggle */}
         <button
           onClick={() => setIsDark(d => !d)}
-          className="p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 shadow-sm transition-colors duration-[150ms] active:scale-95"
+          aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          className="p-3 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 shadow-sm transition-colors duration-[150ms]"
         >
           {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
         </button>
-
-        {/* Messages */}
-        <div className="relative">
-          <button
-            onClick={() => { setShowMessages(v => !v); if (showMessages) markAllRead(); }}
-            className="relative p-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 shadow-sm transition-colors duration-[150ms] active:scale-95"
-            title="Messages"
-          >
-            <Bell className="w-4 h-4" />
-            {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[16px] h-[16px] rounded-full bg-rose-500 text-white text-[9px] font-black flex items-center justify-center px-1">
-                {unreadCount > 9 ? '9+' : unreadCount}
-              </span>
-            )}
-          </button>
-          {showMessages && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => { setShowMessages(false); markAllRead(); }} />
-              <div className="hidden sm:block absolute right-0 top-full mt-2 w-96 z-50">
-                <MessagesPanel
-                  messages={messages} unreadCount={unreadCount}
-                  onMarkAllRead={markAllRead} onDismiss={dismissMessage}
-                  onClearAll={clearMessages} onClose={() => { setShowMessages(false); markAllRead(); }}
-                />
-              </div>
-              <div className="sm:hidden fixed bottom-0 left-0 right-0 z-50">
-                <MessagesPanel
-                  messages={messages} unreadCount={unreadCount}
-                  onMarkAllRead={markAllRead} onDismiss={dismissMessage}
-                  onClearAll={clearMessages} onClose={() => { setShowMessages(false); markAllRead(); }}
-                />
-              </div>
-            </>
-          )}
-        </div>
 
         {/* User menu */}
         <div className="relative" ref={userMenuRef}>
@@ -133,7 +102,7 @@ export function HeaderBar({
           </button>
 
           {showUserMenu && (
-            <div className="absolute right-0 top-full mt-2 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl overflow-hidden z-30 animate-enter">
+            <div className="absolute right-0 top-full mt-2 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl overflow-hidden z-30 animate-dropdown">
               <button
                 onClick={() => { setShowUserMenu(false); setShowSettings(true); }}
                 className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors duration-[150ms]"

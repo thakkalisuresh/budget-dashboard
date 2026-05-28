@@ -1,19 +1,20 @@
 import React, { useState, useMemo, useEffect, useRef, lazy, Suspense } from 'react';
 import { useSheetData } from './useSheetData.js';
 import { use503020 } from './use503020.js';
-import { hasDetail } from './fetchDetail.js';
-import { fetchDetailRows, updateCategoryBudget, writeSalary } from './sheetsApi.js';
 import { getCurrencySymbol } from './currency.js';
 import { useAuth } from './useAuth.js';
 import { useOfflineSync } from './useOfflineSync.js';
+import { getQueue } from './offlineQueue.js';
 import { useDragSort } from './useDragSort.js';
-import { useMonths } from './useMonths.js';
 import { useSettings, DEFAULT_CATEGORY_ORDER } from './useSettings.js';
+import { useMonthSelection } from './useMonthSelection.js';
+import { useBudgetSummary } from './useBudgetSummary.js';
+import { useDashboardHandlers } from './useDashboardHandlers.js';
 import { useMessages } from './useMessages.js';
 import { usePush } from './usePush.js';
 import { DEFAULT_ICONS } from './categoryIcons.js';
 import { usePinLock, PinLockScreen } from './PinLock.jsx';
-import { LoginScreen } from './LoginScreen.jsx';
+import { LoginScreen, OfflineUnlockScreen } from './LoginScreen.jsx';
 import { BudgetRules } from './BudgetRules.jsx';
 import { useTheme } from './useTheme.js';
 import { useNonMonthlyExpenses } from './useNonMonthlyExpenses.js';
@@ -37,6 +38,7 @@ const RenameCategoryDialog = lazy(() => import('./RenameCategoryDialog.jsx').the
 import { StatCard } from './StatCard.jsx';
 import { IconPickerModal } from './IconPickerModal.jsx';
 import { CategoryActionSheet } from './CategoryActionSheet.jsx';
+import { EyeOff, WifiOff, CalendarX } from 'lucide-react';
 import { SpeedDial } from './SpeedDial.jsx';
 import { OnboardingWizard } from './OnboardingWizard.jsx';
 import { ExpenseTable } from './ExpenseTable.jsx';
@@ -49,7 +51,12 @@ import { HeaderBar } from './HeaderBar.jsx';
 
 function App() {
   const auth = useAuth();
-  const { user, denied, loadingAuth, onGoogleSuccess, onGoogleError } = auth;
+  const { user, denied, loadingAuth, onGoogleSuccess, onGoogleError,
+          pendingOfflineUnlock, unlockOffline, cancelOfflineUnlock } = auth;
+
+  if (pendingOfflineUnlock) {
+    return <OfflineUnlockScreen onUnlock={unlockOffline} onSignInInstead={cancelOfflineUnlock} />;
+  }
 
   if (!user) {
     return <LoginScreen onSuccess={onGoogleSuccess} onError={onGoogleError} loading={loadingAuth} denied={denied} />;
@@ -77,40 +84,14 @@ function Dashboard({ auth }) {
     if (pinLock.locked) lockToken();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pinLock.locked]);
-  const { months, loading: monthsLoading, createMonth, deleteMonth, shareAllMonths } = useMonths(user.accessToken, user.allowedEmails);
-  const [showNewMonth, setShowNewMonth] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState(null); // month to delete
-  const [deleteInput, setDeleteInput] = useState('');
-
-  // Default to the last month in the list (most recent), fallback to env var
-  const defaultSheetId = import.meta.env.VITE_SHEET_ID;
-  const [selectedSheetId, setSelectedSheetId] = useState(defaultSheetId);
-
-  // Compute current month label from system clock
-  const currentMonthLabel = useMemo(() => {
-    const now = new Date();
-    return `${now.toLocaleString('en-US', { month: 'long' })} ${now.getFullYear()}`;
-  }, []);
-
-  // When months load, auto-select the current month/year, fallback to most recent
-  useEffect(() => {
-    if (months.length === 0) return;
-    const match = months.find(m => m.name.toLowerCase() === currentMonthLabel.toLowerCase());
-    setSelectedSheetId(match ? match.sheetId : months[months.length - 1].sheetId);
-  }, [months, currentMonthLabel]);
-
-  const selectedMonth = months.find(m => m.sheetId === selectedSheetId);
-
-  // True when the selected month is in the past (reconciliation is only for ended months)
-  const isMonthEnded = useMemo(() => {
-    if (!selectedMonth) return false;
-    const monthStart = new Date(`${selectedMonth.name} 1`);
-    const now = new Date();
-    return monthStart < new Date(now.getFullYear(), now.getMonth(), 1);
-  }, [selectedMonth]);
-
-  const currentMonthMissing = !monthsLoading && months.length > 0 &&
-    !months.some(m => m.name.toLowerCase() === currentMonthLabel.toLowerCase());
+  const {
+    months, monthsLoading, createMonth, deleteMonth, shareAllMonths,
+    selectedSheetId, setSelectedSheetId,
+    selectedMonth, currentMonthLabel, isMonthEnded, currentMonthMissing,
+    showNewMonth, setShowNewMonth,
+    deleteConfirm, setDeleteConfirm,
+    deleteInput, setDeleteInput,
+  } = useMonthSelection(user.accessToken, user.allowedEmails);
 
   const { data: liveData, loading, error, lastUpdated, refresh } = useSheetData(selectedSheetId, user.accessToken);
   const { data: rulesData, loading: rulesLoading } = use503020(selectedSheetId, user.accessToken);
@@ -120,17 +101,12 @@ function Dashboard({ auth }) {
   const [newItem, setNewItem] = useState({ name: '', amount: '', remaining: '' });
   const [activeTab, setActiveTab] = useState('budget'); // 'budget' | 'history' | 'ledger'
   const scanTriggerRef = useRef(null);
-  const [detail, setDetail] = useState(null);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddCategory, setShowAddCategory] = useState(false);
   const [renamingCategory, setRenamingCategory] = useState(null);
   const [deletingCategory, setDeletingCategory] = useState(null);
   const [categoryActionFor, setCategoryActionFor] = useState(null); // mobile ⋯ action sheet
-  const [editingBudgetId, setEditingBudgetId] = useState(null);
-  const [budgetDraft, setBudgetDraft] = useState('');
-  const [editingSalary, setEditingSalary] = useState(false);
-  const [iconPickerFor, setIconPickerFor] = useState(null);
   const [showUserMenu, setShowUserMenu]     = useState(false);
   const [refreshKey, setRefreshKey]             = useState(0);
   const [showReconcile, setShowReconcile]       = useState(false);
@@ -171,25 +147,6 @@ function Dashboard({ auth }) {
   }), []);
   useGlobalShortcuts(settings.keyboardShortcuts, shortcutActions);
 
-  // Global Escape key — extracted to useEscapeDismiss hook
-  useEscapeDismiss([
-    { active: fabOpen,                dismiss: () => setFabOpen(false) },
-    { active: chatOpen,               dismiss: () => setChatOpen(false) },
-    { active: iconPickerFor,          dismiss: () => setIconPickerFor(null) },
-    { active: categoryActionFor,      dismiss: () => setCategoryActionFor(null) },
-    { active: deletingCategory,       dismiss: () => setDeletingCategory(null) },
-    { active: renamingCategory,       dismiss: () => setRenamingCategory(null) },
-    { active: editingSalary,          dismiss: () => setEditingSalary(false) },
-    { active: editingBudgetId !== null, dismiss: () => setEditingBudgetId(null) },
-    { active: showAddCategory,        dismiss: () => setShowAddCategory(false) },
-    { active: showAddDialog,          dismiss: () => setShowAddDialog(false) },
-    { active: deleteConfirm,          dismiss: () => setDeleteConfirm(null) },
-    { active: showNewMonth,           dismiss: () => setShowNewMonth(false) },
-    { active: detail,                 dismiss: () => setDetail(null) },
-    { active: showSettings,           dismiss: () => setShowSettings(false) },
-    { active: showUserMenu,           dismiss: () => setShowUserMenu(false) },
-  ]);
-
   useEffect(() => {
     if (liveData) setData(liveData);
   }, [liveData]);
@@ -201,16 +158,6 @@ function Dashboard({ auth }) {
     const newIndex = Math.max(...data.map(d => d.index_)) + 1;
     setData(prev => [...prev, { index_: newIndex, row: rowValues }]);
   };
-
-  const findRowByLabel = (label, colIndex = 0) => data.find(d => d.row[colIndex] === label);
-
-  const salaryReceived = parseFloat(findRowByLabel('Salary Received', 5)?.row[6]) || 0;
-  const nonRecurringRow = data.find(d => typeof d.row[8] === 'string' && d.row[8].includes('Balance without random'));
-  const nonRecurringRemaining = parseFloat(nonRecurringRow?.row[9]) || 0;
-  const potentialDiffRow = findRowByLabel('Difference between budgeted and actual spent', 8);
-  const potentialDifference = parseFloat(potentialDiffRow?.row[9]) || 0;
-  const notesRow = findRowByLabel('Left from Salary for the Month', 5);
-
 
   const expenses = useMemo(() => {
     const order = settings.categoryOrder || DEFAULT_CATEGORY_ORDER;
@@ -230,19 +177,57 @@ function Dashboard({ auth }) {
 
   const { tableDragOver, tableDragging, handleTableDragStart, handleTableDragOver, handleTableDrop, handleTableDragEnd, handleGripTouchStart } = useDragSort({ expenses, settings, updateSettings, isDark });
 
-  const totalActual = expenses.reduce((s, d) => s + d.actual, 0);
-  const totalBudget = expenses.reduce((s, d) => s + d.budget, 0);
-  const overallRemaining = totalBudget - totalActual;
-
   // ── Non-monthly expenses (sheet-backed) — extracted to useNonMonthlyExpenses hook
   const { nonMonthlyItems, refreshNonMonthly } = useNonMonthlyExpenses(selectedSheetId, user.accessToken);
 
-  const nonMonthlyTotal = nonMonthlyItems.reduce((s, r) => s + r.amount, 0);
-  // "What would the balance be if we hadn't made these one-off purchases?"
-  const balanceWithoutNonMonthly = overallRemaining + nonMonthlyTotal;
+  const {
+    salaryReceived, nonRecurringRemaining, potentialDifference,
+    totalActual, totalBudget, overallRemaining,
+    nonMonthlyTotal, balanceWithoutNonMonthly,
+  } = useBudgetSummary(data, expenses, nonMonthlyItems);
 
   // ── Online / Offline ──────────────────────────────────────────────────────────
-  const { isOnline } = useOfflineSync({ user, selectedSheetId, refresh, setSessionExpired });
+  const { isOnline, syncedCount, clearSyncedCount } = useOfflineSync({ user, selectedSheetId, refresh, setSessionExpired });
+
+  useEffect(() => {
+    if (!syncedCount) return;
+    const t = setTimeout(clearSyncedCount, 4000);
+    return () => clearTimeout(t);
+  }, [syncedCount]);
+
+  const {
+    detail, setDetail,
+    editingBudgetId, setEditingBudgetId, budgetDraft, setBudgetDraft,
+    editingSalary, setEditingSalary,
+    iconPickerFor, setIconPickerFor,
+    handleExpenseClick, handleDetailRefresh,
+    handleSaveBudget, handleSaveSalary, handleSetIcon,
+  } = useDashboardHandlers({
+    accessToken: user.accessToken,
+    sheetId: selectedSheetId,
+    monthName: selectedMonth?.name,
+    refresh,
+    updateSettings,
+  });
+
+  // Global Escape key — moved here so all referenced state is declared above
+  useEscapeDismiss([
+    { active: fabOpen,                dismiss: () => setFabOpen(false) },
+    { active: chatOpen,               dismiss: () => setChatOpen(false) },
+    { active: iconPickerFor,          dismiss: () => setIconPickerFor(null) },
+    { active: categoryActionFor,      dismiss: () => setCategoryActionFor(null) },
+    { active: deletingCategory,       dismiss: () => setDeletingCategory(null) },
+    { active: renamingCategory,       dismiss: () => setRenamingCategory(null) },
+    { active: editingSalary,          dismiss: () => setEditingSalary(false) },
+    { active: editingBudgetId !== null, dismiss: () => setEditingBudgetId(null) },
+    { active: showAddCategory,        dismiss: () => setShowAddCategory(false) },
+    { active: showAddDialog,          dismiss: () => setShowAddDialog(false) },
+    { active: deleteConfirm,          dismiss: () => setDeleteConfirm(null) },
+    { active: showNewMonth,           dismiss: () => setShowNewMonth(false) },
+    { active: detail,                 dismiss: () => setDetail(null) },
+    { active: showSettings,           dismiss: () => setShowSettings(false) },
+    { active: showUserMenu,           dismiss: () => setShowUserMenu(false) },
+  ]);
 
   // ── Messages ──────────────────────────────────────────────────────────────────
   const { messages, unreadCount, markAllRead, dismissMessage, clearAll: clearMessages } =
@@ -282,63 +267,6 @@ function Dashboard({ auth }) {
     setIsAdding(false);
   };
 
-  const handleExpenseClick = async (name) => {
-    if (!hasDetail(name)) return;
-    setDetail({ expense: name, rows: null, loading: true });
-    try {
-      const rows = await fetchDetailRows(name, user.accessToken, selectedSheetId, selectedMonth?.name);
-      setDetail({ expense: name, rows, loading: false });
-    } catch {
-      setDetail({ expense: name, rows: [], loading: false });
-    }
-  };
-
-  const handleDetailRefresh = async () => {
-    if (!detail) return;
-    try {
-      const rows = await fetchDetailRows(detail.expense, user.accessToken, selectedSheetId, selectedMonth?.name);
-      setDetail(d => ({ ...d, rows, loading: false }));
-      refresh();
-    } catch {
-      // keep existing rows on failure
-    }
-  };
-
-  const handleSaveBudget = async (item) => {
-    const newBudget = parseFloat(budgetDraft);
-    if (isNaN(newBudget) || newBudget < 0) { setEditingBudgetId(null); return; }
-    try {
-      await updateCategoryBudget(selectedSheetId, user.accessToken, {
-        rowNum: item.index_ + 1,
-        budget: newBudget,
-        categoryName: item.name,
-      });
-      refresh();
-    } catch (e) {
-      alert(`Failed to update budget: ${e.message}`);
-    } finally {
-      setEditingBudgetId(null);
-    }
-  };
-
-  const handleSaveSalary = async (newSalary) => {
-    try {
-      await writeSalary(selectedSheetId, newSalary, user.accessToken);
-      refresh();
-    } catch (e) {
-      alert(`Failed to update salary: ${e.message}`);
-    } finally {
-      setEditingSalary(false);
-    }
-  };
-
-  const handleSetIcon = (categoryName, emoji) => {
-    updateSettings(prev => ({
-      ...prev,
-      categoryIcons: { ...(prev.categoryIcons || {}), [categoryName]: emoji },
-    }));
-    setIconPickerFor(null);
-  };
 
   // Sorted by actual desc — shared order for donut + legend so colours always match
 
@@ -354,12 +282,12 @@ function Dashboard({ auth }) {
         paddingRight: 'calc(env(safe-area-inset-right) + 1rem)',
       }}
     >
-      <div className="max-w-7xl mx-auto space-y-8 pb-12">
+      <div className="max-w-7xl mx-auto space-y-6 pb-12">
 
         {/* Read-only banner */}
         {isReadOnly && (
           <div className="flex items-center gap-3 px-4 py-3 bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-700/40 rounded-2xl text-sm font-bold text-violet-800 dark:text-violet-300">
-            <span className="text-base">👁</span>
+            <EyeOff className="w-4 h-4 flex-shrink-0" />
             View-only mode — you can browse but not make changes
           </div>
         )}
@@ -367,8 +295,20 @@ function Dashboard({ auth }) {
         {/* Offline banner */}
         {!isOnline && (
           <div className="flex items-center gap-3 px-4 py-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded-2xl text-sm font-bold text-amber-800 dark:text-amber-300">
-            <span className="text-base">📶</span>
-            You're offline — changes will sync when reconnected
+            <WifiOff className="w-4 h-4 flex-shrink-0" />
+            {getQueue().length > 0
+              ? `You're offline — ${getQueue().length} expense${getQueue().length === 1 ? '' : 's'} pending sync`
+              : "You're offline — changes will sync when reconnected"}
+          </div>
+        )}
+
+        {/* Sync confirmation toast */}
+        {syncedCount > 0 && (
+          <div className="flex items-center gap-3 px-4 py-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700/40 rounded-2xl text-sm font-bold text-emerald-800 dark:text-emerald-300">
+            <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+            {syncedCount} expense{syncedCount === 1 ? '' : 's'} synced
           </div>
         )}
 
@@ -385,10 +325,15 @@ function Dashboard({ auth }) {
           </div>
         )}
 
+        {/* Screen-reader live region for data updates */}
+        <div aria-live="polite" aria-atomic="true" className="sr-only">
+          {lastUpdated && selectedMonth?.name ? `${selectedMonth.name} data loaded` : ''}
+        </div>
+
         {/* Page title */}
         <div className="text-center">
           <h1 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
-            Budget Dashboard
+            {user.name ? `${user.name.split(' ')[0]}'s Budget` : 'My Budget'}
           </h1>
           {selectedMonth?.name && (
             <p className="text-sm sm:text-base font-semibold text-slate-400 dark:text-slate-500 mt-1 tracking-wide">
@@ -409,21 +354,36 @@ function Dashboard({ auth }) {
         />
 
         {/* Tab switcher */}
-        <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl w-fit border border-slate-200 dark:border-slate-700">
-          {[['budget', 'Dashboard'], ['ledger', 'Ledger'], ['history', 'History']].map(([tab, label]) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-5 py-2 rounded-xl text-sm font-black transition-all ${
-                activeTab === tab
-                  ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        {(() => {
+          const TABS = [['budget', 'Dashboard'], ['ledger', 'Ledger'], ['history', 'History']];
+          const tabIdx = TABS.findIndex(([t]) => t === activeTab);
+          return (
+            <div role="tablist" className="relative flex p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl w-fit border border-slate-200 dark:border-slate-700">
+              {/* Sliding indicator */}
+              <div
+                aria-hidden="true"
+                className="absolute top-1 bottom-1 left-1 rounded-xl bg-white dark:bg-slate-700 shadow-sm pointer-events-none"
+                style={{
+                  width: 'calc((100% - 8px) / 3)',
+                  transform: `translateX(calc(${tabIdx} * 100%))`,
+                  transition: `transform 150ms var(--ease-out)`,
+                }}
+              />
+              {TABS.map(([tab, label]) => (
+                <button
+                  key={tab}
+                  role="tab"
+                  aria-selected={activeTab === tab}
+                  onClick={() => setActiveTab(tab)}
+                  className="relative flex-1 px-5 py-2 rounded-xl text-sm font-black transition-colors duration-150 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                  style={activeTab === tab ? { color: 'var(--color-accent)' } : undefined}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          );
+        })()}
 
         {/* Missing current month banner */}
         {currentMonthMissing && (
@@ -521,7 +481,7 @@ function Dashboard({ auth }) {
 
         {/* Stat Cards — keyed on selectedSheetId so entering month triggers re-animation */}
         {activeTab === 'budget' && settings.visibility.statCards !== false && (!loading || lastUpdated) && (
-          <div key={`stats-${selectedSheetId}`} className="space-y-4">
+          <div key={`stats-${selectedSheetId}`} className="space-y-4 animate-crossfade-in">
             <StatCard
               hero
               title="Remaining Income"
@@ -564,10 +524,10 @@ function Dashboard({ auth }) {
 
         {/* Main 2-column grid — keyed so month switch re-animates content */}
         {activeTab === 'budget' && (!loading || lastUpdated) && (
-          <div key={`grid-${selectedSheetId}`} className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+          <div key={`grid-${selectedSheetId}`} className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start mt-4 animate-crossfade-in">
 
             {/* Left column */}
-            <div className="lg:col-span-2 space-y-8">
+            <div className="lg:col-span-2 space-y-4">
 
               {/* Expense table */}
               <ExpenseTable
