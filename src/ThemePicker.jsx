@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Palette } from 'lucide-react';
 
 const HUE_KEY = 'budget_theme_hue';
@@ -7,6 +7,11 @@ export function ThemePicker() {
   const [hue, setHue] = useState(() =>
     parseInt(localStorage.getItem(HUE_KEY) ?? '30', 10)
   );
+
+  useEffect(() => {
+    document.documentElement.style.setProperty('--primary-hue', String(hue));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleChange = (e) => {
     const h = parseInt(e.target.value, 10);
