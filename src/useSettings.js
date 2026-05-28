@@ -122,7 +122,7 @@ export async function loadUserSettings(userId, accessToken) {
     await ensureSettingsSheet(accessToken);
     const rows = await fetchRows(accessToken);
     const row = rows.find(r => r[0] === userId);
-    if (!row || !row[1]) return { ...DEFAULT_SETTINGS, visibility: { ...DEFAULT_SETTINGS.visibility } };
+    if (!row || !row[1]) return { ...DEFAULT_SETTINGS, hasSeenOnboarding: localStorage.getItem('budget_onboarding_done') === 'true', visibility: { ...DEFAULT_SETTINGS.visibility } };
     const parsed = JSON.parse(row[1]);
     const merged = {
       ...DEFAULT_SETTINGS,
@@ -140,7 +140,7 @@ export async function loadUserSettings(userId, accessToken) {
       smartRules:              parsed.smartRules              || [],
       messages:                parsed.messages                || [],
       reconciledFingerprints:  parsed.reconciledFingerprints  || [],
-      hasSeenOnboarding:       parsed.hasSeenOnboarding       ?? false,
+      hasSeenOnboarding:       parsed.hasSeenOnboarding || localStorage.getItem('budget_onboarding_done') === 'true',
       keyboardShortcuts: (() => {
         const saved = parsed.keyboardShortcuts || {};
         // Migrate any ctrl+ defaults to alt+ if the user never customised them
@@ -189,6 +189,9 @@ export async function saveUserSettings(userId, settings, accessToken) {
         accessToken
       );
     }
+    if (settings.hasSeenOnboarding) {
+      try { localStorage.setItem('budget_onboarding_done', 'true'); } catch {}
+    }
   } catch (e) {
     console.error('saveUserSettings:', e);
   }
@@ -227,3 +230,4 @@ export function useSettings(userId, accessToken) {
 
   return { settings, loading, updateSettings };
 }
+
