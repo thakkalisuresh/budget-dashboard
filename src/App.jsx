@@ -450,6 +450,7 @@ function Dashboard({ auth }) {
               transactionNotes: { ...(prev.transactionNotes || {}), [key]: data },
             }))}
             refreshKey={refreshKey}
+            months={months}
           />
         )}
 

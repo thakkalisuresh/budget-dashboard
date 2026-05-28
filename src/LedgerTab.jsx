@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { RefreshCw, Inbox, SlidersHorizontal, ArrowUpDown, X, Download, Search, FileText, MessageSquare } from 'lucide-react';
 import { getAllCategoryNames, fetchDetailRows, fetchHistory, fuzzyNamesMatch, formatTxDate } from './sheetsApi.js';
+import { downloadBlob, downloadCSV, transactionsToJson } from './exportHelpers.js';
 
 const METHOD_LABELS = {
   'Receipt Scan': 'Scan',
@@ -33,19 +34,6 @@ function formatDate(iso) {
   } catch { return null; }
 }
 
-// ── CSV download utility ──────────────────────────────────────────────────────
-function downloadCSV(filename, headers, rows) {
-  const escape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const csv = [
-    headers.map(escape).join(','),
-    ...rows.map(r => r.map(escape).join(',')),
-  ].join('\n');
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }); // BOM for Excel
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href = url; a.download = filename; a.click();
-  URL.revokeObjectURL(url);
-}
 
 async function buildLedger(sheetId, accessToken, monthName = '') {
   const categories = getAllCategoryNames();
@@ -100,7 +88,7 @@ async function buildLedger(sheetId, accessToken, monthName = '') {
 const CACHE_MS = 2 * 60 * 1000; // 2 minutes
 export const ledgerCache = new Map(); // sheetId → { data, fetchedAt }
 
-export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthName = '', expenses = [], salaryReceived = 0, transactionNotes = {}, onUpdateNote, refreshKey = 0 }) {
+export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthName = '', expenses = [], salaryReceived = 0, transactionNotes = {}, onUpdateNote, refreshKey = 0, months = [] }) {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading]           = useState(true);
   const [refreshing, setRefreshing]     = useState(false);
@@ -109,6 +97,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [allMonthsProgress, setAllMonthsProgress] = useState(null); // { done, total } while fetching
   const [searchQuery, setSearchQuery]   = useState('');
 
   const [filterCategories, setFilterCategories] = useState([]);
@@ -173,7 +162,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
 
   const clearFilters = () => { setFilterCategories([]); setFilterMethods([]); setFilterUsers([]); };
 
-  // ── Export Option A — Transaction Ledger ─────────────────────────────────
+  // ── Export Option A — Transaction Ledger CSV ─────────────────────────────
   const exportLedger = () => {
     const headers = ['Vendor', 'Category', 'Amount', 'Method', 'User', 'Tx Date', 'Added At'];
     const rows    = displayed.map(t => [
@@ -185,7 +174,14 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
     setShowExportMenu(false);
   };
 
-  // ── Export Option B — Monthly Summary ───────────────────────────────────
+  // ── Export Option B — Transaction Ledger JSON ─────────────────────────────
+  const exportLedgerJson = () => {
+    const json = transactionsToJson(displayed);
+    downloadBlob(new Blob([json], { type: 'application/json' }), `ledger-${monthName || 'export'}.json`);
+    setShowExportMenu(false);
+  };
+
+  // ── Export Option C — Monthly Summary CSV ───────────────────────────────
   const exportSummary = () => {
     const totalActual  = expenses.reduce((s, e) => s + e.actual, 0);
     const totalBudget  = expenses.reduce((s, e) => s + e.budget, 0);
@@ -207,6 +203,34 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
     setShowExportMenu(false);
   };
 
+  // ── Export Option D — All Months ─────────────────────────────────────────
+  const exportAllMonths = async (format) => {
+    if (!months.length) return;
+    setShowExportMenu(false);
+    setAllMonthsProgress({ done: 0, total: months.length });
+    const all = [];
+    for (const m of months) {
+      try {
+        const txs = await buildLedger(m.sheetId, accessToken, m.name);
+        all.push(...txs.map(t => ({ ...t, month: m.name })));
+      } catch {}
+      setAllMonthsProgress(p => ({ ...p, done: p.done + 1 }));
+    }
+    setAllMonthsProgress(null);
+    if (format === 'json') {
+      const json = transactionsToJson(all);
+      downloadBlob(new Blob([json], { type: 'application/json' }), 'fundient-all-months.json');
+    } else {
+      const headers = ['Month', 'Vendor', 'Category', 'Amount', 'Method', 'User', 'Tx Date', 'Added At'];
+      const rows    = all.map(t => [
+        t.month, t.vendor, t.category, t.amount.toFixed(2),
+        t.method || '', t.user || '',
+        formatTxDate(t.txDate) || '', formatDate(t.date) || '',
+      ]);
+      downloadCSV('fundient-all-months.csv', headers, rows);
+    }
+  };
+
   return (
     <div className="space-y-4">
 
@@ -222,32 +246,73 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
           <div className="relative">
             <button
               onClick={() => { setShowExportMenu(v => !v); setShowSortMenu(false); setShowFilterMenu(false); }}
-              className="flex items-center gap-1.5 px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-bold hover:border-indigo-300 dark:hover:border-indigo-600 transition-colors shadow-sm"
+              disabled={!!allMonthsProgress}
+              className="flex items-center gap-1.5 px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-bold hover:border-indigo-300 dark:hover:border-indigo-600 transition-colors shadow-sm disabled:opacity-50"
             >
               <Download className="w-3.5 h-3.5" />
-              Export
+              {allMonthsProgress
+                ? `Fetching ${allMonthsProgress.done}/${allMonthsProgress.total}…`
+                : 'Export'}
             </button>
             {showExportMenu && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setShowExportMenu(false)} />
-                <div className="absolute right-0 top-full mt-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl overflow-hidden z-20 w-52">
+                <div className="absolute right-0 top-full mt-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl overflow-hidden z-20 w-56">
+
+                  {/* This month */}
+                  <div className="px-4 pt-3 pb-1">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">This month</p>
+                  </div>
                   <button onClick={exportLedger}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
-                    <FileText className="w-4 h-4 text-indigo-500" />
-                    <div>
-                      <p>Transaction Ledger</p>
-                      <p className="text-[10px] text-slate-400 font-medium mt-0.5">All transactions this month</p>
+                    className="w-full flex items-center justify-between px-4 py-2.5 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <FileText className="w-4 h-4 text-indigo-500" />
+                      <span>Transaction Ledger</span>
                     </div>
+                    <span className="text-[10px] text-slate-400 font-medium">CSV</span>
                   </button>
-                  <div className="h-px bg-slate-100 dark:bg-slate-700" />
+                  <button onClick={exportLedgerJson}
+                    className="w-full flex items-center justify-between px-4 py-2.5 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <FileText className="w-4 h-4 text-indigo-500" />
+                      <span>Transaction Ledger</span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 font-medium">JSON</span>
+                  </button>
                   <button onClick={exportSummary}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
-                    <FileText className="w-4 h-4 text-emerald-500" />
-                    <div>
-                      <p>Monthly Summary</p>
-                      <p className="text-[10px] text-slate-400 font-medium mt-0.5">Budget vs actual by category</p>
+                    className="w-full flex items-center justify-between px-4 py-2.5 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <FileText className="w-4 h-4 text-emerald-500" />
+                      <span>Monthly Summary</span>
                     </div>
+                    <span className="text-[10px] text-slate-400 font-medium">CSV</span>
                   </button>
+
+                  {/* All months */}
+                  {months.length > 1 && (
+                    <>
+                      <div className="h-px bg-slate-100 dark:bg-slate-700 mx-4 my-1" />
+                      <div className="px-4 pt-2 pb-1">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">All months</p>
+                      </div>
+                      <button onClick={() => exportAllMonths('csv')}
+                        className="w-full flex items-center justify-between px-4 py-2.5 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                        <div className="flex items-center gap-3">
+                          <FileText className="w-4 h-4 text-violet-500" />
+                          <span>Full Year</span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-medium">CSV</span>
+                      </button>
+                      <button onClick={() => exportAllMonths('json')}
+                        className="w-full flex items-center justify-between px-4 py-2.5 pb-3 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                        <div className="flex items-center gap-3">
+                          <FileText className="w-4 h-4 text-violet-500" />
+                          <span>Full Year</span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-medium">JSON</span>
+                      </button>
+                    </>
+                  )}
                 </div>
               </>
             )}
