@@ -98,6 +98,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [allMonthsProgress, setAllMonthsProgress] = useState(null); // { done, total } while fetching
+  const [pdfLoading, setPdfLoading]     = useState(false);
   const [searchQuery, setSearchQuery]   = useState('');
 
   const [filterCategories, setFilterCategories] = useState([]);
@@ -203,6 +204,39 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
     setShowExportMenu(false);
   };
 
+  // ── Export Option E — Monthly PDF Report ────────────────────────────────
+  const exportPdf = async () => {
+    setShowExportMenu(false);
+    setPdfLoading(true);
+    try {
+      const [{ pdf }, { ReportDocument }] = await Promise.all([
+        import('@react-pdf/renderer'),
+        import('./ReportDocument.jsx'),
+      ]);
+      const txForPdf = displayed.map(t => ({
+        date:     formatTxDate(t.txDate) || formatDate(t.date) || '',
+        vendor:   t.vendor,
+        category: t.category,
+        amount:   t.amount,
+      }));
+      const blob = await pdf(
+        <ReportDocument
+          monthName={monthName}
+          income={salaryReceived}
+          expenses={expenses}
+          transactions={txForPdf}
+          currencySymbol={currencySymbol}
+          generatedDate={new Date().toLocaleDateString()}
+        />
+      ).toBlob();
+      downloadBlob(blob, `fundient-${monthName || 'report'}.pdf`);
+    } catch (e) {
+      console.error('PDF export failed', e);
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
   // ── Export Option D — All Months ─────────────────────────────────────────
   const exportAllMonths = async (format) => {
     if (!months.length) return;
@@ -246,12 +280,14 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
           <div className="relative">
             <button
               onClick={() => { setShowExportMenu(v => !v); setShowSortMenu(false); setShowFilterMenu(false); }}
-              disabled={!!allMonthsProgress}
+              disabled={!!allMonthsProgress || pdfLoading}
               className="flex items-center gap-1.5 px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-bold hover:border-indigo-300 dark:hover:border-indigo-600 transition-colors shadow-sm disabled:opacity-50"
             >
               <Download className="w-3.5 h-3.5" />
               {allMonthsProgress
                 ? `Fetching ${allMonthsProgress.done}/${allMonthsProgress.total}…`
+                : pdfLoading
+                ? 'Building PDF…'
                 : 'Export'}
             </button>
             {showExportMenu && (
@@ -286,6 +322,14 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
                       <span>Monthly Summary</span>
                     </div>
                     <span className="text-[10px] text-slate-400 font-medium">CSV</span>
+                  </button>
+                  <button onClick={exportPdf}
+                    className="w-full flex items-center justify-between px-4 py-2.5 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <FileText className="w-4 h-4 text-rose-500" />
+                      <span>Monthly Report</span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 font-medium">PDF</span>
                   </button>
 
                   {/* All months */}

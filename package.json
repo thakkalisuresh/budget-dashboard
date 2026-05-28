@@ -14,6 +14,7 @@
   "dependencies": {
     "@netlify/blobs": "^10.7.8",
     "@react-oauth/google": "^0.13.5",
+    "@react-pdf/renderer": "^4.5.1",
     "d3": "^7.9.0",
     "d3-scale-chromatic": "^3.1.0",
     "d3-shape": "^3.2.0",
