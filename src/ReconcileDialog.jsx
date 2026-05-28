@@ -1,6 +1,9 @@
 import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { X, Upload, FileText, AlertCircle, CheckCircle2, ShieldCheck, ChevronDown, ChevronUp, RefreshCw, Check, SkipForward, HelpCircle } from 'lucide-react';
 import { parseStatementFile } from './csvParsers.js';
+import { parseQIF  } from './qifParser.js';
+import { parseOFX  } from './ofxParser.js';
+import { parseMT940 } from './mt940Parser.js';
 // PDF parsers are dynamically imported — only loaded when a PDF is actually dropped
 const getPdfParsers = () => Promise.all([
   import('./pdfParsers.js'),
@@ -489,25 +492,27 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
   const hasResults      = files.some(f => f.result && !f.result.error && !f.result.needsPassword);
 
   const parseSingleFile = useCallback(async (file, password) => {
-    const isPdf = file.name.toLowerCase().endsWith('.pdf');
+    const name = file.name.toLowerCase();
     let result;
 
-    if (isPdf) {
+    if (name.endsWith('.pdf')) {
       const [{ parsePdfStatement }, { parsePdfWithClaude }] = await getPdfParsers();
       const pdfResult = await parsePdfStatement(file, password);
-
-      // Password required — surface immediately, don't attempt Claude fallback
       if (pdfResult.needsPassword) return pdfResult;
-
       if (pdfResult.transactions.length > 0) {
         result = { ...pdfResult, via: 'pdfjs' };
       } else {
         result = await parsePdfWithClaude(file, pdfResult.lines || [], accessToken);
         if (!result.error) result.via = 'claude';
       }
+    } else if (name.endsWith('.qif')) {
+      result = parseQIF(await file.text(), file.name);
+    } else if (name.endsWith('.ofx') || name.endsWith('.qfx')) {
+      result = parseOFX(await file.text(), file.name);
+    } else if (name.endsWith('.mt940') || name.endsWith('.sta') || name.endsWith('.mta')) {
+      result = parseMT940(await file.text(), file.name);
     } else {
-      const text = await file.text();
-      result = parseStatementFile(text, file.name);
+      result = parseStatementFile(await file.text(), file.name);
     }
 
     return result;
@@ -539,9 +544,10 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
   const handleDrop = (e) => {
     e.preventDefault();
     setDragging(false);
+    const SUPPORTED_EXTS = ['.csv', '.pdf', '.qif', '.ofx', '.qfx', '.mt940', '.sta', '.mta'];
     const supported = Array.from(e.dataTransfer.files).filter(f =>
-      f.name.toLowerCase().endsWith('.csv') || f.type === 'text/csv' ||
-      f.name.toLowerCase().endsWith('.pdf') || f.type === 'application/pdf'
+      SUPPORTED_EXTS.some(ext => f.name.toLowerCase().endsWith(ext)) ||
+      f.type === 'text/csv' || f.type === 'application/pdf'
     );
     if (supported.length) processFiles(supported);
   };
@@ -907,7 +913,7 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
                       : 'border-slate-200 dark:border-slate-600 hover:border-indigo-300 dark:hover:border-indigo-600 hover:bg-slate-50 dark:hover:bg-slate-700/30'
                   }`}
                 >
-                  <input ref={fileInputRef} type="file" accept=".csv,text/csv,.pdf,application/pdf" multiple onChange={handleFileInput} className="sr-only" />
+                  <input ref={fileInputRef} type="file" accept=".csv,text/csv,.pdf,application/pdf,.qif,.ofx,.qfx,.mt940,.sta,.mta" multiple onChange={handleFileInput} className="sr-only" />
                   <Upload className={`w-8 h-8 mx-auto mb-3 transition-colors ${dragging ? 'text-indigo-500' : 'text-slate-300 dark:text-slate-600'}`} />
                   <p className="text-sm font-bold text-slate-600 dark:text-slate-300">
                     Drop CSV or PDF files here, or <span className="text-indigo-500">browse</span>
