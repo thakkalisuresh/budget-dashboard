@@ -13,6 +13,7 @@ const VISIBILITY_ITEMS = [
   { key: 'donutChart',     label: 'Spending Distribution', desc: 'Donut chart with category breakdown' },
   { key: 'barChart',       label: 'Actual vs Budget',      desc: 'Bar chart comparing spend to budget' },
   { key: 'insightCards',   label: 'Insight Cards',         desc: 'Balance without random & budget difference' },
+  { key: 'heatmap',        label: 'Spending Calendar',     desc: 'Daily spend intensity heatmap calendar' },
   { key: 'nonMonthlyTile', label: 'Non-Monthly Expenses',  desc: 'Random non-monthly expenses note' },
   { key: 'budgetRules',    label: '50/30/20 Rules',        desc: 'Budget rule breakdown section' },
 ];
