@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Plus, Zap, Sparkles, Loader2 } from 'lucide-react';
+import { X, Plus, Zap, Sparkles, MapPin, Loader2 } from 'lucide-react';
 import { CATEGORIES, fetchDetailRows, checkExistingExpense, markNonMonthly, todayIso } from './sheetsApi.js';
 import { addOrUpdateExpense } from './useExpense.js';
 import { applySmartRules } from './smartRules.js';
@@ -21,7 +21,7 @@ const VENDOR_EXAMPLES = {
   'Wi-Fi':         'e.g. Comcast, AT&T…',
 };
 
-export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess, categories: categoriesProp, onSaveRecurring, onSaveTransactionNote, smartRules = [], prefillCategory = null, lockCategory = false, prefillVendor = '', prefillAmount = '' }) {
+export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess, categories: categoriesProp, onSaveRecurring, onSaveTransactionNote, smartRules = [], prefillCategory = null, lockCategory = false, prefillVendor = '', prefillAmount = '', geoTagEnabled = false, geoPrivacyBlur = true }) {
   const categoryList = categoriesProp?.length ? categoriesProp : CATEGORIES;
   const [category, setCategory]         = useState(prefillCategory || '');
   const [vendor, setVendor]             = useState(prefillVendor);
@@ -41,6 +41,31 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
   const [txNote, setTxNote]             = useState('');
   const [txTagInput, setTxTagInput]     = useState('');
   const [txTags, setTxTags]             = useState([]);
+
+  // Geo-tagging
+  const [geoEnabled, setGeoEnabled]     = useState(false);
+  const [geoLocation, setGeoLocation]   = useState(null); // {lat, lng}
+  const [geoLoading, setGeoLoading]     = useState(false);
+  const [geoError, setGeoError]         = useState('');
+
+  const handleGeoToggle = async (enabled) => {
+    setGeoEnabled(enabled);
+    setGeoError('');
+    if (!enabled) { setGeoLocation(null); return; }
+    setGeoLoading(true);
+    try {
+      const pos = await new Promise((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 })
+      );
+      const blur = (v) => geoPrivacyBlur ? Math.round(v * 200) / 200 : v;
+      setGeoLocation({ lat: blur(pos.coords.latitude), lng: blur(pos.coords.longitude) });
+    } catch {
+      setGeoEnabled(false);
+      setGeoError('Location access denied or unavailable');
+    } finally {
+      setGeoLoading(false);
+    }
+  };
 
   const addTxTag = () => {
     const tag = txTagInput.trim().replace(/^#/, '');
@@ -168,10 +193,14 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
       }
       if (isNonMonthly) await markNonMonthly(sheetId, accessToken, vendor.trim(), amt);
       if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
-      // Save transaction note/tags if provided
-      if ((txNote.trim() || txTags.length > 0) && onSaveTransactionNote) {
+      // Save transaction note/tags/location if provided
+      if ((txNote.trim() || txTags.length > 0 || geoLocation) && onSaveTransactionNote) {
         const key = `${sheetId}_${category}_${vendor.trim().toLowerCase()}_${amt.toFixed(2)}`;
-        onSaveTransactionNote(key, { note: txNote.trim(), tags: txTags });
+        onSaveTransactionNote(key, {
+          note: txNote.trim(),
+          tags: txTags,
+          ...(geoLocation ? { location: { ...geoLocation, vendor: vendor.trim(), category, amount: amt } } : {}),
+        });
       }
       onSuccess?.();
       onClose();
@@ -429,6 +458,30 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                 </div>
               </label>
             </div>
+
+            {/* Geo-tagging (optional, only shown when setting is enabled) */}
+            {geoTagEnabled && (
+              <div className="space-y-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleGeoToggle(!geoEnabled)}
+                  disabled={geoLoading}
+                  className={`flex items-center gap-2 text-xs font-bold transition-colors ${
+                    geoEnabled
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
+                  }`}
+                >
+                  {geoLoading
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <MapPin className="w-3.5 h-3.5" />}
+                  {geoLoading ? 'Getting location…' : geoEnabled && geoLocation ? '📍 Location tagged' : '📍 Tag location'}
+                </button>
+                {geoError && (
+                  <p className="text-[11px] text-rose-500 font-medium">{geoError}</p>
+                )}
+              </div>
+            )}
 
             {/* Note / Tag (optional) */}
             <div>
