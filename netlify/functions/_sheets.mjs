@@ -7,7 +7,7 @@ import { getAccessToken, copyFile, shareWithEmails } from './_drive.mjs';
 
 const SHEETS_API    = 'https://sheets.googleapis.com/v4/spreadsheets';
 const TEMPLATE_ID   = process.env.VITE_TEMPLATE_SHEET_ID;
-const ALLOWED_EMAILS = (process.env.VITE_ALLOWED_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
+const ALLOWED_EMAILS = (process.env.ALLOWED_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
 
 const SHEET_MAP = {
   'Grocery':       { sheet: 'Grocery' },

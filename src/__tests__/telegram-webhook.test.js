@@ -9,7 +9,7 @@ vi.stubEnv('GOOGLE_CLIENT_ID', 'test-client-id');
 vi.stubEnv('GOOGLE_CLIENT_SECRET', 'test-secret');
 vi.stubEnv('GOOGLE_DRIVE_REFRESH_TOKEN', 'test-refresh');
 vi.stubEnv('VITE_TEMPLATE_SHEET_ID', 'template-id');
-vi.stubEnv('VITE_ALLOWED_EMAILS', 'nair.sabarish97@gmail.com');
+vi.stubEnv('ALLOWED_EMAILS', 'nair.sabarish97@gmail.com');
 vi.stubEnv('SITE_URL', 'https://test-dashboard.netlify.app');
 
 const mockStore = {
