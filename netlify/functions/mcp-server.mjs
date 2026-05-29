@@ -4,9 +4,38 @@
  * `Authorization: Bearer <key>` (or `X-API-Key: <key>`).
  */
 
+import { getStore } from '@netlify/blobs';
 import { handleRpc } from './_mcp.mjs';
 
 const MCP_API_KEY = process.env.MCP_API_KEY;
+
+// Fixed-window rate limit: at most RATE_LIMIT requests per RATE_WINDOW_MS,
+// counted per API key. State lives in Netlify Blobs so it survives across
+// stateless invocations. The window is good enough for a single-user server —
+// it guards against a runaway client loop or a leaked key being hammered.
+const RATE_LIMIT     = 100;
+const RATE_WINDOW_MS = 60 * 60 * 1000;
+
+// Returns { allowed, remaining, resetSec }. Fails open on any store error: a
+// blobs outage must not take the whole MCP endpoint down.
+async function checkRateLimit(keyHash) {
+  try {
+    const store = getStore('mcp-rate-limit');
+    const now   = Date.now();
+    const rec   = (await store.get(keyHash, { type: 'json' })) || { count: 0, windowStart: now };
+    if (now - rec.windowStart >= RATE_WINDOW_MS) {
+      rec.count = 0;
+      rec.windowStart = now;
+    }
+    rec.count += 1;
+    await store.setJSON(keyHash, rec);
+    const resetSec = Math.ceil((rec.windowStart + RATE_WINDOW_MS - now) / 1000);
+    return { allowed: rec.count <= RATE_LIMIT, remaining: Math.max(0, RATE_LIMIT - rec.count), resetSec };
+  } catch (e) {
+    console.error('MCP rate-limit store error (failing open):', e);
+    return { allowed: true, remaining: RATE_LIMIT, resetSec: 0 };
+  }
+}
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -57,6 +86,14 @@ export default async function handler(req) {
   const key = extractKey(req);
   if (!key || !(await keyMatches(key, MCP_API_KEY))) {
     return json({ jsonrpc: '2.0', id: null, error: { code: -32001, message: 'Unauthorized' } }, 401);
+  }
+
+  const { allowed, resetSec } = await checkRateLimit(await sha256Hex(key));
+  if (!allowed) {
+    return new Response(
+      JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32029, message: 'Rate limit exceeded' } }),
+      { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': String(resetSec), ...CORS } },
+    );
   }
 
   let body;

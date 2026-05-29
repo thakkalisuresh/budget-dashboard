@@ -2,14 +2,14 @@ import React, { useMemo, useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png';
+import iconUrl from 'leaflet/dist/images/marker-icon.png';
+import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
 
-// Fix Leaflet's default marker icon paths broken by bundlers
+// Fix Leaflet's default marker icon paths broken by bundlers. Import the assets
+// so Vite fingerprints and serves them from our own origin — no third-party CDN.
 delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl:       'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl:     'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-});
+L.Icon.Default.mergeOptions({ iconRetinaUrl, iconUrl, shadowUrl });
 
 // Re-center map when center changes (e.g. different data loaded)
 function MapCenter({ center }) {
