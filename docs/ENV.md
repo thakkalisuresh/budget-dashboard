@@ -18,7 +18,7 @@ Set these in Netlify dashboard > Site settings > Environment variables.
 
 | Variable | Required | Used by | Description |
 |----------|----------|---------|-------------|
-| `ALLOWED_EMAILS` | Yes | verify-user, claude, _auth | Comma-separated list of authorized email addresses |
+| `ALLOWED_EMAILS` | Yes | verify-user, claude, _auth, _sheets | Comma-separated list of authorized email addresses |
 | `VIEWER_EMAILS` | No | verify-user | Comma-separated emails with read-only access (subset of ALLOWED_EMAILS) |
 | `ANTHROPIC_API_KEY` | Yes | claude | Anthropic API key for receipt scanning and chat |
 | `VAPID_PUBLIC_KEY` | Yes | push-alert, push-digest | VAPID public key for Web Push |

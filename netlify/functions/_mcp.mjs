@@ -235,8 +235,15 @@ export async function handleRpc(message) {
         return rpcResult(id, { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] });
       } catch (e) {
         // Tool-execution failures are returned as tool results (isError), not
-        // protocol errors, so the model can read and react to them.
-        return rpcResult(id, { content: [{ type: 'text', text: `Error: ${e.message}` }], isError: true });
+        // protocol errors, so the model can read and react to them. Only surface
+        // ToolError messages (validation, deliberately user-facing); for any other
+        // (infra/Sheets) error, log server-side and return a generic message so
+        // internal details — sheet IDs, API errors, stack info — don't leak.
+        if (e instanceof ToolError) {
+          return rpcResult(id, { content: [{ type: 'text', text: `Error: ${e.message}` }], isError: true });
+        }
+        console.error('MCP tool error:', name, e);
+        return rpcResult(id, { content: [{ type: 'text', text: 'Error: tool execution failed' }], isError: true });
       }
     }
 
