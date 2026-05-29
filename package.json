@@ -29,6 +29,9 @@
   "engines": {
     "node": ">=20"
   },
+  "overrides": {
+    "tmp": "^0.2.6"
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "^4.2.4",

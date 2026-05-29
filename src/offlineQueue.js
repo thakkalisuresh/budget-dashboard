@@ -1,7 +1,7 @@
 const QUEUE_KEY = 'budget_offline_queue';
 
 function requestBackgroundSync() {
-  if (!navigator.serviceWorker) return;
+  if (typeof navigator === 'undefined' || !navigator.serviceWorker) return;
   navigator.serviceWorker.ready
     .then(reg => reg.sync?.register('budget-sync-expenses'))
     .catch(() => {});

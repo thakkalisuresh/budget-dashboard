@@ -121,7 +121,7 @@ function Dashboard({ auth }) {
 
   // Per-user settings (saved to Google Sheets)
   const isReadOnly = user.role === 'viewer';
-  const { settings, updateSettings } = useSettings(user.email, user.accessToken);
+  const { settings, loading: settingsLoading, updateSettings } = useSettings(user.email, user.accessToken);
   const currencySymbol = getCurrencySymbol(settings.currency || 'USD');
   const categoryIcons  = { ...DEFAULT_ICONS, ...(settings.categoryIcons || {}) };
 
@@ -818,7 +818,7 @@ function Dashboard({ auth }) {
       )}
 
       {/* Onboarding wizard — shown once per user */}
-      {!settings.hasSeenOnboarding && !isReadOnly && (
+      {!settingsLoading && !settings.hasSeenOnboarding && !isReadOnly && (
         <OnboardingWizard onDone={() => updateSettings(prev => ({ ...prev, hasSeenOnboarding: true }))} />
       )}
 
@@ -937,3 +937,4 @@ function Dashboard({ auth }) {
 }
 
 export default App;
+
