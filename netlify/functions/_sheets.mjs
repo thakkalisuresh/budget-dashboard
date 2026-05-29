@@ -180,19 +180,39 @@ export async function getRecentExpenses(sheetId, limit = 10) {
   const rows = data.values || [];
   if (rows.length <= 1) return [];
 
-  return rows.slice(1)
-    .map(row => ({
-      timestamp: row[0] || '',
-      action:    row[1] || '',
-      category:  row[2] || '',
-      vendor:    row[3] || '',
-      amount:    typeof row[4] === 'number' ? row[4] : null,
-      uuid:      row[6] || '',
-      txDate:    row[9] || '',
-    }))
-    .filter(e => e.amount && /receipt|expense/i.test(e.action))
-    .reverse()
-    .slice(0, limit);
+  // The History tab holds two incompatible row layouts in the same sheet:
+  //   • web app (10 cols): … Details, Reserved, User, UUID(8), TxDate(9)
+  //   • bot      (8 cols): … Details, UUID(6), 'whatsapp-bot'  (no TxDate)
+  // Detect per row: a web row has the uuid at index 8; a bot row only reaches
+  // index 6 (so row[8] is undefined and we fall back to index 6).
+  const mapped = rows.slice(1)
+    .map(row => {
+      const isWebLayout = row[8] != null && row[8] !== '';
+      return {
+        timestamp: row[0] || '',
+        action:    row[1] || '',
+        category:  row[2] || '',
+        vendor:    row[3] || '',
+        amount:    typeof row[4] === 'number' ? row[4] : null,
+        uuid:      (isWebLayout ? row[8] : row[6]) || '',
+        txDate:    isWebLayout ? (row[9] || '') : '',
+      };
+    })
+    // A real expense entry always carries a uuid + amount; admin actions
+    // (budget/category changes, renames, deletes) never write a uuid.
+    .filter(e => e.amount && e.uuid)
+    .reverse();
+
+  // The History log is append-only, so an edited expense appears as a later
+  // row with the same uuid. Keep the newest occurrence per uuid.
+  const seen = new Set();
+  const deduped = [];
+  for (const e of mapped) {
+    if (seen.has(e.uuid)) continue;
+    seen.add(e.uuid);
+    deduped.push(e);
+  }
+  return deduped.slice(0, limit);
 }
 
 export async function deleteExpenseByUUID({ category, uuid, sheetId }) {

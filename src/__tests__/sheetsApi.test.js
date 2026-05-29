@@ -8,6 +8,14 @@ import {
   normalizeStatementDate,
   fuzzyNamesMatch,
 } from '../sheetsApi.js';
+import {
+  colLetter,
+  uuidStart,
+  generateTransactionUUID,
+  isV2EligibleMonth,
+  detectV2,
+  formatTxDate,
+} from '../sheetHelpers.js';
 
 // ── safeText ─────────────────────────────────────────────────────────────────
 
@@ -228,5 +236,133 @@ describe('fuzzyNamesMatch', () => {
 
   it('ignores punctuation', () => {
     expect(fuzzyNamesMatch("McDonald's", 'McDonalds')).toBe(true);
+  });
+});
+
+// ── colLetter ────────────────────────────────────────────────────────────────
+
+describe('colLetter', () => {
+  it('converts 0 to A', () => {
+    expect(colLetter(0)).toBe('A');
+  });
+
+  it('converts 25 to Z', () => {
+    expect(colLetter(25)).toBe('Z');
+  });
+
+  it('converts mid-range indices', () => {
+    expect(colLetter(2)).toBe('C');
+    expect(colLetter(3)).toBe('D');
+  });
+});
+
+// ── uuidStart ────────────────────────────────────────────────────────────────
+
+describe('uuidStart', () => {
+  it('returns uuidStartCol when present', () => {
+    expect(uuidStart({ amtCol: 3, uuidStartCol: 4 })).toBe(4);
+  });
+
+  it('falls back to amtCol + 1 when uuidStartCol absent', () => {
+    expect(uuidStart({ amtCol: 5 })).toBe(6);
+  });
+});
+
+// ── generateTransactionUUID ──────────────────────────────────────────────────
+
+describe('generateTransactionUUID', () => {
+  it('starts with tx_ prefix', () => {
+    expect(generateTransactionUUID(25.50)).toMatch(/^tx_/);
+  });
+
+  it('encodes amount as cents in the id', () => {
+    const id = generateTransactionUUID(12.99);
+    expect(id).toMatch(/^tx_1299_/);
+  });
+
+  it('produces unique ids on successive calls', () => {
+    const a = generateTransactionUUID(10);
+    const b = generateTransactionUUID(10);
+    expect(a).not.toBe(b);
+  });
+
+  it('handles zero cents gracefully', () => {
+    expect(generateTransactionUUID(0)).toMatch(/^tx_0_/);
+  });
+});
+
+// ── isV2EligibleMonth ────────────────────────────────────────────────────────
+
+describe('isV2EligibleMonth', () => {
+  it('returns true for falsy input', () => {
+    expect(isV2EligibleMonth(null)).toBe(true);
+    expect(isV2EligibleMonth('')).toBe(true);
+    expect(isV2EligibleMonth(undefined)).toBe(true);
+  });
+
+  it('returns true for months after May 2026', () => {
+    expect(isV2EligibleMonth('June 2026')).toBe(true);
+    expect(isV2EligibleMonth('January 2027')).toBe(true);
+  });
+
+  it('returns false for May 2026 (boundary — v2 starts June 2026)', () => {
+    expect(isV2EligibleMonth('May 2026')).toBe(false);
+  });
+
+  it('returns false for months before June 2026', () => {
+    expect(isV2EligibleMonth('April 2026')).toBe(false);
+    expect(isV2EligibleMonth('December 2025')).toBe(false);
+    expect(isV2EligibleMonth('January 2026')).toBe(false);
+  });
+
+  it('returns true for unrecognized strings', () => {
+    expect(isV2EligibleMonth('garbage')).toBe(true);
+  });
+});
+
+// ── detectV2 ─────────────────────────────────────────────────────────────────
+
+describe('detectV2', () => {
+  const v2Header = [['', '', 'Date', '', '']];
+  const v1Header = [['Month', 'Year', 'Description', 'Amount']];
+
+  it('detects v2 when header row[2] is "Date" and month is eligible', () => {
+    expect(detectV2(v2Header, 'June 2026')).toBe(true);
+  });
+
+  it('returns false for v1 header', () => {
+    expect(detectV2(v1Header, 'June 2026')).toBe(false);
+  });
+
+  it('returns false for v2 header on ineligible month', () => {
+    expect(detectV2(v2Header, 'January 2026')).toBe(false);
+  });
+
+  it('returns false for empty values', () => {
+    expect(detectV2([], 'June 2026')).toBe(false);
+    expect(detectV2(null, 'June 2026')).toBe(false);
+  });
+});
+
+// ── formatTxDate ─────────────────────────────────────────────────────────────
+
+describe('formatTxDate', () => {
+  it('returns empty string for falsy input', () => {
+    expect(formatTxDate('')).toBe('');
+    expect(formatTxDate(null)).toBe('');
+    expect(formatTxDate(undefined)).toBe('');
+  });
+
+  it('formats YYYY-MM-DD without timezone shift', () => {
+    const result = formatTxDate('2026-05-23');
+    expect(result).toContain('May');
+    expect(result).toContain('23');
+    expect(result).toContain('2026');
+  });
+
+  it('formats other date strings', () => {
+    const result = formatTxDate('2026-01-01');
+    expect(result).toContain('Jan');
+    expect(result).toContain('2026');
   });
 });

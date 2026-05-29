@@ -23,6 +23,8 @@ import { useGlobalShortcuts } from './useGlobalShortcuts.js';
 import { SalaryEditDialog } from './SalaryEditDialog.jsx';
 
 // Heavy components — loaded only when first rendered
+const SpendingHeatmap  = lazy(() => import('./SpendingHeatmap.jsx').then(m => ({ default: m.SpendingHeatmap })));
+const SpendingMap      = lazy(() => import('./SpendingMap.jsx').then(m => ({ default: m.SpendingMap })));
 const DetailPanel      = lazy(() => import('./DetailPanel.jsx').then(m => ({ default: m.DetailPanel })));
 const AddExpenseDialog = lazy(() => import('./AddExpenseDialog.jsx').then(m => ({ default: m.AddExpenseDialog })));
 const NewMonthDialog   = lazy(() => import('./NewMonthDialog.jsx').then(m => ({ default: m.NewMonthDialog })));
@@ -112,8 +114,9 @@ function Dashboard({ auth }) {
   const [showReconcile, setShowReconcile]       = useState(false);
   const [showBulkRecurring, setShowBulkRecurring] = useState(false);
   const [showMessages, setShowMessages]         = useState(false);
-  const [chatOpen, setChatOpen]   = useState(false);
-  const [fabOpen, setFabOpen]     = useState(false);
+  const [chatOpen, setChatOpen]         = useState(false);
+  const [chatInitialQuery, setChatInitialQuery] = useState('');
+  const [fabOpen, setFabOpen]           = useState(false);
   const userMenuRef = useRef(null);
 
   // Per-user settings (saved to Google Sheets)
@@ -125,6 +128,27 @@ function Dashboard({ auth }) {
   // Theme (dark/light, font size, accent color) — extracted to useTheme hook
   const { isDark, setIsDark } = useTheme(settings, updateSettings);
 
+
+  // ── URI automation: handle ?action= deep-links ───────────────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const action = params.get('action');
+    if (!action) return;
+    window.history.replaceState({}, '', '/');
+    if (action === 'add' && !isReadOnly) {
+      setShowAddDialog({
+        prefillCategory: params.get('category') || null,
+        prefillVendor:   params.get('vendor')   || '',
+        prefillAmount:   params.get('amount')   || '',
+      });
+    } else if (action === 'chat') {
+      const q = params.get('q') || '';
+      if (q) setChatInitialQuery(q);
+      setChatOpen(true);
+    } else if (action === 'summary') {
+      setActiveTab('budget');
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Close user menu on outside click
   useEffect(() => {
@@ -450,6 +474,7 @@ function Dashboard({ auth }) {
               transactionNotes: { ...(prev.transactionNotes || {}), [key]: data },
             }))}
             refreshKey={refreshKey}
+            months={months}
           />
         )}
 
@@ -590,6 +615,28 @@ function Dashboard({ auth }) {
                 />
               )}
 
+              {/* Spending heatmap calendar */}
+              {settings.visibility.heatmap !== false && (
+                <Suspense fallback={null}>
+                  <SpendingHeatmap
+                    sheetId={selectedSheetId}
+                    accessToken={user.accessToken}
+                    currencySymbol={currencySymbol}
+                    monthName={selectedMonth?.name}
+                    isDark={isDark}
+                  />
+                </Suspense>
+              )}
+
+              {/* Spending map */}
+              {settings.geoTagEnabled && settings.visibility.map !== false && (
+                <Suspense fallback={null}>
+                  <SpendingMap
+                    transactionNotes={settings.transactionNotes || {}}
+                    currencySymbol={currencySymbol}
+                  />
+                </Suspense>
+              )}
 
             </div>
 
@@ -658,6 +705,8 @@ function Dashboard({ auth }) {
           monthName={selectedMonth?.name}
           categories={expenses.map(e => e.name)}
           prefillCategory={typeof showAddDialog === 'object' ? showAddDialog.prefillCategory : null}
+          prefillVendor={typeof showAddDialog === 'object' ? showAddDialog.prefillVendor || '' : ''}
+          prefillAmount={typeof showAddDialog === 'object' ? showAddDialog.prefillAmount || '' : ''}
           onClose={() => setShowAddDialog(false)}
           lockCategory={typeof showAddDialog === 'object' && !!showAddDialog.prefillCategory}
           onSuccess={(result) => {
@@ -691,6 +740,8 @@ function Dashboard({ auth }) {
             ...prev,
             transactionNotes: { ...(prev.transactionNotes || {}), [key]: data },
           }))}
+          geoTagEnabled={settings.geoTagEnabled || false}
+          geoPrivacyBlur={settings.geoPrivacyBlur !== false}
         /></Suspense>
       )}
 
@@ -735,6 +786,7 @@ function Dashboard({ auth }) {
         rulesData={rulesData}
         open={chatOpen}
         onOpenChange={setChatOpen}
+        initialQuery={chatInitialQuery}
       /></Suspense>
 
       {/* Reconcile dialog */}

@@ -173,6 +173,7 @@ export function ChatAgent({
   open: controlledOpen,
   onOpenChange,
   hideButton = false,
+  initialQuery = '',
 }) {
   const [internalOpen, setInternalOpen] = useState(false);
   const open    = controlledOpen !== undefined ? controlledOpen : internalOpen;
@@ -192,6 +193,7 @@ export function ChatAgent({
   const messagesEndRef  = useRef(null);
   const inputRef        = useRef(null);
   const apiHistoryRef   = useRef([]); // full API conversation (includes tool_use / tool_result)
+  const initialQueryDoneRef = useRef(false); // pre-fill initialQuery only once, not on every reopen
 
   // Always route through the edge function — no direct browser API calls
   const hasKey = true;
@@ -202,10 +204,16 @@ export function ChatAgent({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Focus input when panel opens
+  // Focus input when panel opens; pre-fill initialQuery on first open
   useEffect(() => {
-    if (open && hasKey) setTimeout(() => inputRef.current?.focus(), 150);
-  }, [open, hasKey]);
+    if (open && hasKey) {
+      setTimeout(() => inputRef.current?.focus(), 150);
+      if (initialQuery && !input && !initialQueryDoneRef.current) {
+        setInput(initialQuery);
+        initialQueryDoneRef.current = true;
+      }
+    }
+  }, [open, hasKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Tool definitions ───────────────────────────────────────────────────────
 

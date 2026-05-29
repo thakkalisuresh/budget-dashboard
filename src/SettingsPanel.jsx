@@ -13,6 +13,8 @@ const VISIBILITY_ITEMS = [
   { key: 'donutChart',     label: 'Spending Distribution', desc: 'Donut chart with category breakdown' },
   { key: 'barChart',       label: 'Actual vs Budget',      desc: 'Bar chart comparing spend to budget' },
   { key: 'insightCards',   label: 'Insight Cards',         desc: 'Balance without random & budget difference' },
+  { key: 'heatmap',        label: 'Spending Calendar',     desc: 'Daily spend intensity heatmap calendar' },
+  { key: 'map',            label: 'Spending Map',          desc: 'Map of tagged expense locations (requires geo-tagging)' },
   { key: 'nonMonthlyTile', label: 'Non-Monthly Expenses',  desc: 'Random non-monthly expenses note' },
   { key: 'budgetRules',    label: '50/30/20 Rules',        desc: 'Budget rule breakdown section' },
 ];
@@ -172,6 +174,24 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
   const [ruleDraft, setRuleDraft]               = useState({ pattern: '', category: '' });
   const [addingRule, setAddingRule]             = useState(false);
   const [newRuleDraft, setNewRuleDraft]         = useState({ pattern: '', category: '' });
+
+  // MCP connector config copy feedback
+  const [mcpCopied, setMcpCopied]               = useState(false);
+  const mcpConfig = `{
+  "mcpServers": {
+    "fundient": {
+      "type": "http",
+      "url": "${window.location.origin}/api/mcp",
+      "headers": { "Authorization": "Bearer YOUR_MCP_API_KEY" }
+    }
+  }
+}`;
+  const copyMcpConfig = () => {
+    navigator.clipboard?.writeText(mcpConfig).then(() => {
+      setMcpCopied(true);
+      setTimeout(() => setMcpCopied(false), 2000);
+    }).catch(() => {});
+  };
 
   const smartRules        = settings.smartRules || [];
   const recurringExpenses = settings.recurringExpenses || [];
@@ -443,6 +463,27 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                   desc={desc}
                 />
               ))}
+            </div>
+          </div>
+
+          {/* ── Geo-tagging ──────────────────────────────────────────────── */}
+          <div>
+            <SectionLabel>Location</SectionLabel>
+            <div className="space-y-2">
+              <Toggle
+                on={settings.geoTagEnabled || false}
+                onToggle={() => updateSettings(prev => ({ ...prev, geoTagEnabled: !prev.geoTagEnabled }))}
+                label="Geo-tag expenses"
+                desc="Show a 📍 button when adding expenses to capture approximate location"
+              />
+              {settings.geoTagEnabled && (
+                <Toggle
+                  on={settings.geoPrivacyBlur !== false}
+                  onToggle={() => updateSettings(prev => ({ ...prev, geoPrivacyBlur: prev.geoPrivacyBlur === false }))}
+                  label="Privacy blur"
+                  desc="Round coordinates to nearest ~500m to reduce location precision"
+                />
+              )}
             </div>
           </div>
 
@@ -846,6 +887,29 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
               })}
             </div>
             <p className="text-xs text-slate-400 mt-2 px-1">Click a binding to rebind. Must include at least one modifier key (Ctrl, Alt, Shift).</p>
+          </div>
+
+          {/* ── MCP Connector (Claude Desktop) ──────────────────────────── */}
+          <div>
+            <SectionLabel>Claude / MCP Connector</SectionLabel>
+            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl px-4 py-4 space-y-3">
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                Connect Claude (Desktop or Web) to query and log expenses by natural language.
+                Set a secret <code className="font-mono text-[11px] bg-slate-100 dark:bg-slate-700 px-1 py-0.5 rounded">MCP_API_KEY</code> environment
+                variable in Netlify, then add this to your MCP client config (replace the placeholder with that key):
+              </p>
+              <pre className="text-[10px] leading-relaxed font-mono bg-slate-900 dark:bg-slate-950 text-slate-100 rounded-xl p-3 overflow-x-auto whitespace-pre">{mcpConfig}</pre>
+              <button
+                onClick={copyMcpConfig}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors"
+              >
+                {mcpCopied ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                {mcpCopied ? 'Copied!' : 'Copy config'}
+              </button>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Exposes tools: <span className="font-mono">get_monthly_summary</span>, <span className="font-mono">get_transactions</span>, <span className="font-mono">get_categories</span>, <span className="font-mono">add_transaction</span>, <span className="font-mono">delete_transaction</span>.
+              </p>
+            </div>
           </div>
 
         </div>
