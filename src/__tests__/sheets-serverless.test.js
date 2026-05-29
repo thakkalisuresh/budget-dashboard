@@ -8,7 +8,7 @@ vi.stubEnv('VITE_TEMPLATE_SHEET_ID', 'template-sheet-id');
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-const { getCurrentMonthSheetId, appendExpense } = await import('../../netlify/functions/_sheets.mjs');
+const { getCurrentMonthSheetId, appendExpense, getRecentExpenses } = await import('../../netlify/functions/_sheets.mjs');
 
 function jsonResponse(data, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: () => Promise.resolve(data) };
@@ -137,5 +137,86 @@ describe('appendExpense', () => {
     });
 
     expect(result.row[2]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});
+
+describe('getRecentExpenses', () => {
+  const HEADER = ['Timestamp', 'Action', 'Category', 'Vendor', 'Amount', 'Details', 'Reserved', 'User', 'UUID'];
+  // web app: uuid at index 8, txDate at index 9
+  const webRow = (action, category, vendor, amount, uuid, txDate) =>
+    ['2026-05-10T08:00:00Z', action, category, vendor, amount, '', '', 'Alice', uuid, txDate];
+  // bot: uuid at index 6, no txDate column
+  const botRow = (action, category, vendor, amount, uuid) =>
+    ['2026-05-10T09:00:00Z', action, category, vendor, amount, 'Receipt via WhatsApp', uuid, 'whatsapp-bot'];
+
+  it('reads the uuid/txDate from the web-app 10-column layout', async () => {
+    mockTokenThenApi(jsonResponse({ values: [
+      HEADER,
+      webRow('Added', 'Grocery', 'Walmart', 45.23, 'web-uuid-1', '2026-05-09'),
+    ] }));
+    const out = await getRecentExpenses('sheet', 10);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ vendor: 'Walmart', uuid: 'web-uuid-1', txDate: '2026-05-09' });
+  });
+
+  it('reads the uuid from the bot 8-column layout (no txDate)', async () => {
+    mockTokenThenApi(jsonResponse({ values: [
+      HEADER,
+      botRow('WhatsApp Receipt', 'Eating Out', 'Swiggy', 12.5, 'bot-uuid-1'),
+    ] }));
+    const out = await getRecentExpenses('sheet', 10);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ vendor: 'Swiggy', uuid: 'bot-uuid-1', txDate: '' });
+  });
+
+  it('returns expenses from both layouts mixed in one sheet', async () => {
+    mockTokenThenApi(jsonResponse({ values: [
+      HEADER,
+      webRow('Added', 'Grocery', 'Walmart', 45, 'web-1', '2026-05-09'),
+      botRow('WhatsApp Receipt', 'Misc', 'Amazon', 30, 'bot-1'),
+      webRow('Import', 'Transport', 'Shell', 60, 'web-2', '2026-05-08'),
+    ] }));
+    const out = await getRecentExpenses('sheet', 10);
+    expect(out.map(e => e.uuid).sort()).toEqual(['bot-1', 'web-1', 'web-2']);
+  });
+
+  it('excludes admin actions that carry no uuid (budget/category/rename/delete)', async () => {
+    mockTokenThenApi(jsonResponse({ values: [
+      HEADER,
+      webRow('Budget Updated', 'Salary', '', 5000, '', ''),
+      webRow('Category Added', 'Pets', '', 100, '', ''),
+      webRow('Deleted', 'Grocery', 'Walmart', 20, '', ''),
+      webRow('Added', 'Grocery', 'Costco', 80, 'web-keep', '2026-05-07'),
+    ] }));
+    const out = await getRecentExpenses('sheet', 10);
+    expect(out).toHaveLength(1);
+    expect(out[0].uuid).toBe('web-keep');
+  });
+
+  it('dedupes by uuid, keeping the newest (edited) occurrence', async () => {
+    mockTokenThenApi(jsonResponse({ values: [
+      HEADER,
+      webRow('Added', 'Grocery', 'Walmart', 45, 'dup-uuid', '2026-05-09'),
+      webRow('Updated', 'Grocery', 'Walmart', 99, 'dup-uuid', '2026-05-09'),
+    ] }));
+    const out = await getRecentExpenses('sheet', 10);
+    expect(out).toHaveLength(1);
+    expect(out[0].amount).toBe(99);
+  });
+
+  it('honours the limit after reversing to newest-first', async () => {
+    mockTokenThenApi(jsonResponse({ values: [
+      HEADER,
+      webRow('Added', 'A', 'V1', 1, 'u-1', '2026-05-01'),
+      webRow('Added', 'A', 'V2', 2, 'u-2', '2026-05-02'),
+      webRow('Added', 'A', 'V3', 3, 'u-3', '2026-05-03'),
+    ] }));
+    const out = await getRecentExpenses('sheet', 2);
+    expect(out.map(e => e.uuid)).toEqual(['u-3', 'u-2']);
+  });
+
+  it('returns empty array when only the header row exists', async () => {
+    mockTokenThenApi(jsonResponse({ values: [HEADER] }));
+    expect(await getRecentExpenses('sheet', 10)).toEqual([]);
   });
 });
