@@ -2,26 +2,30 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
 
 jobs:
-  build:
+  ci:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
+          node-version: '20'
+          cache: 'npm'
 
-      - run: npm ci
+      - name: Install dependencies
+        run: npm ci
 
-      - run: npm audit --audit-level=high
-        continue-on-error: true
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
 
-      - run: npm test
+      - name: Run tests
+        run: npm test
 
-      - run: npm run build
+      - name: Build
+        run: npm run build
