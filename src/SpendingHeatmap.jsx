@@ -134,9 +134,9 @@ export function SpendingHeatmap({ sheetId, accessToken, currencySymbol = '$', mo
   const tooltipDate   = tooltip
     ? new Date(tooltip.dateKey + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
     : '';
-  const tooltipTxCount = tooltip
-    ? Object.entries(dailyTotals).filter(([k]) => k === tooltip.dateKey).length
-    : 0;
+
+  const now      = new Date();
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
   if (!base) return null;
 
@@ -197,7 +197,7 @@ export function SpendingHeatmap({ sheetId, accessToken, currencySymbol = '$', mo
           {cells.map((dateKey, i) => {
             const amount = dateKey ? (dailyTotals[dateKey] || 0) : null;
             const color  = dateKey ? cellColor(amount, maxAmount, isDark) : 'transparent';
-            const isToday = dateKey === new Date().toISOString().slice(0, 10);
+            const isToday = dateKey === todayKey;
             return (
               <div
                 key={i}

@@ -134,7 +134,6 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
   useEffect(() => {
     if (!category) { setAllVendors([]); setSuggestions([]); return; }
     setLoadingVendors(true);
-    setVendor('');
     setSuggestions([]);
     fetchDetailRows(category, accessToken, sheetId, monthName)
       .then(rows => setAllVendors(rows.map(r => r.description)))
@@ -217,9 +216,23 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
     setDupWarning(false);
     try {
       const result = await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'manual', txDate);
-      if (isNonMonthly) await markNonMonthly(sheetId, accessToken, vendor.trim(), amt);
-      if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
-      onSuccess?.();
+      if (result?.queued) {
+        if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
+        onSuccess?.({ queued: true, category, vendor: vendor.trim(), amount: amt });
+      } else {
+        if (isNonMonthly) await markNonMonthly(sheetId, accessToken, vendor.trim(), amt);
+        if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
+        // Save transaction note/tags/location if provided
+        if ((txNote.trim() || txTags.length > 0 || geoLocation) && onSaveTransactionNote) {
+          const key = `${sheetId}_${category}_${vendor.trim().toLowerCase()}_${amt.toFixed(2)}`;
+          onSaveTransactionNote(key, {
+            note: txNote.trim(),
+            tags: txTags,
+            ...(geoLocation ? { location: { ...geoLocation, vendor: vendor.trim(), category, amount: amt } } : {}),
+          });
+        }
+        onSuccess?.();
+      }
       // Reset for next entry — keep category and date
       setVendor('');
       setAmount('');
@@ -229,6 +242,9 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
       setShowNote(false);
       setTxNote('');
       setTxTags([]);
+      setGeoEnabled(false);
+      setGeoLocation(null);
+      setGeoError('');
       setAddedToast(true);
       setTimeout(() => setAddedToast(false), 2000);
     } catch (err) {
@@ -326,7 +342,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
               </div>
               <select
                 value={category}
-                onChange={e => { if (!lockCategory) { setCategory(e.target.value); setRuleHint(''); } }}
+                onChange={e => { if (!lockCategory) { setCategory(e.target.value); setVendor(''); setRuleHint(''); } }}
                 disabled={lockCategory}
                 className={`${inputCls} ${lockCategory ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}`}
               >

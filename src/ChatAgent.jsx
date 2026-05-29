@@ -193,6 +193,7 @@ export function ChatAgent({
   const messagesEndRef  = useRef(null);
   const inputRef        = useRef(null);
   const apiHistoryRef   = useRef([]); // full API conversation (includes tool_use / tool_result)
+  const initialQueryDoneRef = useRef(false); // pre-fill initialQuery only once, not on every reopen
 
   // Always route through the edge function — no direct browser API calls
   const hasKey = true;
@@ -207,7 +208,10 @@ export function ChatAgent({
   useEffect(() => {
     if (open && hasKey) {
       setTimeout(() => inputRef.current?.focus(), 150);
-      if (initialQuery && !input) setInput(initialQuery);
+      if (initialQuery && !input && !initialQueryDoneRef.current) {
+        setInput(initialQuery);
+        initialQueryDoneRef.current = true;
+      }
     }
   }, [open, hasKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
