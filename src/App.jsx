@@ -602,6 +602,8 @@ function Dashboard({ auth }) {
                   ],
                 }))}
                 smartRules={settings.smartRules || []}
+                cards={settings.cards || []}
+                cardRules={settings.cardRules || []}
               />
 
               {/* Insight cards */}
@@ -727,6 +729,8 @@ function Dashboard({ auth }) {
             }
           }}
           smartRules={settings.smartRules || []}
+          cards={settings.cards || []}
+          cardRules={settings.cardRules || []}
           onSaveRecurring={item => updateSettings(prev => ({
             ...prev,
             recurringExpenses: [
