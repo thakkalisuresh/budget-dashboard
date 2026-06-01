@@ -1,6 +1,10 @@
 // Known vendors → MCC. Matched case-insensitively on normalized vendor string.
 // More specific keys (e.g. 'ubereats') must appear before shorter prefixes ('uber')
 // so the longer match wins. Unknown vendors fall back to CATEGORY_DEFAULT_MCC.
+// This list covers the most common household merchants — it is intentionally not
+// exhaustive. Unknown vendors resolve to the category-level default MCC, which
+// is correct for most transactions. Add new vendors here when a specific one
+// would earn a different category rate (e.g. a streaming service in Entertainment).
 const VENDOR_MCC = {
   // Airlines
   'delta': '4511', 'united': '4511', 'american airlines': '4511',

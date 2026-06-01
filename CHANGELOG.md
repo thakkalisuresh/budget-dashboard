@@ -1,5 +1,23 @@
 # Changelog
 
+## [2026-06-01] — Rewards Engine Rewrite
+
+### Functionality
+
+- **MCC-based reward rates**: reward calculations now use Merchant Category Codes (MCC) instead of app category names, enabling accurate per-vendor rates. A vendor table (~80 entries, `src/vendorMCC.js`) maps known merchants to their MCC; unknown vendors fall back to a category-level default.
+- **Corrected rates**: CSR travel is now 8× UR via the Chase Travel portal / 4× direct (was flat 3×). Amex Blue Cash Preferred gains streaming 6%, gas 3%, and transit & rideshare 3% (all were missing). Wholesale clubs (Costco, Walmart, Target) correctly earn Amex base 1%, not 6%.
+- **Booking method per transaction**: CSR airline/hotel purchases record portal vs. direct booking (col H in V2 sheets). The Add Expense dialog and receipt-scanner confirm screen show an inline toggle ("📊 8× UR — Chase Travel portal · Booked direct instead? → 4×") when card = CSR and the vendor resolves to a travel MCC. The Detail panel shows an amber "✈️ Direct booking · 4× UR" badge. The Telegram bot accepts `booking: direct` as an edit field.
+- **Monthly rate auto-check** (`rate-check.mjs`, scheduled 1st of month 09:00 UTC): calls Claude Sonnet + web search against issuer pages (Bankrate fallback for Amex), compares proposed rates against the current table, and on high-confidence changes sends a Telegram notification + in-app message with the proposed diff. Low/medium-confidence findings are silently discarded.
+- **`APPLY RATES` / `IGNORE` bot commands**: replying `APPLY RATES` writes the proposed rates to both household accounts. `IGNORE` discards the proposal. Nothing auto-applies.
+- **User-editable rates** (Settings → Cards & Payment Methods → Reward Rates): per-card accordion with human-readable rows (Dining, Airlines portal/direct, Streaming, Gas, Transit & rideshare, US Supermarkets, Everything else), inline editing, and "Reset to defaults" per card. Changes saved to `UserSettings` and applied immediately.
+- **`getEffectiveRates(settings)`**: all reward calculations — `calculateRewards`, `getBestCard`, `bestCardTable`, `buildRewardsLine`, and the Cards tab — respect user-overridden rates. Default hardcoded rates are used when no override is set.
+
+### Data / Schema
+
+- **V2 category-sheet schema** updated: `Month | Year | Date(C) | Vendor(D) | Amount(E) | Payment Method(F) | UUID(G) | Booking Method(H)`. Col H stores `''` (portal default) or `'direct'` for CSR travel transactions.
+- **History sheet** extended to col L (`Booking Method`). Existing rows without col L read as `''`.
+- **`UserSettings.cardRewardRates`**: new field (`null` = hardcoded defaults; set by APPLY RATES or Settings UI). Rate proposals stored in Netlify Blobs (`rate-proposals/latest`) between auto-check and user approval.
+
 ## [2026-05-31] — Payment Method & Card Rewards Tracking
 
 ### Functionality

@@ -152,24 +152,79 @@ All animations respect `prefers-reduced-motion` — the DonutChart tween and Bud
 
 Transactions can record which card/account paid for them. Tracking is active for **V2 sheets (June 2026 onward)**; older rows stay blank — there is no migration.
 
-**Storage**
-- Category sheet (V2): `Month | Year | Date(C) | Vendor(D) | Amount(E) | Payment Method(F) | UUID(G)`. The card sits at col F; UUID was shifted from F to G to make room.
-- History sheet: extended to col K (`Payment Method`). The bot's history rows are padded so the card lands at col K while keeping the legacy uuid@6 layout that `getRecentExpenses` detects.
-- **Cards Summary** tab: a formula-driven sheet (`sheetCards.ensureCardsSummarySheet`) created on first visit to the Cards tab. A single `QUERY` over `History!A:K` aggregates spend / count / last-date / last-vendor per card — live, no app writes after creation.
+**V2 category-sheet schema** (col indices, 0-based):
+
+| Col | Index | Field |
+|-----|-------|-------|
+| A | 0 | Month |
+| B | 1 | Year |
+| C | 2 | Date (anchor — `detectV2` checks `header[2] === 'Date'`) |
+| D | 3 | Vendor |
+| E | 4 | Amount |
+| F | 5 | Payment Method |
+| G | 6 | UUID |
+| H | 7 | Booking Method (`''` = portal default, `'direct'` = direct booking) |
+
+**History sheet schema** (cols A–L):
+- Col K (index 10): Payment Method
+- Col L (index 11): Booking Method
+- Bot rows use a padded layout (uuid at index 6, user at 7, empty at 8) so `getRecentExpenses` can distinguish bot vs. web rows while still landing paymentMethod at col K.
+
+**Cards Summary tab**: formula-driven (`sheetCards.ensureCardsSummarySheet`), created on first Cards tab visit. A single `QUERY` over `History!A:K` aggregates spend / count / last-date / last-vendor per card — live, no app writes after creation.
 
 **Settings** (`useSettings` → `DEFAULT_SETTINGS`)
 - `cards`: pre-seeded list of card/account names (user-editable in Settings).
 - `cardRules`: `[{ id, vendorPattern, category, card }]` — auto-assigns a card. Category-specific rules beat vendor-only; longer patterns beat shorter.
+- `cardRewardRates`: `null` = use hardcoded `CARD_REWARDS`; set to a custom rate table by APPLY RATES or the Settings UI. Read via `getEffectiveRates(settings)`.
 
 **Resolution chain** (used by add-expense, scanner, import, reconcile, bot):
 `Vision-extracted card → resolveCardName() fuzzy match against cards list → applyCardRules(vendor, category) → manual pick`. `resolveCardName` normalizes punctuation/case and guards short names (e.g. "Cash" won't match "…active cash").
 
-**Rewards engine** (`src/cardRewards.js`, mirrored server-side in `netlify/functions/_card-rewards.mjs`)
-- Pre-seeded rates for the 4 reward cards (CSR, Amex Blue Cash Preferred, Quicksilver, Freedom Unlimited). Cashback (% of spend) and points (× multiplier) are tracked **separately** and never summed.
-- `calculateRewards()` handles the Amex 6% grocery cap ($6k/yr → 1% after), accumulating YTD spend oldest-first.
-- Point→dollar valuation for comparison/display only: CSR UR ≈ 1.5¢, CFU UR ≈ 1¢.
-- `getBestCard()` ranks by per-dollar value; on a tie it prefers cash back (more flexible than points needing travel redemption).
-- The two rate modules are **duplicated and must be kept in sync** (client can't be imported by Netlify functions).
+**MCC-based rewards engine** (`src/cardRewards.js` + `src/vendorMCC.js`, mirrored server-side in `netlify/functions/_card-rewards.mjs`)
+
+Rates are keyed by Merchant Category Code (MCC), not app category name, so they work correctly across vendors (e.g. Uber → rideshare 3% on Amex, Uber Eats → dining 5812 not rideshare).
+
+`src/vendorMCC.js` — two tables:
+- `VENDOR_MCC`: ~80 known vendors → MCC (substring-matched, longest key first). Not exhaustive; unknown vendors fall back to `CATEGORY_DEFAULT_MCC`.
+- `CATEGORY_DEFAULT_MCC`: app category → fallback MCC (e.g. Entertainment → 7996, not 7372, so unknown streaming services don't incorrectly earn Amex 6%).
+- `resolveMCC(vendor, category)` — exported and re-exported from `cardRewards.js`; used by all callers before `calculateRewards`.
+
+`src/cardRewards.js` rate table shape (per card):
+```js
+{
+  type: 'points' | 'cashback',
+  unit: 'UR' | '$',
+  pointValue: number,           // for points cards ($ per point for display)
+  mccs: {
+    '5812': 3,                  // flat rate
+    '4511': { portal: 8, direct: 4 },   // booking-method split (CSR travel)
+    '5411': { rate: 6, cap: { annual: 6000, then: 1 } },  // capped category
+  },
+  default: number,              // catch-all rate for unlisted MCCs
+}
+```
+
+Key functions:
+- `calculateRewards(card, mcc, amount, ytdSpend, bookingMethod, rates)` — `mcc` from `resolveMCC`; `bookingMethod` for CSR portal/direct; `rates` defaults to `CARD_REWARDS` but respects `getEffectiveRates(settings)`.
+- `getEffectiveRates(settings)` — returns `settings.cardRewardRates` if set, otherwise `CARD_REWARDS`. Used by CardsTab, bot confirm flow, and rate-check application.
+- `getBestCard(category, vendor, rates)` — ranks all reward cards by estimated $/$ return; ties prefer cash back.
+- The two rate modules (`cardRewards.js` and `_card-rewards.mjs`) are **duplicated and must be kept in sync** — the server can't import client modules. The drift-guard test `cardRewardsSync.test.js` fails CI on any divergence.
+
+**Booking method** — stored per transaction only when card = CSR and MCC is a travel code (4511 airlines, 7011 hotels, CHASE_PORTAL). The UI shows the booking method toggle in AddExpenseDialog and ReceiptScanner when both conditions are met.
+
+**Monthly rate auto-check** (`netlify/functions/rate-check.mjs`, `netlify/functions/_rate-check.mjs`)
+
+Scheduled `0 9 1 * *` (1st of month, 09:00 UTC). The deployed wrapper (`rate-check.mjs`) injects Claude Sonnet + web search, Telegram, and Sheets; the core logic lives in `_rate-check.mjs` (pure, DI, fully unit-tested).
+
+Flow:
+1. Load effective rates from `getUserSettings()` (or fall back to `CARD_REWARDS`).
+2. For each reward card, call Claude Sonnet with `tools: [{ type: 'web_search_20250305' }]` against the issuer page (Bankrate fallback for Amex). Source hints are hardcoded per card.
+3. Parse the response with `parseClaudeRates()` — tolerates fenced/prose output; extracts the last valid JSON blob.
+4. `diffRateTable(oldCfg, newCfg)` — compares every MCC node + default.
+5. **High confidence + actual diff** → store proposal in `rate-proposals/latest` (Netlify Blobs), send Telegram notification to all `TELEGRAM_ALLOWED_USERS`, append read-only in-app message for all `ALLOWED_EMAILS`.
+6. Low/medium confidence or no change → silence.
+
+Bot replies: `APPLY RATES` writes `proposal.rates` to `cardRewardRates` for **all household accounts** via `updateUserSettingsFor`. `IGNORE` deletes the proposal blob.
 
 ### Key UI Components
 
