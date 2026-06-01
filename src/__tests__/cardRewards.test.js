@@ -46,6 +46,22 @@ describe('calculateRewards', () => {
     expect(r.value).toBeCloseTo(1, 5);
   });
 
+  it('Amex grocery at Costco/Walmart/Target earns 1% base, not 6%', () => {
+    expect(calculateRewards('American Express Blue Cash Preferred', 'Grocery', 100, 0, 'Costco Wholesale').value).toBeCloseTo(1, 5);
+    expect(calculateRewards('American Express Blue Cash Preferred', 'Grocery', 100, 0, 'Walmart Supercenter').value).toBeCloseTo(1, 5);
+    expect(calculateRewards('American Express Blue Cash Preferred', 'Grocery', 100, 0, 'Target').value).toBeCloseTo(1, 5);
+  });
+
+  it('Amex grocery at a real supermarket still earns 6%', () => {
+    expect(calculateRewards('American Express Blue Cash Preferred', 'Grocery', 100, 0, "Trader Joe's").value).toBeCloseTo(6, 5);
+    expect(calculateRewards('American Express Blue Cash Preferred', 'Grocery', 100, 0, 'Safeway').value).toBeCloseTo(6, 5);
+  });
+
+  it('Thakkali (personal-spend bucket) earns base rate, not a dining bonus', () => {
+    expect(calculateRewards('Chase Sapphire Reserve', 'Thakkali', 100).value).toBe(100); // 1x, not 3x
+    expect(calculateRewards('Chase Freedom Unlimited', 'Thakkali', 100).value).toBe(150); // 1.5x default, not 3x
+  });
+
   it('Quicksilver flat 1.5% everywhere', () => {
     expect(calculateRewards('Capital One Quicksilver', 'Rent', 200).value).toBeCloseTo(3, 5);
     expect(calculateRewards('Capital One Quicksilver', 'Eating Out', 200).value).toBeCloseTo(3, 5);
@@ -95,6 +111,11 @@ describe('getBestCard', () => {
     // Rent/Misc: Quicksilver 1.5% cash ties CSR 1x UR @1.5¢ and CFU 1.5x @1¢ — cash wins
     expect(getBestCard('Rent').card).toBe('Capital One Quicksilver');
     expect(getBestCard('Misc').card).toBe('Capital One Quicksilver');
+  });
+
+  it('best Grocery card is merchant-aware: Amex normally, Quicksilver at Costco', () => {
+    expect(getBestCard('Grocery').card).toBe('American Express Blue Cash Preferred');
+    expect(getBestCard('Grocery', 'Costco Wholesale').card).toBe('Capital One Quicksilver');
   });
 });
 

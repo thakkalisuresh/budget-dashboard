@@ -3,7 +3,7 @@ import { CreditCard, RefreshCw, Inbox, Award, TrendingUp } from 'lucide-react';
 import { fetchHistory, formatTxDate, ensureCardsSummarySheet, CATEGORIES } from './sheetsApi.js';
 import {
   calculateRewards, rewardsDollarValue, bestCardTable, cardEarnsRewards,
-  UR_POINT_VALUE_CSR, UR_POINT_VALUE_CFU,
+  isAmexGroceryExcluded, UR_POINT_VALUE_CSR, UR_POINT_VALUE_CFU,
 } from './cardRewards.js';
 
 const SPEND_ACTIONS = new Set(['Added', 'Receipt Scan', 'Import', 'Updated', 'WhatsApp Receipt', 'Telegram Receipt']);
@@ -94,9 +94,11 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
       const cat = e.category || 'Misc';
       const amt = e.amount ?? 0;
       const key = `${card}__${cat}`;
-      const r = calculateRewards(card, cat, amt, ytd[key] || 0);
-      ytd[key] = (ytd[key] || 0) + amt;
-      if (card === AMEX && cat === 'Grocery') amexGroceryYtd += amt;
+      const r = calculateRewards(card, cat, amt, ytd[key] || 0, e.vendor);
+      // Amex grocery at excluded warehouse clubs earns base 1% and doesn't count toward the $6k cap
+      const qualifiesAmexGrocery = card === AMEX && cat === 'Grocery' && !isAmexGroceryExcluded(e.vendor);
+      if (!(card === AMEX && cat === 'Grocery') || qualifiesAmexGrocery) ytd[key] = (ytd[key] || 0) + amt;
+      if (qualifiesAmexGrocery) amexGroceryYtd += amt;
 
       if (!perCard[card]) perCard[card] = { points: 0, cash: 0, type: r.type };
       if (r.type === 'points')        { urPoints += r.value; perCard[card].points += r.value; }
@@ -348,7 +350,7 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
               </div>
             ))}
           </div>
-          <p className="text-[10px] text-slate-400">Points compared at 1.5¢ (CSR) / 1¢ (CFU) to rank against cash-back cards.</p>
+          <p className="text-[10px] text-slate-400">Points compared at 1.5¢ (CSR) / 1¢ (CFU) to rank against cash-back cards. Note: Amex's 6% groceries excludes warehouse clubs &amp; superstores (Costco, Walmart, Target) — those earn 1%.</p>
         </div>
       )}
     </div>

@@ -18,7 +18,8 @@ export const UR_POINT_VALUE_CFU = 0.01;  // $ per UR point (CFU base)
 export const CARD_REWARDS = {
   'Chase Sapphire Reserve': {
     type: 'points', unit: 'UR', pointValue: UR_POINT_VALUE_CSR,
-    categories: { 'Eating Out': 3, 'Thakkali': 3, 'Travel': 3, 'Holiday': 3 },
+    // 'Thakkali' is a personal-spend bucket (no single merchant type) → base rate
+    categories: { 'Eating Out': 3, 'Travel': 3, 'Holiday': 3 },
     default: 1,
   },
   'American Express Blue Cash Preferred': {
@@ -33,10 +34,21 @@ export const CARD_REWARDS = {
   },
   'Chase Freedom Unlimited': {
     type: 'points', unit: 'UR', pointValue: UR_POINT_VALUE_CFU,
-    categories: { 'Eating Out': 3, 'Thakkali': 3, 'Health': 3 },
+    categories: { 'Eating Out': 3, 'Health': 3 },
     default: 1.5,
   },
 };
+
+// Amex's 6% "US supermarkets" bonus EXCLUDES warehouse clubs and superstores —
+// purchases there earn the 1% base instead. Matched by vendor substring.
+// (Whole Foods is ambiguous — it often codes under Amazon — so left out.)
+const AMEX_GROCERY_EXCLUDED = ['costco', 'walmart', 'target', 'samsclub', 'bjs'];
+
+export function isAmexGroceryExcluded(vendor) {
+  if (!vendor) return false;
+  const v = String(vendor).toLowerCase().replace(/[^a-z0-9]/g, '');
+  return AMEX_GROCERY_EXCLUDED.some(x => v.includes(x));
+}
 
 // Cards with no rewards program (debit, bank, cash)
 export function cardEarnsRewards(card) {
@@ -57,9 +69,14 @@ function rawRate(card, category) {
  * @param ytdCategorySpend - year-to-date spend on THIS card+category (for caps)
  * @returns { type, value, unit, rate } — value is $ (cashback) or points (points)
  */
-export function calculateRewards(card, category, amount, ytdCategorySpend = 0) {
+export function calculateRewards(card, category, amount, ytdCategorySpend = 0, vendor = '') {
   const cfg = CARD_REWARDS[card];
   if (!cfg || !(amount > 0)) return { type: 'none', value: 0, unit: '', rate: 0 };
+
+  // Amex groceries at warehouse clubs / superstores earn the 1% base, not 6%
+  if (card === 'American Express Blue Cash Preferred' && category === 'Grocery' && isAmexGroceryExcluded(vendor)) {
+    return { type: 'cashback', value: amount * cfg.default / 100, unit: '$', rate: cfg.default };
+  }
 
   const catCfg = cfg.categories[category];
   let rate = rawRate(card, category);
@@ -93,17 +110,16 @@ export function rewardsDollarValue(card, rewards) {
 
 /**
  * Best card for a category by estimated dollar return per $1 spent.
+ * Pass `vendor` to make it merchant-aware (e.g. Amex loses its grocery bonus at Costco).
  * Ignores caps (caps are a ceiling, not a per-$ rate change at the margin).
  * @returns { card, rate, type, unit, perDollar } or null
  */
-export function getBestCard(category) {
+export function getBestCard(category, vendor = '') {
   let best = null;
-  for (const [card, cfg] of Object.entries(CARD_REWARDS)) {
-    const rate = rawRate(card, category);
-    const perDollar = cfg.type === 'cashback'
-      ? rate / 100
-      : rate * (cfg.pointValue || 0.01);
-    const cand = { card, rate, type: cfg.type, unit: cfg.unit, perDollar };
+  for (const card of Object.keys(CARD_REWARDS)) {
+    const r = calculateRewards(card, category, 1, 0, vendor);
+    const perDollar = rewardsDollarValue(card, r); // $ returned per $1 spent
+    const cand = { card, rate: r.rate, type: r.type, unit: r.unit, perDollar };
     if (!best) { best = cand; continue; }
     const diff = perDollar - best.perDollar;
     if (diff > 1e-9) best = cand;

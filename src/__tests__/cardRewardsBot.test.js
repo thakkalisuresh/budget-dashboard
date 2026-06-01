@@ -64,4 +64,17 @@ describe('buildRewardsLine', () => {
     expect(line).toContain('✓');
     expect(line).not.toContain('⚠️');
   });
+
+  it('merchant-aware: Amex on Grocery at Costco is NOT best — recommends Quicksilver', () => {
+    // At Costco, Amex earns 1% (excluded), Quicksilver 1.5% wins → warning, ~$0.50 on $100
+    const line = buildRewardsLine('American Express Blue Cash Preferred', 'Grocery', 100, 'Costco Wholesale');
+    expect(line).toContain('⚠️');
+    expect(line).toContain('Capital One Quicksilver earns 1.5% here');
+    expect(line).toContain('saves ~$0.50');
+  });
+
+  it('merchant-aware: Amex on Grocery at a real supermarket IS best', () => {
+    const line = buildRewardsLine('American Express Blue Cash Preferred', 'Grocery', 100, 'Safeway');
+    expect(line).toBe('📊 6% cash back — best card for Grocery ✓');
+  });
 });

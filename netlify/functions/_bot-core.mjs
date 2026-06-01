@@ -242,7 +242,7 @@ export async function handleTextReply(ctx, text) {
     const hints = ['UNDO to reverse'];
     if (!driveFileId) hints.push('ATTACH to add receipt photo');
 
-    const rewardsLine = paymentMethod ? buildRewardsLine(paymentMethod, category, amount) : '';
+    const rewardsLine = paymentMethod ? buildRewardsLine(paymentMethod, category, amount, vendor) : '';
 
     const summary = [
       'Receipt logged!',
