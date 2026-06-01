@@ -180,7 +180,12 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     setDupWarning(false);
     setPhase('saving');
     try {
-      await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'scan', isRandom, paymentMethod);
+      // txDate is null (receipts have no parsed date → logged as today). The
+      // "one-time/random" flag is applied via markNonMonthly, not the date slot.
+      await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'scan', null, paymentMethod);
+      if (isRandom) {
+        try { await markNonMonthly(sheetId, accessToken, vendor.trim(), amt); } catch { /* non-fatal */ }
+      }
 
       const newSaved = [...savedReceipts, { vendor: vendor.trim(), amount: amt, category }];
       setSavedReceipts(newSaved);

@@ -1,7 +1,7 @@
 import { apiFetch, fetchRaw, writeCell, clearRowRange, appendRow } from './sheetApi.js';
 import {
   getEffectiveSheetMap, colLetter, safeText, parseAmounts, buildFormula,
-  generateTransactionUUID, uuidStart, detectV2, todayIso,
+  generateTransactionUUID, uuidStart, detectV2, coerceTxDate,
 } from './sheetHelpers.js';
 import { invalidateDetailCache } from './sheetDetail.js';
 import { appendHistoryEntry } from './sheetHistory.js';
@@ -37,7 +37,7 @@ export async function addOrUpdateExpense(
   const newUUID = generateTransactionUUID(amount);
 
   if (isV2) {
-    const dateVal   = txDate || todayIso();
+    const dateVal   = coerceTxDate(txDate);
     const descColV2 = 3;
     const amtColV2  = 4;
     const pmColV2   = 5;

@@ -16,6 +16,8 @@ import {
   isV2EligibleMonth,
   detectV2,
   formatTxDate,
+  coerceTxDate,
+  todayIso,
 } from '../sheetHelpers.js';
 
 // ── safeText ─────────────────────────────────────────────────────────────────
@@ -365,6 +367,27 @@ describe('formatTxDate', () => {
     const result = formatTxDate('2026-01-01');
     expect(result).toContain('Jan');
     expect(result).toContain('2026');
+  });
+});
+
+// ── coerceTxDate ──────────────────────────────────────────────────────────────
+
+describe('coerceTxDate', () => {
+  it('passes through a valid date string', () => {
+    expect(coerceTxDate('2026-06-02')).toBe('2026-06-02');
+  });
+
+  it('falls back to today for null/undefined/empty', () => {
+    expect(coerceTxDate(null)).toBe(todayIso());
+    expect(coerceTxDate(undefined)).toBe(todayIso());
+    expect(coerceTxDate('')).toBe(todayIso());
+    expect(coerceTxDate('   ')).toBe(todayIso());
+  });
+
+  it('falls back to today for non-strings (Quirk A: boolean in date slot)', () => {
+    expect(coerceTxDate(true)).toBe(todayIso());
+    expect(coerceTxDate(false)).toBe(todayIso());
+    expect(coerceTxDate(123)).toBe(todayIso());
   });
 });
 

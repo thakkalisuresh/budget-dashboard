@@ -60,6 +60,13 @@ export function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// Defensive: only a non-empty string is a valid transaction date; anything else
+// (null, boolean, number) falls back to today. Guards the date cell against
+// callers passing the wrong positional arg.
+export function coerceTxDate(txDate) {
+  return (typeof txDate === 'string' && txDate.trim()) ? txDate : todayIso();
+}
+
 export function formatTxDate(dateStr) {
   if (!dateStr) return '';
   try {
