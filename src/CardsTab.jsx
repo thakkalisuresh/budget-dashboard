@@ -1,8 +1,13 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { CreditCard, RefreshCw, Inbox } from 'lucide-react';
-import { fetchHistory, formatTxDate, ensureCardsSummarySheet } from './sheetsApi.js';
+import { CreditCard, RefreshCw, Inbox, Award, TrendingUp } from 'lucide-react';
+import { fetchHistory, formatTxDate, ensureCardsSummarySheet, CATEGORIES } from './sheetsApi.js';
+import {
+  calculateRewards, rewardsDollarValue, bestCardTable, cardEarnsRewards,
+  UR_POINT_VALUE_CSR, UR_POINT_VALUE_CFU,
+} from './cardRewards.js';
 
 const SPEND_ACTIONS = new Set(['Added', 'Receipt Scan', 'Import', 'Updated']);
+const AMEX = 'American Express Blue Cash Preferred';
 
 function formatTimestamp(iso) {
   if (!iso) return '—';
@@ -12,6 +17,15 @@ function formatTimestamp(iso) {
       hour: 'numeric', minute: '2-digit', hour12: true,
     });
   } catch { return iso; }
+}
+
+// 'YYYY-MM-DD' or ISO timestamp → 'Jun 2026'
+function monthKeyOf(entry) {
+  const src = entry.txDate || entry.timestamp;
+  if (!src) return 'Unknown';
+  const d = new Date(entry.txDate ? entry.txDate + 'T00:00:00' : entry.timestamp);
+  if (isNaN(d)) return 'Unknown';
+  return d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
 }
 
 export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [] }) {
@@ -64,6 +78,44 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
       : cardEntries.filter(e => e.paymentMethod === selectedCard);
     return [...list].sort((a, b) => 0); // already reverse-chronological from fetchHistory
   }, [cardEntries, selectedCard]);
+
+  // Rewards: process oldest-first so the Amex grocery cap accumulates correctly
+  const rewards = useMemo(() => {
+    const chrono = [...cardEntries].reverse();
+    const ytd = {};                 // `${card}__${category}` → cumulative spend
+    let urPoints = 0, cashBack = 0; // UR (CSR+CFU) and cash ($ Amex+Quicksilver) — kept separate
+    let amexGroceryYtd = 0;
+    const monthly = {};             // 'Jun 2026' → estimated $ value
+    const perCard = {};             // card → { points, cash, type }
+
+    for (const e of chrono) {
+      const card = e.paymentMethod;
+      if (!cardEarnsRewards(card)) continue;
+      const cat = e.category || 'Misc';
+      const amt = e.amount ?? 0;
+      const key = `${card}__${cat}`;
+      const r = calculateRewards(card, cat, amt, ytd[key] || 0);
+      ytd[key] = (ytd[key] || 0) + amt;
+      if (card === AMEX && cat === 'Grocery') amexGroceryYtd += amt;
+
+      if (!perCard[card]) perCard[card] = { points: 0, cash: 0, type: r.type };
+      if (r.type === 'points')        { urPoints += r.value; perCard[card].points += r.value; }
+      else if (r.type === 'cashback') { cashBack += r.value; perCard[card].cash  += r.value; }
+
+      const mk = monthKeyOf(e);
+      monthly[mk] = (monthly[mk] || 0) + rewardsDollarValue(card, r);
+    }
+
+    const monthlyList = Object.entries(monthly)
+      .map(([month, value]) => ({ month, value }))
+      .sort((a, b) => new Date('1 ' + a.month) - new Date('1 ' + b.month));
+
+    return { urPoints, cashBack, amexGroceryYtd, monthlyList, perCard };
+  }, [cardEntries]);
+
+  const hasRewards = rewards.urPoints > 0 || rewards.cashBack > 0;
+  const maxMonthly = Math.max(1, ...rewards.monthlyList.map(m => m.value));
+  const bestTable  = useMemo(() => bestCardTable(CATEGORIES), []);
 
   return (
     <div className="space-y-5">
@@ -129,6 +181,93 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
         </div>
       )}
 
+      {/* Rewards earned to date */}
+      {!loading && hasRewards && (
+        <div className="bg-white dark:bg-slate-800 rounded-[2rem] border border-slate-100 dark:border-slate-700 p-5 space-y-4">
+          <div className="flex items-center gap-2">
+            <Award className="w-4 h-4 text-amber-500" />
+            <h3 className="text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-200">Rewards Earned</h3>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            {/* UR points */}
+            <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl p-4">
+              <p className="text-[10px] font-black uppercase tracking-wider text-indigo-400">Chase UR Points</p>
+              <p className="text-2xl font-black text-indigo-700 dark:text-indigo-300 tabular-nums mt-1">
+                {Math.round(rewards.urPoints).toLocaleString()}
+              </p>
+              <p className="text-[10px] text-slate-400 mt-1">
+                ≈ {currencySymbol}{(rewards.urPoints * UR_POINT_VALUE_CFU).toFixed(0)}–{(rewards.urPoints * UR_POINT_VALUE_CSR).toFixed(0)} (1–1.5¢/pt)
+              </p>
+            </div>
+            {/* Cash back */}
+            <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl p-4">
+              <p className="text-[10px] font-black uppercase tracking-wider text-emerald-500">Cash Back</p>
+              <p className="text-2xl font-black text-emerald-700 dark:text-emerald-300 tabular-nums mt-1">
+                {currencySymbol}{rewards.cashBack.toFixed(2)}
+              </p>
+              <p className="text-[10px] text-slate-400 mt-1">Amex + Quicksilver</p>
+            </div>
+          </div>
+
+          {/* Per-card cash-back breakdown */}
+          {Object.entries(rewards.perCard).filter(([, v]) => v.cash > 0).length > 0 && (
+            <div className="space-y-1.5">
+              {Object.entries(rewards.perCard)
+                .filter(([, v]) => v.cash > 0)
+                .sort((a, b) => b[1].cash - a[1].cash)
+                .map(([card, v]) => (
+                  <div key={card} className="flex items-center justify-between text-xs">
+                    <span className="text-slate-500 dark:text-slate-400 truncate">{card}</span>
+                    <span className="font-bold text-slate-700 dark:text-slate-200 tabular-nums">{currencySymbol}{v.cash.toFixed(2)}</span>
+                  </div>
+                ))}
+            </div>
+          )}
+
+          {/* Amex grocery cap indicator */}
+          {rewards.amexGroceryYtd > 0 && (
+            <div className="pt-1">
+              <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 mb-1">
+                <span>Amex grocery 6% cap (yearly)</span>
+                <span>{currencySymbol}{Math.round(rewards.amexGroceryYtd).toLocaleString()} / {currencySymbol}6,000</span>
+              </div>
+              <div className="h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full ${rewards.amexGroceryYtd >= 6000 ? 'bg-rose-400' : 'bg-emerald-400'}`}
+                  style={{ width: `${Math.min(100, (rewards.amexGroceryYtd / 6000) * 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Monthly rewards trend */}
+      {!loading && rewards.monthlyList.length > 0 && (
+        <div className="bg-white dark:bg-slate-800 rounded-[2rem] border border-slate-100 dark:border-slate-700 p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-indigo-500" />
+            <h3 className="text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-200">Monthly Rewards Value</h3>
+          </div>
+          <div className="space-y-2">
+            {rewards.monthlyList.map(({ month, value }) => (
+              <div key={month} className="flex items-center gap-3">
+                <span className="text-[10px] font-bold text-slate-400 w-16 flex-shrink-0">{month}</span>
+                <div className="flex-1 h-5 bg-slate-50 dark:bg-slate-700/40 rounded-lg overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-indigo-400 to-indigo-500 rounded-lg flex items-center justify-end px-2"
+                    style={{ width: `${Math.max(8, (value / maxMonthly) * 100)}%` }}
+                  >
+                    <span className="text-[10px] font-black text-white tabular-nums">{currencySymbol}{value.toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-slate-400">Estimated value — points at 1.5¢ (CSR) / 1¢ (CFU), cash back as-is.</p>
+        </div>
+      )}
+
       {/* Loading */}
       {loading && (
         <div className="space-y-3">
@@ -190,6 +329,26 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Best card per category — always visible, static recommendation */}
+      {!loading && (
+        <div className="bg-white dark:bg-slate-800 rounded-[2rem] border border-slate-100 dark:border-slate-700 p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <Award className="w-4 h-4 text-amber-500" />
+            <h3 className="text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-200">Best Card per Category</h3>
+          </div>
+          <div className="divide-y divide-slate-50 dark:divide-slate-700/50">
+            {bestTable.map(({ category, card, label }) => (
+              <div key={category} className="flex items-center justify-between gap-3 py-2">
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-300 flex-shrink-0 w-24">{category}</span>
+                <span className="text-xs text-slate-700 dark:text-slate-200 font-semibold truncate flex-1 text-right">{card}</span>
+                <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">{label}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-slate-400">Points compared at 1.5¢ (CSR) / 1¢ (CFU) to rank against cash-back cards.</p>
         </div>
       )}
     </div>
