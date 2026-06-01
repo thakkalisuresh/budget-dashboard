@@ -3,7 +3,7 @@ import { CreditCard, RefreshCw, Inbox, Award, TrendingUp } from 'lucide-react';
 import { fetchHistory, formatTxDate, ensureCardsSummarySheet, CATEGORIES } from './sheetsApi.js';
 import {
   calculateRewards, rewardsDollarValue, bestCardTable, cardEarnsRewards,
-  isAmexGroceryExcluded, UR_POINT_VALUE_CSR, UR_POINT_VALUE_CFU,
+  resolveMCC, UR_POINT_VALUE_CSR, UR_POINT_VALUE_CFU,
 } from './cardRewards.js';
 
 const SPEND_ACTIONS = new Set(['Added', 'Receipt Scan', 'Import', 'Updated', 'WhatsApp Receipt', 'Telegram Receipt']);
@@ -82,9 +82,8 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
   // Rewards: process oldest-first so the Amex grocery cap accumulates correctly
   const rewards = useMemo(() => {
     const chrono = [...cardEntries].reverse();
-    const ytd = {};                 // `${card}__${category}` → cumulative spend
     let urPoints = 0, cashBack = 0; // UR (CSR+CFU) and cash ($ Amex+Quicksilver) — kept separate
-    let amexGroceryYtd = 0;
+    let amexGroceryYtd = 0;         // qualifying supermarket spend (MCCs 5411/5422) for the $6k cap
     const monthly = {};             // 'Jun 2026' → estimated $ value
     const perCard = {};             // card → { points, cash, type }
 
@@ -93,12 +92,11 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
       if (!cardEarnsRewards(card)) continue;
       const cat = e.category || 'Misc';
       const amt = e.amount ?? 0;
-      const key = `${card}__${cat}`;
-      const r = calculateRewards(card, cat, amt, ytd[key] || 0, e.vendor);
-      // Amex grocery at excluded warehouse clubs earns base 1% and doesn't count toward the $6k cap
-      const qualifiesAmexGrocery = card === AMEX && cat === 'Grocery' && !isAmexGroceryExcluded(e.vendor);
-      if (!(card === AMEX && cat === 'Grocery') || qualifiesAmexGrocery) ytd[key] = (ytd[key] || 0) + amt;
-      if (qualifiesAmexGrocery) amexGroceryYtd += amt;
+      const mcc = resolveMCC(e.vendor, cat);
+      // Only Amex supermarket MCCs contribute to the $6k annual cap
+      const qualifiesAmexCap = card === AMEX && (mcc === '5411' || mcc === '5422');
+      const r = calculateRewards(card, mcc, amt, qualifiesAmexCap ? amexGroceryYtd : 0);
+      if (qualifiesAmexCap) amexGroceryYtd += amt;
 
       if (!perCard[card]) perCard[card] = { points: 0, cash: 0, type: r.type };
       if (r.type === 'points')        { urPoints += r.value; perCard[card].points += r.value; }

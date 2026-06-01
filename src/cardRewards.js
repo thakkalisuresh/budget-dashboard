@@ -1,5 +1,5 @@
 /**
- * Card rewards engine — pre-seeded rates for the household's cards.
+ * Card rewards engine — MCC-based rates for the household's cards.
  *
  * Two reward types, tracked SEPARATELY (never summed together):
  *   - 'cashback' → value is a dollar amount (rate is a % of spend)
@@ -8,95 +8,107 @@
  * Point → dollar valuation (for comparison + estimated-value display only):
  *   - Chase UR via Sapphire Reserve travel portal ≈ 1.5¢/pt
  *   - Freedom Unlimited UR ≈ 1.0¢/pt base (1.5¢ if pooled with CSR)
- * These are display assumptions, not tracked cash.
  */
+
+import { resolveMCC } from './vendorMCC.js';
+export { resolveMCC };
 
 export const UR_POINT_VALUE_CSR = 0.015; // $ per UR point (CSR travel portal)
 export const UR_POINT_VALUE_CFU = 0.01;  // $ per UR point (CFU base)
 
 // rate semantics: cashback → percent (6 = 6%); points → multiplier (3 = 3x)
+// MCC entries: number = flat rate; { portal, direct } = booking-method split;
+//              { rate, cap } = annual-capped category
 export const CARD_REWARDS = {
   'Chase Sapphire Reserve': {
     type: 'points', unit: 'UR', pointValue: UR_POINT_VALUE_CSR,
-    // 'Thakkali' is a personal-spend bucket (no single merchant type) → base rate
-    categories: { 'Eating Out': 3, 'Travel': 3, 'Holiday': 3 },
+    mccs: {
+      '5812': 3, '5813': 3, '5814': 3,            // dining
+      '4511': { portal: 8, direct: 4 },            // airlines
+      '7011': { portal: 8, direct: 4 },            // hotels
+      'CHASE_PORTAL': 8,                            // catch-all Chase Travel portal
+    },
     default: 1,
   },
   'American Express Blue Cash Preferred': {
     type: 'cashback', unit: '$',
-    categories: { 'Grocery': { rate: 6, cap: { annual: 6000, then: 1 } } },
+    mccs: {
+      '5411': { rate: 6, cap: { annual: 6000, then: 1 } }, // US supermarkets
+      '5422': { rate: 6, cap: { annual: 6000, then: 1 } }, // specialty food
+      '5300': 1, '5310': 1, '5311': 1,            // wholesale/superstore exclusions → base
+      '7372': 6,                                    // streaming
+      '5541': 3, '5542': 3,                        // gas stations
+      '4121': 3, '4111': 3, '4131': 3,            // rideshare, local transit, bus
+      '4784': 3,                                    // bridge/road tolls
+      '7523': 3,                                    // parking lots/garages
+    },
     default: 1,
   },
   'Capital One Quicksilver': {
     type: 'cashback', unit: '$',
-    categories: {},
+    mccs: {},
     default: 1.5,
   },
   'Chase Freedom Unlimited': {
     type: 'points', unit: 'UR', pointValue: UR_POINT_VALUE_CFU,
-    categories: { 'Eating Out': 3, 'Health': 3 },
+    mccs: {
+      '5812': 3, '5813': 3, '5814': 3,            // dining
+      '5912': 3,                                    // pharmacy/drugstore
+    },
     default: 1.5,
   },
 };
-
-// Amex's 6% "US supermarkets" bonus EXCLUDES warehouse clubs and superstores —
-// purchases there earn the 1% base instead. Matched by vendor substring.
-// (Whole Foods is ambiguous — it often codes under Amazon — so left out.)
-const AMEX_GROCERY_EXCLUDED = ['costco', 'walmart', 'target', 'samsclub', 'bjs'];
-
-export function isAmexGroceryExcluded(vendor) {
-  if (!vendor) return false;
-  const v = String(vendor).toLowerCase().replace(/[^a-z0-9]/g, '');
-  return AMEX_GROCERY_EXCLUDED.some(x => v.includes(x));
-}
 
 // Cards with no rewards program (debit, bank, cash)
 export function cardEarnsRewards(card) {
   return !!CARD_REWARDS[card];
 }
 
-/** Raw rate for a card+category (percent for cashback, multiplier for points). */
-function rawRate(card, category) {
+function rawRate(card, mcc, bookingMethod = 'portal') {
   const cfg = CARD_REWARDS[card];
   if (!cfg) return 0;
-  const cat = cfg.categories[category];
-  if (cat == null) return cfg.default;
-  return typeof cat === 'object' ? cat.rate : cat;
+  const mccCfg = cfg.mccs[mcc];
+  if (mccCfg == null) return cfg.default;
+  if (typeof mccCfg === 'number') return mccCfg;
+  if ('portal' in mccCfg) return bookingMethod === 'direct' ? mccCfg.direct : mccCfg.portal;
+  if ('rate' in mccCfg) return mccCfg.rate;
+  return cfg.default;
 }
 
 /**
  * Calculate rewards earned on a single transaction.
- * @param ytdCategorySpend - year-to-date spend on THIS card+category (for caps)
- * @returns { type, value, unit, rate } — value is $ (cashback) or points (points)
+ * @param mcc        - MCC resolved via resolveMCC(vendor, category)
+ * @param ytdSpend   - year-to-date spend qualifying for the same cap bucket (Amex supermarkets)
+ * @param bookingMethod - 'portal' (default) or 'direct' — only relevant for CSR travel MCCs
+ * @returns { type, value, unit, rate }
  */
-export function calculateRewards(card, category, amount, ytdCategorySpend = 0, vendor = '') {
+export function calculateRewards(card, mcc, amount, ytdSpend = 0, bookingMethod = 'portal') {
   const cfg = CARD_REWARDS[card];
   if (!cfg || !(amount > 0)) return { type: 'none', value: 0, unit: '', rate: 0 };
 
-  // Amex groceries at warehouse clubs / superstores earn the 1% base, not 6%
-  if (card === 'American Express Blue Cash Preferred' && category === 'Grocery' && isAmexGroceryExcluded(vendor)) {
-    return { type: 'cashback', value: amount * cfg.default / 100, unit: '$', rate: cfg.default };
+  const mccCfg = cfg.mccs[mcc];
+
+  // Travel MCCs with portal/direct split (CSR airlines + hotels)
+  if (mccCfg && typeof mccCfg === 'object' && 'portal' in mccCfg) {
+    const rate = bookingMethod === 'direct' ? mccCfg.direct : mccCfg.portal;
+    return { type: 'points', value: amount * rate, unit: cfg.unit, rate };
   }
 
-  const catCfg = cfg.categories[category];
-  let rate = rawRate(card, category);
-
-  // Capped categories (e.g. Amex 6% groceries up to $6k/yr, then 1%)
-  if (catCfg && typeof catCfg === 'object' && catCfg.cap) {
-    const { annual, then } = catCfg.cap;
-    const remaining = Math.max(0, annual - ytdCategorySpend);
+  // Capped categories (Amex US supermarkets — 6% up to $6k/yr, then 1%)
+  if (mccCfg && typeof mccCfg === 'object' && mccCfg.cap) {
+    const { rate, cap: { annual, then } } = mccCfg;
+    const remaining = Math.max(0, annual - ytdSpend);
     const atRate    = Math.min(amount, remaining);
     const overRate  = amount - atRate;
-    if (cfg.type === 'cashback') {
-      const value = (atRate * catCfg.rate / 100) + (overRate * then / 100);
-      return { type: 'cashback', value, unit: '$', rate: catCfg.rate };
-    }
+    const value     = (atRate * rate / 100) + (overRate * then / 100);
+    return { type: 'cashback', value, unit: '$', rate };
   }
+
+  const rate = typeof mccCfg === 'number' ? mccCfg : cfg.default;
 
   if (cfg.type === 'cashback') {
     return { type: 'cashback', value: amount * rate / 100, unit: '$', rate };
   }
-  // points: rate is multiplier
   return { type: 'points', value: amount * rate, unit: cfg.unit, rate };
 }
 
@@ -110,15 +122,16 @@ export function rewardsDollarValue(card, rewards) {
 
 /**
  * Best card for a category by estimated dollar return per $1 spent.
- * Pass `vendor` to make it merchant-aware (e.g. Amex loses its grocery bonus at Costco).
- * Ignores caps (caps are a ceiling, not a per-$ rate change at the margin).
- * @returns { card, rate, type, unit, perDollar } or null
+ * Pass `vendor` for merchant-aware comparison (e.g. Costco → Quicksilver beats Amex).
+ * Uses portal booking for CSR travel (the typical/default case).
+ * Ignores annual caps (ceiling, not a per-$ rate change at the margin).
  */
 export function getBestCard(category, vendor = '') {
+  const mcc = resolveMCC(vendor, category);
   let best = null;
   for (const card of Object.keys(CARD_REWARDS)) {
-    const r = calculateRewards(card, category, 1, 0, vendor);
-    const perDollar = rewardsDollarValue(card, r); // $ returned per $1 spent
+    const r = calculateRewards(card, mcc, 1, 0, 'portal');
+    const perDollar = rewardsDollarValue(card, r);
     const cand = { card, rate: r.rate, type: r.type, unit: r.unit, perDollar };
     if (!best) { best = cand; continue; }
     const diff = perDollar - best.perDollar;
