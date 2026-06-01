@@ -24,6 +24,49 @@ const DAILY_LIMIT    = 50;
 const UNDO_WINDOW_MS = 10 * 60 * 1000;
 const DASHBOARD_URL  = process.env.SITE_URL || 'https://budget-dashboard-tracker.netlify.app';
 
+/* ── Card resolution (server-side mirror of src/smartRules + resolveCardName) ── */
+
+const normCard = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+function resolveCardName(raw, cards = []) {
+  if (!raw || !cards.length) return '';
+  const r = normCard(raw);
+  if (!r) return '';
+  for (const c of cards) if (normCard(c) === r) return c;
+  for (const c of cards) {
+    const nc = normCard(c);
+    if (nc.length >= 5 && r.length >= 5 && (nc.includes(r) || r.includes(nc))) return c;
+  }
+  return '';
+}
+
+function applyCardRules(vendor, category, rules = []) {
+  if (!vendor || !rules.length) return '';
+  const v = vendor.toLowerCase().trim();
+  const matches = rules.filter(rule => {
+    if (!rule.vendorPattern?.trim()) return false;
+    if (!v.includes(rule.vendorPattern.toLowerCase().trim())) return false;
+    if (rule.category && rule.category !== category) return false;
+    return true;
+  });
+  if (!matches.length) return '';
+  matches.sort((a, b) => {
+    const aSpec = a.category ? 1 : 0, bSpec = b.category ? 1 : 0;
+    if (bSpec !== aSpec) return bSpec - aSpec;
+    return b.vendorPattern.length - a.vendorPattern.length;
+  });
+  return matches[0].card || '';
+}
+
+/** Vision card → fuzzy match → card rules → '' */
+function resolveCard(visionCard, vendor, category, settings = {}) {
+  return resolveCardName(visionCard, settings.cards || [])
+    || applyCardRules(vendor, category, settings.cardRules || [])
+    || '';
+}
+
+const sheetUrl = (sheetId) => sheetId ? `https://docs.google.com/spreadsheets/d/${sheetId}` : DASHBOARD_URL;
+
 /* ── Rate limiting ── */
 
 async function getRateCount(store, userId) {
@@ -152,11 +195,12 @@ export async function handleTextReply(ctx, text) {
     }
 
     const { extraction, driveFileId, year, month } = pending;
-    const category  = extraction.reward_category || 'Misc';
-    const vendor    = extraction.store_name || 'Unknown';
-    const amount    = extraction.total_amount;
-    const txDate    = extraction.purchase_date;
-    const monthName = `${month} ${year}`;
+    const category      = extraction.reward_category || 'Misc';
+    const vendor        = extraction.store_name || 'Unknown';
+    const amount        = extraction.total_amount;
+    const txDate        = extraction.purchase_date;
+    const paymentMethod = extraction.payment_method || '';
+    const monthName     = `${month} ${year}`;
 
     let sheetId;
     try {
@@ -168,7 +212,7 @@ export async function handleTextReply(ctx, text) {
 
     let result;
     try {
-      result = await appendExpense({ category, vendor, amount, txDate, sheetId, monthName });
+      result = await appendExpense({ category, vendor, amount, txDate, sheetId, monthName, paymentMethod });
     } catch (e) {
       console.error('bot-core: Sheets append failed', e.message);
       return ctx.send('Failed to log receipt to spreadsheet. Please try via the dashboard.');
@@ -184,7 +228,7 @@ export async function handleTextReply(ctx, text) {
     }
 
     await store.setJSON(`lastlog:${userId}`, {
-      uuid: result.uuid, category, vendor, amount, txDate,
+      uuid: result.uuid, category, vendor, amount, txDate, paymentMethod,
       sheetId, monthName, year, month,
       driveFileId: driveFileId || null,
       driveShareLink: pending.driveShareLink || null,
@@ -204,9 +248,10 @@ export async function handleTextReply(ctx, text) {
       `Date: ${txDate || 'Today'}`,
       `Category: ${category}`,
       `Total: $${amount}`,
+      ...(paymentMethod ? [`Card: ${paymentMethod}`] : []),
       ...(pending.conversionInfo ? [`(Converted from ${pending.conversionInfo.originalCurrency} ${pending.conversionInfo.original} · rate ${pending.conversionInfo.rate.toFixed(4)})`] : []),
       ...(pending.driveShareLink ? [`View Receipt: ${pending.driveShareLink}`] : []),
-      `Dashboard: ${DASHBOARD_URL}`,
+      `View Sheet: ${sheetUrl(sheetId)}`,
       '',
       hints.join(' · '),
     ].join('\n');
@@ -336,8 +381,8 @@ export async function handleTextReply(ctx, text) {
     }
   }
 
-  // ── Field edit: "category: X", "amount: X", "store: X", "date: X" ──
-  const editMatch = text.trim().match(/^(category|amount|store|date)\s*:\s*(.+)$/i);
+  // ── Field edit: "category: X", "amount: X", "store: X", "date: X", "card: X" ──
+  const editMatch = text.trim().match(/^(category|amount|store|date|card)\s*:\s*(.+)$/i);
   if (editMatch) {
     const { blobs } = await store.list({ prefix: `confirm:${userId}:` });
     if (!blobs || blobs.length === 0) {
@@ -374,15 +419,32 @@ export async function handleTextReply(ctx, text) {
       pending.extraction.purchase_date = value;
       pending.year = new Date(value).getFullYear();
       pending.month = new Date(value).toLocaleString('en-US', { month: 'long' });
+    } else if (field === 'card') {
+      let settings = {};
+      try { settings = await getUserSettings(); } catch { /* no settings */ }
+      const cards = settings.cards || [];
+      const matched = resolveCardName(value, cards) || cards.find(c => c.toLowerCase() === value.toLowerCase());
+      if (!matched) {
+        return ctx.send(cards.length
+          ? `Unknown card. Choose from:\n${cards.join(', ')}`
+          : 'No cards configured. Add cards in the dashboard settings first.');
+      }
+      pending.extraction.payment_method = matched;
     }
 
     await store.setJSON(key, pending);
 
     const e = pending.extraction;
-    return ctx.send(
-      `Updated!\nStore: ${e.store_name || 'Unknown'}\nDate: ${e.purchase_date || 'Unknown'}\nCategory: ${e.reward_category || 'Misc'}\nTotal: $${e.total_amount ?? '?'}\n\nReply YES to log, or CANCEL`,
-      kbYesCancel()
-    );
+    const lines = [
+      'Updated!',
+      `Store: ${e.store_name || 'Unknown'}`,
+      `Date: ${e.purchase_date || 'Unknown'}`,
+      `Category: ${e.reward_category || 'Misc'}`,
+      `Total: $${e.total_amount ?? '?'}`,
+    ];
+    if (e.payment_method) lines.push(`Card: ${e.payment_method}`);
+    lines.push('', 'Reply YES to log, or CANCEL');
+    return ctx.send(lines.join('\n'), kbYesCancel());
   }
 
   // ── Manual entry: "Walmart 45.23 Grocery" ──
@@ -396,6 +458,13 @@ export async function handleTextReply(ctx, text) {
 
     const matchedCat = CATEGORIES.find(c => c.toLowerCase() === category.trim().toLowerCase()) || 'Misc';
     const now = new Date();
+
+    // Resolve card from rules (no vision data on manual entries)
+    let cardName = '';
+    try {
+      const settings = await getUserSettings();
+      cardName = applyCardRules(vendor.trim(), matchedCat, settings.cardRules || []);
+    } catch { /* non-fatal */ }
 
     // Check for failed pending extraction (preserves image data if available)
     const { blobs } = await store.list({ prefix: 'pending:' });
@@ -421,16 +490,17 @@ export async function handleTextReply(ctx, text) {
         currency: 'USD',
         items: [],
         reward_category: matchedCat,
+        payment_method: cardName,
       },
       year: now.getFullYear(),
       month: now.toLocaleString('en-US', { month: 'long' }),
       status: 'awaiting_confirmation',
     });
 
-    return ctx.send(
-      `Got it:\nStore: ${vendor.trim()}\nCategory: ${matchedCat}\nTotal: $${amount}\n\nReply YES to log, or CANCEL`,
-      kbYesCancel()
-    );
+    const lines = [`Got it:`, `Store: ${vendor.trim()}`, `Category: ${matchedCat}`, `Total: $${amount}`];
+    if (cardName) lines.push(`Card: ${cardName}`);
+    lines.push('', 'Reply YES to log, or CANCEL');
+    return ctx.send(lines.join('\n'), kbYesCancel());
   }
 
   // ── Transaction text parsing (bank SMS / payment notification) ──
@@ -458,6 +528,12 @@ export async function handleTextReply(ctx, text) {
         });
         return ctx.send(buildTransferPrompt(data, conversionInfo));
       }
+
+      // Resolve card: Vision-less, so rules only (plus any card the parser surfaced)
+      try {
+        const settings = await getUserSettings();
+        data.payment_method = resolveCard(data.payment_method, data.store_name, data.reward_category, settings);
+      } catch { /* non-fatal */ }
 
       await store.setJSON(`confirm:${userId}:${receiptId}`, {
         id: receiptId,
@@ -521,6 +597,16 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
     : now.toLocaleString('en-US', { month: 'long' });
 
   const conversionInfo = await maybeConvertCurrency(data);
+
+  // Resolve payment method: Vision card → fuzzy match → card rules
+  let cardName = '';
+  try {
+    const settings = await getUserSettings();
+    cardName = resolveCard(data.payment_method, data.store_name, data.reward_category, settings);
+  } catch (e) {
+    console.warn('bot-core: card resolution failed (non-fatal)', e.message);
+  }
+  data.payment_method = cardName;
 
   let driveResult = null;
   try {
@@ -633,10 +719,11 @@ function buildConfirmPrompt(data, conversionInfo) {
     `Category: ${data.reward_category || 'Misc'}`,
     `Total: $${data.total_amount ?? '?'}`,
   ];
+  if (data.payment_method) lines.push(`Card: ${data.payment_method}`);
   if (conversionInfo) {
     lines.push(`(Converted from ${conversionInfo.originalCurrency} ${conversionInfo.original} · rate ${conversionInfo.rate.toFixed(4)})`);
   }
-  lines.push('', 'Reply YES to log, or CANCEL', 'Edit: "category: Travel" or "amount: 52.10"');
+  lines.push('', 'Reply YES to log, or CANCEL', 'Edit: "category: Travel", "amount: 52.10", or "card: Chase"');
   return lines.join('\n');
 }
 

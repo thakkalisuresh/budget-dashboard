@@ -79,7 +79,7 @@ export async function getCurrentMonthSheetId(monthName) {
   throw new Error(`No sheet found for month: ${target}`);
 }
 
-export async function appendExpense({ category, vendor, amount, txDate, sheetId, monthName }) {
+export async function appendExpense({ category, vendor, amount, txDate, sheetId, monthName, paymentMethod = '' }) {
   const config = SHEET_MAP[category];
   if (!config) throw new Error(`Unknown category: ${category}`);
 
@@ -94,7 +94,8 @@ export async function appendExpense({ category, vendor, amount, txDate, sheetId,
   const dateVal = txDate || now.toISOString().slice(0, 10);
   const uuid    = generateUUID(amount);
 
-  const row = [month, year, dateVal, safeString(vendor), amount, uuid];
+  // V2 schema (matches web app): month, year, date, vendor, amount, paymentMethod(F), uuid(G)
+  const row = [month, year, dateVal, safeString(vendor), amount, safeString(paymentMethod || ''), uuid];
 
   const range = encodeURIComponent(`'${config.sheet}'!A1`);
   await sheetsRequest(sheetId, `/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
@@ -109,13 +110,16 @@ export async function appendExpense({ category, vendor, amount, txDate, sheetId,
     amount,
     uuid,
     txDate: dateVal,
+    paymentMethod,
   });
 
   return { uuid, row };
 }
 
-async function appendHistory(sheetId, { action, category, vendor, amount, uuid, txDate, details }) {
+async function appendHistory(sheetId, { action, category, vendor, amount, uuid, txDate, details, paymentMethod }) {
   const now = new Date().toISOString();
+  // Bot 8-col layout preserved (uuid@6, user@7 — getRecentExpenses detects this),
+  // padded so paymentMethod lands at col K (index 10) for the Cards tab/summary.
   const row = [
     now,
     safeString(action),
@@ -125,6 +129,9 @@ async function appendHistory(sheetId, { action, category, vendor, amount, uuid, 
     details || 'Receipt via WhatsApp',
     uuid || '',
     'whatsapp-bot',
+    '',
+    txDate || '',
+    safeString(paymentMethod || ''),
   ];
 
   const range = encodeURIComponent("'History'!A1");

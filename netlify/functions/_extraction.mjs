@@ -31,7 +31,7 @@ function buildUserPrompt() {
 
 Return EXACTLY this JSON structure:
 
-{"store_name":"Store Name","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":3.50,"currency":"USD","items":[{"name":"Item name","amount":5.99}],"reward_category":"Grocery","is_transfer":false}
+{"store_name":"Store Name","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":3.50,"currency":"USD","items":[{"name":"Item name","amount":5.99}],"reward_category":"Grocery","is_transfer":false,"payment_method":"Chase Sapphire Reserve"}
 
 Rules:
 - store_name: The merchant/vendor name (for transfers, use the recipient name)
@@ -42,9 +42,10 @@ Rules:
 - items: Array of line items with name and amount. Empty array [] for non-receipt images
 - reward_category: MUST be exactly one of: ${CATEGORIES.join(', ')}. Pick the closest match. Use "Misc" if none fit. For transfers (is_transfer=true), set to null (user will pick).
 - is_transfer: true if this is a peer-to-peer payment, money transfer, or sending money (Zelle, Venmo, PayPal P2P, bank transfer, "sent to" someone). false for purchases at merchants.
+- payment_method: The card or account name if visible. On Apple Pay / Google Pay / Samsung Pay wallet screenshots the card name appears prominently near the top (e.g. "Sapphire Reserve", "Blue Cash Preferred") — extract it exactly as shown. Use null if no card is visible.
 
 If the image is completely unreadable, return:
-{"store_name":null,"purchase_date":null,"total_amount":null,"tax_amount":null,"currency":"USD","items":[],"reward_category":null,"is_transfer":false}
+{"store_name":null,"purchase_date":null,"total_amount":null,"tax_amount":null,"currency":"USD","items":[],"reward_category":null,"is_transfer":false,"payment_method":null}
 
 Respond with ONLY the JSON object. No other text.`;
 }
@@ -83,6 +84,9 @@ export function sanitizeExtraction(data) {
 
   if (typeof result.store_name === 'string') {
     result.store_name = safeString(result.store_name);
+  }
+  if (typeof result.payment_method === 'string') {
+    result.payment_method = safeString(result.payment_method);
   }
   if (typeof result.reward_category === 'string') {
     if (!CATEGORIES.includes(result.reward_category)) {

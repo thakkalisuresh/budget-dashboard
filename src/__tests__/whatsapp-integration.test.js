@@ -289,7 +289,7 @@ describe('webhook handler — text reply confirmation', () => {
     expect(text).toContain('$89.99');
     expect(text).toContain('Grocery');
     expect(text).toContain('drive.google.com');
-    expect(text).toContain('test-dashboard.netlify.app');
+    expect(text).toContain('View Sheet: https://docs.google.com/spreadsheets/d/');
     expect(mockStore.data.has('confirm:+919567791515:receipt-abc')).toBe(false);
   });
 

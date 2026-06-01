@@ -76,15 +76,19 @@ describe('appendExpense', () => {
       txDate: '2026-05-20',
       sheetId: 'month-sheet-id',
       monthName: 'May 2026',
+      paymentMethod: 'Chase Sapphire Reserve',
     });
 
+    // V2 schema: month, year, date, vendor, amount, paymentMethod(F), uuid(G)
     expect(result.uuid).toMatch(/^tx_4523_/);
-    expect(result.row).toHaveLength(6);
+    expect(result.row).toHaveLength(7);
     expect(result.row[0]).toBe('May');
     expect(result.row[1]).toBe(2026);
     expect(result.row[2]).toBe('2026-05-20');
     expect(result.row[3]).toBe('Walmart');
     expect(result.row[4]).toBe(45.23);
+    expect(result.row[5]).toBe('Chase Sapphire Reserve');
+    expect(result.row[6]).toBe(result.uuid);
 
     const calls = mockFetch.mock.calls.filter(c => !c[0].includes('oauth2'));
     const appendCall = calls[0];
@@ -159,6 +163,10 @@ describe('getRecentExpenses', () => {
     expect(out[0]).toMatchObject({ vendor: 'Walmart', uuid: 'web-uuid-1', txDate: '2026-05-09' });
   });
 
+  // bot (Phase 7 padded): uuid@6, user@7, ''@8, txDate@9, paymentMethod@10
+  const botRowWithCard = (action, category, vendor, amount, uuid, txDate, card) =>
+    ['2026-05-10T09:00:00Z', action, category, vendor, amount, 'Receipt via WhatsApp', uuid, 'whatsapp-bot', '', txDate || '', card || ''];
+
   it('reads the uuid from the bot 8-column layout (no txDate)', async () => {
     mockTokenThenApi(jsonResponse({ values: [
       HEADER,
@@ -167,6 +175,17 @@ describe('getRecentExpenses', () => {
     const out = await getRecentExpenses('sheet', 10);
     expect(out).toHaveLength(1);
     expect(out[0]).toMatchObject({ vendor: 'Swiggy', uuid: 'bot-uuid-1', txDate: '' });
+  });
+
+  it('reads the uuid from the Phase-7 padded bot row (card at col K, uuid still @6)', async () => {
+    mockTokenThenApi(jsonResponse({ values: [
+      HEADER,
+      botRowWithCard('WhatsApp Receipt', 'Grocery', 'Costco', 89.99, 'bot-uuid-2', '2026-06-02', 'Chase Sapphire Reserve'),
+    ] }));
+    const out = await getRecentExpenses('sheet', 10);
+    expect(out).toHaveLength(1);
+    // row[8] is '' so this stays "bot layout" — uuid must still come from index 6
+    expect(out[0]).toMatchObject({ vendor: 'Costco', uuid: 'bot-uuid-2' });
   });
 
   it('returns expenses from both layouts mixed in one sheet', async () => {
