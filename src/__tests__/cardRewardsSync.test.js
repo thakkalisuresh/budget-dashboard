@@ -74,6 +74,30 @@ describe('cardRewards client/server parity', () => {
     }
   });
 
+  it('calculateRewards uses custom rates when passed', () => {
+    // A custom rate that bumps Quicksilver to 3% cash back
+    const customRates = {
+      ...client.CARD_REWARDS,
+      'Capital One Quicksilver': { ...client.CARD_REWARDS['Capital One Quicksilver'], default: 3 },
+    };
+    const r = client.calculateRewards('Capital One Quicksilver', '5999', 100, 0, 'portal', customRates);
+    expect(r.rate).toBe(3);
+    expect(r.value).toBeCloseTo(3, 5);
+    // Server must agree
+    expect(server.calculateRewards('Capital One Quicksilver', '5999', 100, 0, 'portal', customRates))
+      .toEqual(r);
+  });
+
+  it('getBestCard uses custom rates when passed', () => {
+    // Bump Quicksilver to 10% cash back — should win everything
+    const customRates = {
+      ...client.CARD_REWARDS,
+      'Capital One Quicksilver': { ...client.CARD_REWARDS['Capital One Quicksilver'], default: 10 },
+    };
+    expect(client.getBestCard('Grocery', '', customRates).card).toBe('Capital One Quicksilver');
+    expect(server.getBestCard('Grocery', '', customRates).card).toBe('Capital One Quicksilver');
+  });
+
   it('getBestCard agrees across category × vendor', () => {
     for (const cat of CATEGORIES) {
       for (const vendor of VENDORS) {

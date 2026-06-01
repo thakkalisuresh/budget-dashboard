@@ -487,6 +487,7 @@ function Dashboard({ auth }) {
               accessToken={user.accessToken}
               currencySymbol={currencySymbol}
               cards={settings.cards || []}
+              settings={settings}
             />
           </Suspense>
         )}

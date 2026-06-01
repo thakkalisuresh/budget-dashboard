@@ -122,8 +122,8 @@ export const CARD_REWARDS = {
   },
 };
 
-export function cardEarnsRewards(card) {
-  return !!CARD_REWARDS[card];
+export function cardEarnsRewards(card, rates = CARD_REWARDS) {
+  return !!(rates || CARD_REWARDS)[card];
 }
 
 export function getEffectiveRates(settings) {
@@ -133,8 +133,8 @@ export function getEffectiveRates(settings) {
     : CARD_REWARDS;
 }
 
-function rawRate(card, mcc, bookingMethod = 'portal') {
-  const cfg = CARD_REWARDS[card];
+function rawRate(card, mcc, bookingMethod = 'portal', rates = CARD_REWARDS) {
+  const cfg = (rates || CARD_REWARDS)[card];
   if (!cfg) return 0;
   const mccCfg = cfg.mccs[mcc];
   if (mccCfg == null) return cfg.default;
@@ -144,8 +144,8 @@ function rawRate(card, mcc, bookingMethod = 'portal') {
   return cfg.default;
 }
 
-export function calculateRewards(card, mcc, amount, ytdSpend = 0, bookingMethod = 'portal') {
-  const cfg = CARD_REWARDS[card];
+export function calculateRewards(card, mcc, amount, ytdSpend = 0, bookingMethod = 'portal', rates = CARD_REWARDS) {
+  const cfg = (rates || CARD_REWARDS)[card];
   if (!cfg || !(amount > 0)) return { type: 'none', value: 0, unit: '', rate: 0 };
 
   const mccCfg = cfg.mccs[mcc];
@@ -172,19 +172,20 @@ export function calculateRewards(card, mcc, amount, ytdSpend = 0, bookingMethod 
   return { type: 'points', value: amount * rate, unit: cfg.unit, rate };
 }
 
-export function rewardsDollarValue(card, rewards) {
+export function rewardsDollarValue(card, rewards, rates = CARD_REWARDS) {
   if (!rewards || rewards.type === 'none') return 0;
   if (rewards.type === 'cashback') return rewards.value;
-  const cfg = CARD_REWARDS[card];
+  const cfg = (rates || CARD_REWARDS)[card];
   return rewards.value * (cfg?.pointValue || 0.01);
 }
 
-export function getBestCard(category, vendor = '') {
+export function getBestCard(category, vendor = '', rates = CARD_REWARDS) {
+  const effectiveRates = rates || CARD_REWARDS;
   const mcc = resolveMCC(vendor, category);
   let best = null;
-  for (const card of Object.keys(CARD_REWARDS)) {
-    const r = calculateRewards(card, mcc, 1, 0, 'portal');
-    const perDollar = rewardsDollarValue(card, r);
+  for (const card of Object.keys(effectiveRates)) {
+    const r = calculateRewards(card, mcc, 1, 0, 'portal', effectiveRates);
+    const perDollar = rewardsDollarValue(card, r, effectiveRates);
     const cand = { card, rate: r.rate, type: r.type, unit: r.unit, perDollar };
     if (!best) { best = cand; continue; }
     const diff = perDollar - best.perDollar;
@@ -196,15 +197,15 @@ export function getBestCard(category, vendor = '') {
 
 // ── Bot-specific helpers ─────────────────────────────────────────────────────
 
-function rateLabelFull(card, mcc, bookingMethod = 'portal') {
-  const cfg = CARD_REWARDS[card];
-  const rate = rawRate(card, mcc, bookingMethod);
+function rateLabelFull(card, mcc, bookingMethod = 'portal', rates = CARD_REWARDS) {
+  const cfg = (rates || CARD_REWARDS)[card];
+  const rate = rawRate(card, mcc, bookingMethod, rates);
   return cfg.type === 'cashback' ? `${rate}% cash back` : `${rate}x ${cfg.unit} points`;
 }
 
-function rateLabelShort(card, mcc, bookingMethod = 'portal') {
-  const cfg = CARD_REWARDS[card];
-  const rate = rawRate(card, mcc, bookingMethod);
+function rateLabelShort(card, mcc, bookingMethod = 'portal', rates = CARD_REWARDS) {
+  const cfg = (rates || CARD_REWARDS)[card];
+  const rate = rawRate(card, mcc, bookingMethod, rates);
   return cfg.type === 'cashback' ? `${rate}%` : `${rate}x ${cfg.unit}`;
 }
 
@@ -213,19 +214,21 @@ function rateLabelShort(card, mcc, bookingMethod = 'portal') {
  * Returns '' for non-reward cards (debit/bank/cash) or zero amount.
  *  - best card used → "📊 6% cash back — best card for Grocery ✓"
  *  - suboptimal     → "⚠️ <best card> earns 6% here — saves ~$X.XX on this transaction"
+ * Pass `rates` from getEffectiveRates(settings) to respect user-customised rates.
  */
-export function buildRewardsLine(card, category, amount, vendor = '') {
-  if (!cardEarnsRewards(card) || !(amount > 0)) return '';
+export function buildRewardsLine(card, category, amount, vendor = '', rates = CARD_REWARDS) {
+  const effectiveRates = rates || CARD_REWARDS;
+  if (!cardEarnsRewards(card, effectiveRates) || !(amount > 0)) return '';
   const mcc  = resolveMCC(vendor, category);
-  const best = getBestCard(category, vendor);
+  const best = getBestCard(category, vendor, effectiveRates);
   if (!best) return '';
 
-  const usedVal = rewardsDollarValue(card, calculateRewards(card, mcc, amount, 0));
-  const bestVal = rewardsDollarValue(best.card, calculateRewards(best.card, mcc, amount, 0));
+  const usedVal = rewardsDollarValue(card, calculateRewards(card, mcc, amount, 0, 'portal', effectiveRates), effectiveRates);
+  const bestVal = rewardsDollarValue(best.card, calculateRewards(best.card, mcc, amount, 0, 'portal', effectiveRates), effectiveRates);
   const savings = bestVal - usedVal;
 
   if (savings <= 0.005) {
-    return `📊 ${rateLabelFull(card, mcc)} — best card for ${category} ✓`;
+    return `📊 ${rateLabelFull(card, mcc, 'portal', effectiveRates)} — best card for ${category} ✓`;
   }
-  return `⚠️ ${best.card} earns ${rateLabelShort(best.card, mcc)} here — saves ~$${savings.toFixed(2)} on this transaction`;
+  return `⚠️ ${best.card} earns ${rateLabelShort(best.card, mcc, 'portal', effectiveRates)} here — saves ~$${savings.toFixed(2)} on this transaction`;
 }

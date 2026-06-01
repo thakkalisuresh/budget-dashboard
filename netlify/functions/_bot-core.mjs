@@ -19,7 +19,7 @@ import {
 import { getStore } from '@netlify/blobs';
 import { convertToUSD } from './_currency.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
-import { buildRewardsLine } from './_card-rewards.mjs';
+import { buildRewardsLine, getEffectiveRates } from './_card-rewards.mjs';
 import { kbYesCancel, kbYesSkip, kbConfirmDelete } from './_telegram.mjs';
 
 const DAILY_LIMIT    = 50;
@@ -244,7 +244,9 @@ export async function handleTextReply(ctx, text) {
     const hints = ['UNDO to reverse'];
     if (!driveFileId) hints.push('ATTACH to add receipt photo');
 
-    const rewardsLine = paymentMethod ? buildRewardsLine(paymentMethod, category, amount, vendor) : '';
+    let _rateSettings = {};
+    try { _rateSettings = await getUserSettings(); } catch { /* use defaults */ }
+    const rewardsLine = paymentMethod ? buildRewardsLine(paymentMethod, category, amount, vendor, getEffectiveRates(_rateSettings)) : '';
 
     const summary = [
       'Receipt logged!',

@@ -3,7 +3,7 @@ import { CreditCard, RefreshCw, Inbox, Award, TrendingUp } from 'lucide-react';
 import { fetchHistory, formatTxDate, ensureCardsSummarySheet, CATEGORIES } from './sheetsApi.js';
 import {
   calculateRewards, rewardsDollarValue, bestCardTable, cardEarnsRewards,
-  resolveMCC, UR_POINT_VALUE_CSR, UR_POINT_VALUE_CFU,
+  resolveMCC, getEffectiveRates, UR_POINT_VALUE_CSR, UR_POINT_VALUE_CFU,
 } from './cardRewards.js';
 
 const SPEND_ACTIONS = new Set(['Added', 'Receipt Scan', 'Import', 'Updated', 'WhatsApp Receipt', 'Telegram Receipt']);
@@ -28,7 +28,7 @@ function monthKeyOf(entry) {
   return d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
 }
 
-export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [] }) {
+export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [], settings = null }) {
   const [entries, setEntries]       = useState([]);
   const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -89,13 +89,13 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
 
     for (const e of chrono) {
       const card = e.paymentMethod;
-      if (!cardEarnsRewards(card)) continue;
+      if (!cardEarnsRewards(card, rates)) continue;
       const cat = e.category || 'Misc';
       const amt = e.amount ?? 0;
       const mcc = resolveMCC(e.vendor, cat);
       // Only Amex supermarket MCCs contribute to the $6k annual cap
       const qualifiesAmexCap = card === AMEX && (mcc === '5411' || mcc === '5422');
-      const r = calculateRewards(card, mcc, amt, qualifiesAmexCap ? amexGroceryYtd : 0);
+      const r = calculateRewards(card, mcc, amt, qualifiesAmexCap ? amexGroceryYtd : 0, 'portal', rates);
       if (qualifiesAmexCap) amexGroceryYtd += amt;
 
       if (!perCard[card]) perCard[card] = { points: 0, cash: 0, type: r.type };
@@ -103,7 +103,7 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
       else if (r.type === 'cashback') { cashBack += r.value; perCard[card].cash  += r.value; }
 
       const mk = monthKeyOf(e);
-      monthly[mk] = (monthly[mk] || 0) + rewardsDollarValue(card, r);
+      monthly[mk] = (monthly[mk] || 0) + rewardsDollarValue(card, r, rates);
     }
 
     const monthlyList = Object.entries(monthly)
@@ -111,11 +111,12 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
       .sort((a, b) => new Date('1 ' + a.month) - new Date('1 ' + b.month));
 
     return { urPoints, cashBack, amexGroceryYtd, monthlyList, perCard };
-  }, [cardEntries]);
+  }, [cardEntries, rates]);
 
+  const rates      = useMemo(() => getEffectiveRates(settings), [settings]);
   const hasRewards = rewards.urPoints > 0 || rewards.cashBack > 0;
   const maxMonthly = Math.max(1, ...rewards.monthlyList.map(m => m.value));
-  const bestTable  = useMemo(() => bestCardTable(CATEGORIES), []);
+  const bestTable  = useMemo(() => bestCardTable(CATEGORIES, rates), [rates]);
 
   return (
     <div className="space-y-5">

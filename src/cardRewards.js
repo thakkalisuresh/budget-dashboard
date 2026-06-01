@@ -60,8 +60,8 @@ export const CARD_REWARDS = {
 };
 
 // Cards with no rewards program (debit, bank, cash)
-export function cardEarnsRewards(card) {
-  return !!CARD_REWARDS[card];
+export function cardEarnsRewards(card, rates = CARD_REWARDS) {
+  return !!(rates || CARD_REWARDS)[card];
 }
 
 /**
@@ -76,8 +76,8 @@ export function getEffectiveRates(settings) {
     : CARD_REWARDS;
 }
 
-function rawRate(card, mcc, bookingMethod = 'portal') {
-  const cfg = CARD_REWARDS[card];
+function rawRate(card, mcc, bookingMethod = 'portal', rates = CARD_REWARDS) {
+  const cfg = (rates || CARD_REWARDS)[card];
   if (!cfg) return 0;
   const mccCfg = cfg.mccs[mcc];
   if (mccCfg == null) return cfg.default;
@@ -92,10 +92,11 @@ function rawRate(card, mcc, bookingMethod = 'portal') {
  * @param mcc        - MCC resolved via resolveMCC(vendor, category)
  * @param ytdSpend   - year-to-date spend qualifying for the same cap bucket (Amex supermarkets)
  * @param bookingMethod - 'portal' (default) or 'direct' — only relevant for CSR travel MCCs
+ * @param rates      - effective rate table (defaults to CARD_REWARDS; pass getEffectiveRates(settings))
  * @returns { type, value, unit, rate }
  */
-export function calculateRewards(card, mcc, amount, ytdSpend = 0, bookingMethod = 'portal') {
-  const cfg = CARD_REWARDS[card];
+export function calculateRewards(card, mcc, amount, ytdSpend = 0, bookingMethod = 'portal', rates = CARD_REWARDS) {
+  const cfg = (rates || CARD_REWARDS)[card];
   if (!cfg || !(amount > 0)) return { type: 'none', value: 0, unit: '', rate: 0 };
 
   const mccCfg = cfg.mccs[mcc];
@@ -125,25 +126,27 @@ export function calculateRewards(card, mcc, amount, ytdSpend = 0, bookingMethod 
 }
 
 /** Estimated dollar value of a rewards result (points × pointValue, or cash as-is). */
-export function rewardsDollarValue(card, rewards) {
+export function rewardsDollarValue(card, rewards, rates = CARD_REWARDS) {
   if (!rewards || rewards.type === 'none') return 0;
   if (rewards.type === 'cashback') return rewards.value;
-  const cfg = CARD_REWARDS[card];
+  const cfg = (rates || CARD_REWARDS)[card];
   return rewards.value * (cfg?.pointValue || 0.01);
 }
 
 /**
  * Best card for a category by estimated dollar return per $1 spent.
  * Pass `vendor` for merchant-aware comparison (e.g. Costco → Quicksilver beats Amex).
+ * Pass `rates` (from getEffectiveRates) to respect user-customised rates.
  * Uses portal booking for CSR travel (the typical/default case).
  * Ignores annual caps (ceiling, not a per-$ rate change at the margin).
  */
-export function getBestCard(category, vendor = '') {
+export function getBestCard(category, vendor = '', rates = CARD_REWARDS) {
+  const effectiveRates = rates || CARD_REWARDS;
   const mcc = resolveMCC(vendor, category);
   let best = null;
-  for (const card of Object.keys(CARD_REWARDS)) {
-    const r = calculateRewards(card, mcc, 1, 0, 'portal');
-    const perDollar = rewardsDollarValue(card, r);
+  for (const card of Object.keys(effectiveRates)) {
+    const r = calculateRewards(card, mcc, 1, 0, 'portal', effectiveRates);
+    const perDollar = rewardsDollarValue(card, r, effectiveRates);
     const cand = { card, rate: r.rate, type: r.type, unit: r.unit, perDollar };
     if (!best) { best = cand; continue; }
     const diff = perDollar - best.perDollar;
@@ -155,9 +158,10 @@ export function getBestCard(category, vendor = '') {
 }
 
 /** Pre-computed best-card-per-category table for UI display. */
-export function bestCardTable(categories) {
+export function bestCardTable(categories, rates = CARD_REWARDS) {
+  const effectiveRates = rates || CARD_REWARDS;
   return categories.map(category => {
-    const best = getBestCard(category);
+    const best = getBestCard(category, '', effectiveRates);
     const label = best
       ? (best.type === 'cashback' ? `${best.rate}% cash back` : `${best.rate}x ${best.unit}`)
       : '—';
