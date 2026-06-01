@@ -71,10 +71,11 @@ async function buildLedger(sheetId, accessToken, monthName = '') {
           category:  cat,
           amount:    amt,
           uuid:      txUuid,
-          method:    match ? (METHOD_LABELS[match.action] || 'Manual') : null,
-          user:      match?.user || null,
-          date:      match?.timestamp || null,
-          txDate:    row.date || null,
+          method:        match ? (METHOD_LABELS[match.action] || 'Manual') : null,
+          paymentMethod: match?.paymentMethod || null,
+          user:          match?.user || null,
+          date:          match?.timestamp || null,
+          txDate:        row.date || null,
           _sortDate: row.date
             ? new Date(row.date + 'T00:00:00').getTime()
             : (match?.timestamp ? new Date(match.timestamp).getTime() : 0),
@@ -524,6 +525,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
                   <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                     <span className="text-[10px] font-bold text-slate-400 bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full">{t.category}</span>
                     {t.method && <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${METHOD_STYLES[t.method] || ''}`}>{t.method}</span>}
+                    {t.paymentMethod && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 flex-shrink-0">💳 {t.paymentMethod}</span>}
                     {/* Tags */}
                     {noteData?.tags?.map(tag => (
                       <span key={tag} className="text-[10px] font-bold px-2 py-0.5 bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 rounded-full">{tag}</span>
