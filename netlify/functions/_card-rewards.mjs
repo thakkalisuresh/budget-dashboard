@@ -1,14 +1,7 @@
 /**
- * Card rewards engine — pre-seeded rates for the household's cards.
- *
- * Two reward types, tracked SEPARATELY (never summed together):
- *   - 'cashback' → value is a dollar amount (rate is a % of spend)
- *   - 'points'   → value is a point count (rate is a multiplier ×spend in $)
- *
- * Point → dollar valuation (for comparison + estimated-value display only):
- *   - Chase UR via Sapphire Reserve travel portal ≈ 1.5¢/pt
- *   - Freedom Unlimited UR ≈ 1.0¢/pt base (1.5¢ if pooled with CSR)
- * These are display assumptions, not tracked cash.
+ * Server-side mirror of src/cardRewards.js for the bot.
+ * Netlify functions cannot import client (src/) modules, so the rates and
+ * calculation logic are duplicated here. Keep in sync with src/cardRewards.js.
  */
 
 export const UR_POINT_VALUE_CSR = 0.015; // $ per UR point (CSR travel portal)
@@ -38,12 +31,10 @@ export const CARD_REWARDS = {
   },
 };
 
-// Cards with no rewards program (debit, bank, cash)
 export function cardEarnsRewards(card) {
   return !!CARD_REWARDS[card];
 }
 
-/** Raw rate for a card+category (percent for cashback, multiplier for points). */
 function rawRate(card, category) {
   const cfg = CARD_REWARDS[card];
   if (!cfg) return 0;
@@ -52,38 +43,28 @@ function rawRate(card, category) {
   return typeof cat === 'object' ? cat.rate : cat;
 }
 
-/**
- * Calculate rewards earned on a single transaction.
- * @param ytdCategorySpend - year-to-date spend on THIS card+category (for caps)
- * @returns { type, value, unit, rate } — value is $ (cashback) or points (points)
- */
 export function calculateRewards(card, category, amount, ytdCategorySpend = 0) {
   const cfg = CARD_REWARDS[card];
   if (!cfg || !(amount > 0)) return { type: 'none', value: 0, unit: '', rate: 0 };
 
   const catCfg = cfg.categories[category];
-  let rate = rawRate(card, category);
+  const rate = rawRate(card, category);
 
-  // Capped categories (e.g. Amex 6% groceries up to $6k/yr, then 1%)
-  if (catCfg && typeof catCfg === 'object' && catCfg.cap) {
+  if (catCfg && typeof catCfg === 'object' && catCfg.cap && cfg.type === 'cashback') {
     const { annual, then } = catCfg.cap;
     const remaining = Math.max(0, annual - ytdCategorySpend);
     const atRate    = Math.min(amount, remaining);
     const overRate  = amount - atRate;
-    if (cfg.type === 'cashback') {
-      const value = (atRate * catCfg.rate / 100) + (overRate * then / 100);
-      return { type: 'cashback', value, unit: '$', rate: catCfg.rate };
-    }
+    const value = (atRate * catCfg.rate / 100) + (overRate * then / 100);
+    return { type: 'cashback', value, unit: '$', rate: catCfg.rate };
   }
 
   if (cfg.type === 'cashback') {
     return { type: 'cashback', value: amount * rate / 100, unit: '$', rate };
   }
-  // points: rate is multiplier
   return { type: 'points', value: amount * rate, unit: cfg.unit, rate };
 }
 
-/** Estimated dollar value of a rewards result (points × pointValue, or cash as-is). */
 export function rewardsDollarValue(card, rewards) {
   if (!rewards || rewards.type === 'none') return 0;
   if (rewards.type === 'cashback') return rewards.value;
@@ -91,18 +72,11 @@ export function rewardsDollarValue(card, rewards) {
   return rewards.value * (cfg?.pointValue || 0.01);
 }
 
-/**
- * Best card for a category by estimated dollar return per $1 spent.
- * Ignores caps (caps are a ceiling, not a per-$ rate change at the margin).
- * @returns { card, rate, type, unit, perDollar } or null
- */
 export function getBestCard(category) {
   let best = null;
   for (const [card, cfg] of Object.entries(CARD_REWARDS)) {
     const rate = rawRate(card, category);
-    const perDollar = cfg.type === 'cashback'
-      ? rate / 100
-      : rate * (cfg.pointValue || 0.01);
+    const perDollar = cfg.type === 'cashback' ? rate / 100 : rate * (cfg.pointValue || 0.01);
     const cand = { card, rate, type: cfg.type, unit: cfg.unit, perDollar };
     if (!best) { best = cand; continue; }
     const diff = perDollar - best.perDollar;
@@ -113,13 +87,37 @@ export function getBestCard(category) {
   return best;
 }
 
-/** Pre-computed best-card-per-category table for UI display. */
-export function bestCardTable(categories) {
-  return categories.map(category => {
-    const best = getBestCard(category);
-    const label = best
-      ? (best.type === 'cashback' ? `${best.rate}% cash back` : `${best.rate}x ${best.unit}`)
-      : '—';
-    return { category, card: best?.card || '—', label };
-  });
+/** "6% cash back" / "3x UR points" */
+function rateLabelFull(card, category) {
+  const cfg = CARD_REWARDS[card];
+  const rate = rawRate(card, category);
+  return cfg.type === 'cashback' ? `${rate}% cash back` : `${rate}x ${cfg.unit} points`;
+}
+
+/** "6%" / "3x UR" */
+function rateLabelShort(card, category) {
+  const cfg = CARD_REWARDS[card];
+  const rate = rawRate(card, category);
+  return cfg.type === 'cashback' ? `${rate}%` : `${rate}x ${cfg.unit}`;
+}
+
+/**
+ * Build the bot's rewards line for a logged transaction.
+ * Returns '' for non-reward cards (debit/bank/cash) or zero amount.
+ *  - best card used → "📊 6% cash back — best card for Grocery ✓"
+ *  - suboptimal     → "⚠️ <best card> earns 6% here — saves ~$4.38 on this transaction"
+ */
+export function buildRewardsLine(card, category, amount) {
+  if (!cardEarnsRewards(card) || !(amount > 0)) return '';
+  const best = getBestCard(category);
+  if (!best) return '';
+
+  const usedVal = rewardsDollarValue(card, calculateRewards(card, category, amount));
+  const bestVal = rewardsDollarValue(best.card, calculateRewards(best.card, category, amount));
+  const savings = bestVal - usedVal;
+
+  if (savings <= 0.005) {
+    return `📊 ${rateLabelFull(card, category)} — best card for ${category} ✓`;
+  }
+  return `⚠️ ${best.card} earns ${rateLabelShort(best.card, category)} here — saves ~$${savings.toFixed(2)} on this transaction`;
 }

@@ -90,6 +90,12 @@ describe('getBestCard', () => {
   it('CFU wins Health (3x @ 1¢ = 3% beats Quicksilver 1.5%)', () => {
     expect(getBestCard('Health').card).toBe('Chase Freedom Unlimited');
   });
+
+  it('Quicksilver wins flat categories on a tie (cash preferred over UR points)', () => {
+    // Rent/Misc: Quicksilver 1.5% cash ties CSR 1x UR @1.5¢ and CFU 1.5x @1¢ — cash wins
+    expect(getBestCard('Rent').card).toBe('Capital One Quicksilver');
+    expect(getBestCard('Misc').card).toBe('Capital One Quicksilver');
+  });
 });
 
 describe('bestCardTable', () => {

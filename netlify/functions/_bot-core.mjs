@@ -18,6 +18,7 @@ import {
 } from './_sheets.mjs';
 import { convertToUSD } from './_currency.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
+import { buildRewardsLine } from './_card-rewards.mjs';
 import { kbYesCancel, kbYesSkip, kbConfirmDelete } from './_telegram.mjs';
 
 const DAILY_LIMIT    = 50;
@@ -241,6 +242,8 @@ export async function handleTextReply(ctx, text) {
     const hints = ['UNDO to reverse'];
     if (!driveFileId) hints.push('ATTACH to add receipt photo');
 
+    const rewardsLine = paymentMethod ? buildRewardsLine(paymentMethod, category, amount) : '';
+
     const summary = [
       'Receipt logged!',
       '',
@@ -249,6 +252,7 @@ export async function handleTextReply(ctx, text) {
       `Category: ${category}`,
       `Total: $${amount}`,
       ...(paymentMethod ? [`Card: ${paymentMethod}`] : []),
+      ...(rewardsLine ? [rewardsLine] : []),
       ...(pending.conversionInfo ? [`(Converted from ${pending.conversionInfo.originalCurrency} ${pending.conversionInfo.original} · rate ${pending.conversionInfo.rate.toFixed(4)})`] : []),
       ...(pending.driveShareLink ? [`View Receipt: ${pending.driveShareLink}`] : []),
       `View Sheet: ${sheetUrl(sheetId)}`,
