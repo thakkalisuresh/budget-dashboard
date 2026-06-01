@@ -6,7 +6,7 @@ import {
   UR_POINT_VALUE_CSR, UR_POINT_VALUE_CFU,
 } from './cardRewards.js';
 
-const SPEND_ACTIONS = new Set(['Added', 'Receipt Scan', 'Import', 'Updated']);
+const SPEND_ACTIONS = new Set(['Added', 'Receipt Scan', 'Import', 'Updated', 'WhatsApp Receipt', 'Telegram Receipt']);
 const AMEX = 'American Express Blue Cash Preferred';
 
 function formatTimestamp(iso) {

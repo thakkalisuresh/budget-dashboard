@@ -41,6 +41,7 @@ function makeTwilioCtx(store, phone) {
       store,
       userId: phone,
       chatId: phone,
+      channel: 'whatsapp',
       send(message, markup) { _resp = twilioResponse(message); },
     },
     getResp: () => _resp ?? emptyTwiml(),

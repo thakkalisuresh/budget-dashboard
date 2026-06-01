@@ -79,9 +79,10 @@ export async function getCurrentMonthSheetId(monthName) {
   throw new Error(`No sheet found for month: ${target}`);
 }
 
-export async function appendExpense({ category, vendor, amount, txDate, sheetId, monthName, paymentMethod = '' }) {
+export async function appendExpense({ category, vendor, amount, txDate, sheetId, monthName, paymentMethod = '', channel = 'whatsapp' }) {
   const config = SHEET_MAP[category];
   if (!config) throw new Error(`Unknown category: ${category}`);
+  const channelLabel = channel === 'telegram' ? 'Telegram' : 'WhatsApp';
 
   const now = new Date();
   const month = monthName
@@ -104,20 +105,22 @@ export async function appendExpense({ category, vendor, amount, txDate, sheetId,
   });
 
   await appendHistory(sheetId, {
-    action: 'WhatsApp Receipt',
+    action: `${channelLabel} Receipt`,
     category,
     vendor,
     amount,
     uuid,
     txDate: dateVal,
     paymentMethod,
+    channel,
   });
 
   return { uuid, row };
 }
 
-async function appendHistory(sheetId, { action, category, vendor, amount, uuid, txDate, details, paymentMethod }) {
+async function appendHistory(sheetId, { action, category, vendor, amount, uuid, txDate, details, paymentMethod, channel = 'whatsapp' }) {
   const now = new Date().toISOString();
+  const channelLabel = channel === 'telegram' ? 'Telegram' : 'WhatsApp';
   // Bot 8-col layout preserved (uuid@6, user@7 — getRecentExpenses detects this),
   // padded so paymentMethod lands at col K (index 10) for the Cards tab/summary.
   const row = [
@@ -126,9 +129,9 @@ async function appendHistory(sheetId, { action, category, vendor, amount, uuid, 
     safeString(category),
     safeString(vendor || ''),
     amount,
-    details || 'Receipt via WhatsApp',
+    details || `Receipt via ${channelLabel}`,
     uuid || '',
-    'whatsapp-bot',
+    `${channel}-bot`,
     '',
     txDate || '',
     safeString(paymentMethod || ''),

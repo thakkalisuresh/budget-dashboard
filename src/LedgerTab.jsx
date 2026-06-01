@@ -72,7 +72,8 @@ async function buildLedger(sheetId, accessToken, monthName = '') {
           amount:    amt,
           uuid:      txUuid,
           method:        match ? (METHOD_LABELS[match.action] || 'Manual') : null,
-          paymentMethod: match?.paymentMethod || null,
+          // Card lives on the category-sheet row (col F); fall back to the History match
+          paymentMethod: row.paymentMethod || match?.paymentMethod || null,
           user:          match?.user || null,
           date:          match?.timestamp || null,
           txDate:        row.date || null,

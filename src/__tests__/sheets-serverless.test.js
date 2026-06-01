@@ -97,6 +97,45 @@ describe('appendExpense', () => {
     expect(appendCall[1].method).toBe('POST');
   });
 
+  it('stamps the History row with the channel (telegram → Telegram Receipt / telegram-bot)', async () => {
+    mockTokenThenApi(
+      jsonResponse({ updates: { updatedRows: 1 } }),
+      jsonResponse({ updates: { updatedRows: 1 } })
+    );
+
+    await appendExpense({
+      category: 'Grocery', vendor: 'Costco', amount: 50,
+      txDate: '2026-06-02', sheetId: 'sheet', monthName: 'June 2026',
+      paymentMethod: 'Chase Sapphire Reserve', channel: 'telegram',
+    });
+
+    const calls = mockFetch.mock.calls.filter(c => !c[0].includes('oauth2'));
+    // second non-oauth call is the History append
+    const historyBody = JSON.parse(calls[1][1].body);
+    const row = historyBody.values[0];
+    expect(row[1]).toBe('Telegram Receipt'); // action
+    expect(row[7]).toBe('telegram-bot');     // user column
+    expect(row[10]).toBe('Chase Sapphire Reserve'); // payment method @ col K
+  });
+
+  it('defaults the channel to whatsapp (WhatsApp Receipt / whatsapp-bot)', async () => {
+    mockTokenThenApi(
+      jsonResponse({ updates: { updatedRows: 1 } }),
+      jsonResponse({ updates: { updatedRows: 1 } })
+    );
+
+    await appendExpense({
+      category: 'Grocery', vendor: 'Walmart', amount: 30,
+      txDate: '2026-06-02', sheetId: 'sheet', monthName: 'June 2026',
+    });
+
+    const calls = mockFetch.mock.calls.filter(c => !c[0].includes('oauth2'));
+    const historyBody = JSON.parse(calls[1][1].body);
+    const row = historyBody.values[0];
+    expect(row[1]).toBe('WhatsApp Receipt');
+    expect(row[7]).toBe('whatsapp-bot');
+  });
+
   it('sanitizes vendor name before appending', async () => {
     mockTokenThenApi(
       jsonResponse({ updates: { updatedRows: 1 } }),

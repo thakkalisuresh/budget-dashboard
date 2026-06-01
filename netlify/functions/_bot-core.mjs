@@ -213,7 +213,7 @@ export async function handleTextReply(ctx, text) {
 
     let result;
     try {
-      result = await appendExpense({ category, vendor, amount, txDate, sheetId, monthName, paymentMethod });
+      result = await appendExpense({ category, vendor, amount, txDate, sheetId, monthName, paymentMethod, channel: ctx.channel });
     } catch (e) {
       console.error('bot-core: Sheets append failed', e.message);
       return ctx.send('Failed to log receipt to spreadsheet. Please try via the dashboard.');
@@ -1211,6 +1211,7 @@ async function handleNewMonthWizard(ctx, text, wizard) {
             amount: exp.amount,
             sheetId: wizard.createdSheetId,
             monthName: wizard.monthName,
+            channel: ctx.channel,
           });
           logged++;
         } catch (e) {
