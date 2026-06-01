@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { applyCardRules } from '../smartRules.js';
 import {
   safeText,
   escapeSheetRef,
@@ -364,5 +365,52 @@ describe('formatTxDate', () => {
     const result = formatTxDate('2026-01-01');
     expect(result).toContain('Jan');
     expect(result).toContain('2026');
+  });
+});
+
+// ── applyCardRules ────────────────────────────────────────────────────────────
+
+describe('applyCardRules', () => {
+  const rules = [
+    { id: '1', vendorPattern: 'costco', category: 'Grocery', card: 'American Express Blue Cash Preferred' },
+    { id: '2', vendorPattern: 'costco', category: '',        card: 'Capital One Quicksilver' },
+    { id: '3', vendorPattern: 'uber',   category: '',        card: 'Chase Sapphire Reserve' },
+    { id: '4', vendorPattern: 'amazon', category: 'Misc',    card: 'Chase Freedom Unlimited' },
+  ];
+
+  it('returns null for empty vendor', () => {
+    expect(applyCardRules('', 'Grocery', rules)).toBeNull();
+  });
+
+  it('returns null for empty rules', () => {
+    expect(applyCardRules('Costco', 'Grocery', [])).toBeNull();
+  });
+
+  it('matches vendor case-insensitively', () => {
+    expect(applyCardRules('Uber Eats', 'Eating Out', rules)).toBe('Chase Sapphire Reserve');
+  });
+
+  it('category-specific rule beats vendor-only rule', () => {
+    expect(applyCardRules('Costco Wholesale', 'Grocery', rules)).toBe('American Express Blue Cash Preferred');
+  });
+
+  it('vendor-only rule matches when category does not match specific rule', () => {
+    expect(applyCardRules('Costco', 'Misc', rules)).toBe('Capital One Quicksilver');
+  });
+
+  it('returns null when no pattern matches', () => {
+    expect(applyCardRules('Whole Foods', 'Grocery', rules)).toBeNull();
+  });
+
+  it('longer vendor pattern wins among same-specificity rules', () => {
+    const twoRules = [
+      { id: 'a', vendorPattern: 'amazon', category: 'Misc', card: 'Card A' },
+      { id: 'b', vendorPattern: 'amazon prime', category: 'Misc', card: 'Card B' },
+    ];
+    expect(applyCardRules('Amazon Prime Video', 'Misc', twoRules)).toBe('Card B');
+  });
+
+  it('category filter excludes rule when category does not match', () => {
+    expect(applyCardRules('Amazon', 'Grocery', rules)).toBeNull();
   });
 });
