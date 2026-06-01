@@ -126,6 +126,13 @@ export function cardEarnsRewards(card) {
   return !!CARD_REWARDS[card];
 }
 
+export function getEffectiveRates(settings) {
+  const custom = settings && settings.cardRewardRates;
+  return (custom && typeof custom === 'object' && Object.keys(custom).length > 0)
+    ? custom
+    : CARD_REWARDS;
+}
+
 function rawRate(card, mcc, bookingMethod = 'portal') {
   const cfg = CARD_REWARDS[card];
   if (!cfg) return 0;

@@ -42,6 +42,17 @@ describe('cardRewards client/server parity', () => {
     }
   });
 
+  it('getEffectiveRates agrees: null/empty → defaults, custom → custom', () => {
+    // No override → both fall back to identical CARD_REWARDS
+    expect(server.getEffectiveRates({})).toEqual(client.getEffectiveRates({}));
+    expect(server.getEffectiveRates({ cardRewardRates: null })).toEqual(client.CARD_REWARDS);
+    expect(client.getEffectiveRates(null)).toEqual(client.CARD_REWARDS);
+    // Custom override → returned as-is, identically
+    const custom = { 'Capital One Quicksilver': { type: 'cashback', unit: '$', mccs: {}, default: 2 } };
+    expect(server.getEffectiveRates({ cardRewardRates: custom })).toEqual(custom);
+    expect(client.getEffectiveRates({ cardRewardRates: custom })).toEqual(custom);
+  });
+
   it('resolveMCC agrees for vendor × category combinations', () => {
     for (const vendor of VENDORS) {
       for (const cat of CATEGORIES) {

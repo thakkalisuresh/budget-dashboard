@@ -64,6 +64,18 @@ export function cardEarnsRewards(card) {
   return !!CARD_REWARDS[card];
 }
 
+/**
+ * Effective rate table: user-overridden rates from settings if present,
+ * otherwise the hardcoded CARD_REWARDS defaults. `cardRewardRates` is set by
+ * the monthly auto-check's APPLY RATES flow (or Settings UI in Phase 4).
+ */
+export function getEffectiveRates(settings) {
+  const custom = settings && settings.cardRewardRates;
+  return (custom && typeof custom === 'object' && Object.keys(custom).length > 0)
+    ? custom
+    : CARD_REWARDS;
+}
+
 function rawRate(card, mcc, bookingMethod = 'portal') {
   const cfg = CARD_REWARDS[card];
   if (!cfg) return 0;

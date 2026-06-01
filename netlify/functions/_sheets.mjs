@@ -520,6 +520,44 @@ export async function getUserSettings() {
   try { return JSON.parse(row[1] || '{}'); } catch { return {}; }
 }
 
+// Household accounts that share this budget (rate changes apply to all of them).
+export function getAllowedEmails() {
+  return ALLOWED_EMAILS.slice();
+}
+
+/**
+ * Read-modify-write one user's UserSettings JSON row server-side.
+ * `mutate(settings)` may return a new object or mutate in place; the result is
+ * persisted. Creates the row if the user has none yet.
+ */
+export async function updateUserSettingsFor(email, mutate) {
+  if (!TEMPLATE_ID) throw new Error('VITE_TEMPLATE_SHEET_ID not configured');
+  const range = encodeURIComponent("'UserSettings'!A:B");
+  const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
+  const rows = data.values || [];
+  const idx = rows.findIndex(r => r[0] === email);
+
+  let settings = {};
+  if (idx >= 0) { try { settings = JSON.parse(rows[idx][1] || '{}'); } catch { settings = {}; } }
+
+  const next = mutate(settings) || settings;
+  const json = JSON.stringify(next);
+
+  if (idx >= 0) {
+    const writeRange = encodeURIComponent(`'UserSettings'!A${idx + 1}:B${idx + 1}`);
+    await sheetsRequest(TEMPLATE_ID, `/values/${writeRange}?valueInputOption=RAW`, {
+      method: 'PUT',
+      body: JSON.stringify({ values: [[email, json]] }),
+    });
+  } else {
+    await sheetsRequest(TEMPLATE_ID, `/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
+      method: 'POST',
+      body: JSON.stringify({ values: [[email, json]] }),
+    });
+  }
+  return next;
+}
+
 export async function createMonth({ monthName, salary, budgetChanges }) {
   const { id: newSheetId } = await copyFile(TEMPLATE_ID, monthName);
 

@@ -58,6 +58,7 @@ export const DEFAULT_SETTINGS = {
     'Cash',
   ],
   cardRules:               [],  // [{ id, vendorPattern, category, card }]
+  cardRewardRates:         null, // null = use hardcoded CARD_REWARDS; set by rate auto-check / Settings
   smartRules:              [],  // [{ id, pattern, category }]
   messages:                [],  // [{ id, type, title, body, timestamp, read }]
   pushHour:                20,  // preferred local hour for daily push (18-22)
@@ -154,6 +155,7 @@ export async function loadUserSettings(userId, accessToken) {
       nonMonthlyItems:   parsed.nonMonthlyItems   || {},
       transactionNotes:  parsed.transactionNotes  || {},
       smartRules:              parsed.smartRules              || [],
+      cardRewardRates:         parsed.cardRewardRates         || null,
       messages:                parsed.messages                || [],
       reconciledFingerprints:  parsed.reconciledFingerprints  || [],
       hasSeenOnboarding:       parsed.hasSeenOnboarding || localStorage.getItem('budget_onboarding_done') === 'true',
