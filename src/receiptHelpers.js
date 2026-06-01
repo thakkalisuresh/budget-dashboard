@@ -103,7 +103,25 @@ export function toBase64(file) {
 
 // ── Claude API extraction ───────────────────────────────────────────────────
 
-export async function extractFromFile(file, accessToken) {
+// Fuzzy-match a raw card string from Vision against the known cards list.
+// Returns the canonical card name or '' if no confident match.
+export function resolveCardName(raw, cards = []) {
+  if (!raw || !cards.length) return '';
+  const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+  const r = norm(raw);
+  if (!r) return '';
+  // Exact normalized match first
+  for (const c of cards) if (norm(c) === r) return c;
+  // Substring either direction (Vision may return "Sapphire Reserve" for "Chase Sapphire Reserve").
+  // Guard with a min length so short names like "Cash" don't match "...activecash".
+  for (const c of cards) {
+    const nc = norm(c);
+    if (nc.length >= 5 && r.length >= 5 && (nc.includes(r) || r.includes(nc))) return c;
+  }
+  return '';
+}
+
+export async function extractFromFile(file, accessToken, cards = []) {
   const detectedMime = await detectMimeType(file);
   if (!detectedMime || !ALLOWED_MIME_TYPES.has(detectedMime)) {
     throw new Error('Unsupported file type. Please upload an image or PDF.');
@@ -126,20 +144,25 @@ export async function extractFromFile(file, accessToken) {
     ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
     : { type: 'image',    source: { type: 'base64', media_type: mediaType,          data: base64 } };
 
+  const cardHint = cards.length
+    ? `\nKnown payment cards (match the visible card to the closest name from this list, return the matched name EXACTLY): ${cards.join(', ')}.`
+    : '';
+
   const prompt = `You are a financial document parser. Analyse this image and determine if it is:
 1. A RECEIPT — a single-vendor purchase document (grocery receipt, restaurant bill, invoice)
 2. A BANK STATEMENT or transaction list — multiple rows of transactions from different merchants
 
 If it is a RECEIPT, return exactly this JSON:
-{"type":"receipt","vendor":"Store Name","amount":45.23,"category":"Grocery","currency":"USD"}
+{"type":"receipt","vendor":"Store Name","amount":45.23,"category":"Grocery","currency":"USD","paymentMethod":"Chase Sapphire Reserve"}
 
 If it is a BANK STATEMENT or transaction list, return exactly this JSON:
-{"type":"statement","transactions":[
+{"type":"statement","paymentMethod":"Chase Sapphire Reserve","transactions":[
   {"vendor":"Merchant Name","amount":12.34,"category":"Grocery","date":"04/27/2026","txType":"debit"},
   {"vendor":"Another Store","amount":56.78,"category":"Shopping","date":"04/26/2026","txType":"debit"}
 ]}
 
 Categories to use (pick the closest match): ${CATEGORIES.join(', ')}
+${cardHint}
 
 Rules:
 - RECEIPT: amount is the final total including tax. currency is the 3-letter ISO code visible on the receipt (e.g. USD, CAD, EUR, GBP). Default to USD if not shown.
@@ -149,7 +172,8 @@ Rules:
 - amount must be a positive number with no $ sign, or null if unclear
 - category must be exactly one value from the list, or null if none fit
 - date: use the date shown in the statement as-is, or null if not visible
-- If the image is unreadable, return {"type":"receipt","vendor":null,"amount":null,"category":null,"currency":"USD"}
+- paymentMethod: if this is an Apple Wallet / mobile wallet screenshot, the card name appears prominently near the top — extract it. For statements, use the card/account shown in the header. Match to the known cards list when one is provided. Use null if no card is visible.
+- If the image is unreadable, return {"type":"receipt","vendor":null,"amount":null,"category":null,"currency":"USD","paymentMethod":null}
 - Respond with ONLY valid JSON — no extra text`;
 
   const headers = { 'content-type': 'application/json' };
@@ -197,7 +221,7 @@ Rules:
     if (match) return JSON.parse(match[0]);
   } catch { /* fall through */ }
 
-  return { type: 'receipt', vendor: null, amount: null, category: null };
+  return { type: 'receipt', vendor: null, amount: null, category: null, paymentMethod: null };
 }
 
 // ── Transaction helpers ─────────────────────────────────────────────────────

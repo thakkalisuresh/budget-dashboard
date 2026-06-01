@@ -813,6 +813,7 @@ function Dashboard({ auth }) {
           onClose={() => setShowReconcile(false)}
           onComplete={() => refresh()}
           smartRules={settings.smartRules || []}
+          cardRules={settings.cardRules || []}
           reconciledFingerprints={settings.reconciledFingerprints || []}
           onAddFingerprints={fps => updateSettings(prev => ({
             ...prev,
