@@ -9,7 +9,7 @@ import { enqueue } from './offlineQueue.js';
 
 export async function addOrUpdateExpense(
   categoryName, vendorName, amount, accessToken, sheetId, monthName,
-  source = 'manual', txDate = null, paymentMethod = '',
+  source = 'manual', txDate = null, paymentMethod = '', bookingMethod = '',
 ) {
   if (!navigator.onLine) {
     enqueue({ type: 'add_expense', payload: { categoryName, vendorName, amount, monthName, source, txDate, paymentMethod } });
@@ -42,8 +42,9 @@ export async function addOrUpdateExpense(
     const amtColV2  = 4;
     const pmColV2   = 5;
     const uuidColV2 = 6;
+    const bmColV2   = 7;
 
-    const newRow = Array(uuidColV2 + 1).fill('');
+    const newRow = Array(bmColV2 + 1).fill('');
     newRow[0]         = month;
     newRow[1]         = year;
     newRow[2]         = dateVal;
@@ -51,12 +52,13 @@ export async function addOrUpdateExpense(
     newRow[amtColV2]  = amount;
     newRow[pmColV2]   = safeText(paymentMethod || '');
     newRow[uuidColV2] = newUUID;
+    newRow[bmColV2]   = safeText(bookingMethod || '');
 
     await appendRow(sheetId, config.sheet, newRow, accessToken);
     await appendHistoryEntry(sheetId, accessToken, {
       action: source === 'scan' ? 'Receipt Scan' : source === 'import' ? 'Import' : 'Added',
       category: categoryName, vendor: vendorName, amount, uuid: newUUID, txDate: dateVal,
-      paymentMethod,
+      paymentMethod, bookingMethod,
     });
   } else {
     const uuidCol = uuidStart(config);

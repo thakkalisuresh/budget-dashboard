@@ -201,6 +201,7 @@ export async function handleTextReply(ctx, text) {
     const amount        = extraction.total_amount;
     const txDate        = extraction.purchase_date;
     const paymentMethod = extraction.payment_method || '';
+    const bookingMethod = extraction.booking_method || '';
     const monthName     = `${month} ${year}`;
 
     let sheetId;
@@ -213,7 +214,7 @@ export async function handleTextReply(ctx, text) {
 
     let result;
     try {
-      result = await appendExpense({ category, vendor, amount, txDate, sheetId, monthName, paymentMethod, channel: ctx.channel });
+      result = await appendExpense({ category, vendor, amount, txDate, sheetId, monthName, paymentMethod, channel: ctx.channel, bookingMethod });
     } catch (e) {
       console.error('bot-core: Sheets append failed', e.message);
       return ctx.send('Failed to log receipt to spreadsheet. Please try via the dashboard.');
@@ -229,7 +230,7 @@ export async function handleTextReply(ctx, text) {
     }
 
     await store.setJSON(`lastlog:${userId}`, {
-      uuid: result.uuid, category, vendor, amount, txDate, paymentMethod,
+      uuid: result.uuid, category, vendor, amount, txDate, paymentMethod, bookingMethod,
       sheetId, monthName, year, month,
       driveFileId: driveFileId || null,
       driveShareLink: pending.driveShareLink || null,
@@ -434,6 +435,12 @@ export async function handleTextReply(ctx, text) {
           : 'No cards configured. Add cards in the dashboard settings first.');
       }
       pending.extraction.payment_method = matched;
+    } else if (field === 'booking') {
+      const method = value.toLowerCase();
+      if (method !== 'portal' && method !== 'direct') {
+        return ctx.send("Booking must be 'portal' (8x UR) or 'direct' (4x UR).");
+      }
+      pending.extraction.booking_method = method === 'direct' ? 'direct' : '';
     }
 
     await store.setJSON(key, pending);
@@ -447,6 +454,7 @@ export async function handleTextReply(ctx, text) {
       `Total: $${e.total_amount ?? '?'}`,
     ];
     if (e.payment_method) lines.push(`Card: ${e.payment_method}`);
+    if (e.booking_method) lines.push(`Booking: Direct (4x UR)`);
     lines.push('', 'Reply YES to log, or CANCEL');
     return ctx.send(lines.join('\n'), kbYesCancel());
   }
@@ -724,10 +732,15 @@ function buildConfirmPrompt(data, conversionInfo) {
     `Total: $${data.total_amount ?? '?'}`,
   ];
   if (data.payment_method) lines.push(`Card: ${data.payment_method}`);
+  if (data.payment_method === 'Chase Sapphire Reserve' &&
+      (data.reward_category === 'Travel' || data.reward_category === 'Holiday')) {
+    const bm = data.booking_method || '';
+    lines.push(`Booking: ${bm === 'direct' ? 'Direct (4x UR)' : 'Chase Travel portal (8x UR)'}`);
+  }
   if (conversionInfo) {
     lines.push(`(Converted from ${conversionInfo.originalCurrency} ${conversionInfo.original} · rate ${conversionInfo.rate.toFixed(4)})`);
   }
-  lines.push('', 'Reply YES to log, or CANCEL', 'Edit: "category: Travel", "amount: 52.10", or "card: Chase"');
+  lines.push('', 'Reply YES to log, or CANCEL', 'Edit: "category: Travel", "amount: 52.10", "card: Chase", or "booking: direct"');
   return lines.join('\n');
 }
 

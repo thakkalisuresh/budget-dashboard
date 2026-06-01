@@ -79,9 +79,9 @@ describe('appendExpense', () => {
       paymentMethod: 'Chase Sapphire Reserve',
     });
 
-    // V2 schema: month, year, date, vendor, amount, paymentMethod(F), uuid(G)
+    // V2 schema: month, year, date, vendor, amount, paymentMethod(F), uuid(G), bookingMethod(H)
     expect(result.uuid).toMatch(/^tx_4523_/);
-    expect(result.row).toHaveLength(7);
+    expect(result.row).toHaveLength(8);
     expect(result.row[0]).toBe('May');
     expect(result.row[1]).toBe(2026);
     expect(result.row[2]).toBe('2026-05-20');
@@ -89,6 +89,7 @@ describe('appendExpense', () => {
     expect(result.row[4]).toBe(45.23);
     expect(result.row[5]).toBe('Chase Sapphire Reserve');
     expect(result.row[6]).toBe(result.uuid);
+    expect(result.row[7]).toBe(''); // bookingMethod defaults to ''
 
     const calls = mockFetch.mock.calls.filter(c => !c[0].includes('oauth2'));
     const appendCall = calls[0];
@@ -180,6 +181,52 @@ describe('appendExpense', () => {
     });
 
     expect(result.row[2]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('stores bookingMethod at col H (index 7) when provided', async () => {
+    mockTokenThenApi(
+      jsonResponse({ updates: { updatedRows: 1 } }),
+      jsonResponse({ updates: { updatedRows: 1 } })
+    );
+
+    const result = await appendExpense({
+      category: 'Travel',
+      vendor: 'Delta Airlines',
+      amount: 350,
+      txDate: '2026-06-01',
+      sheetId: 'sheet-id',
+      monthName: 'June 2026',
+      paymentMethod: 'Chase Sapphire Reserve',
+      bookingMethod: 'direct',
+    });
+
+    expect(result.row).toHaveLength(8);
+    expect(result.row[5]).toBe('Chase Sapphire Reserve');
+    expect(result.row[7]).toBe('direct');
+  });
+
+  it('stores bookingMethod at col L (index 11) in History row', async () => {
+    mockTokenThenApi(
+      jsonResponse({ updates: { updatedRows: 1 } }),
+      jsonResponse({ updates: { updatedRows: 1 } })
+    );
+
+    await appendExpense({
+      category: 'Travel',
+      vendor: 'Delta Airlines',
+      amount: 350,
+      txDate: '2026-06-01',
+      sheetId: 'sheet-id',
+      monthName: 'June 2026',
+      paymentMethod: 'Chase Sapphire Reserve',
+      bookingMethod: 'direct',
+    });
+
+    const calls = mockFetch.mock.calls.filter(c => !c[0].includes('oauth2'));
+    const historyBody = JSON.parse(calls[1][1].body);
+    const row = historyBody.values[0];
+    expect(row[10]).toBe('Chase Sapphire Reserve'); // paymentMethod @ K
+    expect(row[11]).toBe('direct');                 // bookingMethod @ L
   });
 });
 

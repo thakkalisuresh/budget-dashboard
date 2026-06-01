@@ -152,10 +152,24 @@ function ReceiptConfirmModal({ s }) {
             {s.cards?.length > 0 && (
               <div className="space-y-1.5">
                 <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">Payment Method</label>
-                <select value={s.paymentMethod} onChange={e => s.setPaymentMethod(e.target.value)} className={`${inputCls} cursor-pointer`}>
+                <select value={s.paymentMethod} onChange={e => { s.setPaymentMethod(e.target.value); s.setBookingMethod(''); }} className={`${inputCls} cursor-pointer`}>
                   <option value="">— Select card (optional) —</option>
                   {s.cards.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
+              </div>
+            )}
+            {s.paymentMethod === 'Chase Sapphire Reserve' && ['Travel', 'Holiday'].includes(s.category) && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-bold text-indigo-500">
+                  📊 {s.bookingMethod === 'direct' ? '4x UR — Booked direct' : '8x UR — Chase Travel portal'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => s.setBookingMethod(bm => bm === 'direct' ? '' : 'direct')}
+                  className="text-xs text-slate-400 hover:text-indigo-500 underline transition-colors"
+                >
+                  {s.bookingMethod === 'direct' ? '← Switch to portal (8x)' : 'Booked direct instead? → 4x'}
+                </button>
               </div>
             )}
             <div className="space-y-1.5">

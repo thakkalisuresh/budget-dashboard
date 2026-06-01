@@ -52,7 +52,8 @@ export async function fetchDetailRows(categoryName, accessToken, sheetId, monthN
   const descCol = isV2 ? 3 : config.descCol;
   const amtCol  = isV2 ? 4 : config.amtCol;
   const pmCol   = isV2 ? 5 : -1;   // Payment Method col (F) — V2 only
-  const uuidCol = isV2 ? 6 : uuidStart(config);  // UUID col (G for V2, shifted from F in Phase 1)
+  const uuidCol = isV2 ? 6 : uuidStart(config);  // UUID col (G for V2)
+  const bmCol   = isV2 ? 7 : -1;   // Booking Method col (H) — V2 only
   const dateCol = isV2 ? 2 : -1;
 
   const result = [];
@@ -67,7 +68,8 @@ export async function fetchDetailRows(categoryName, accessToken, sheetId, monthN
     const uuids         = amounts.map((_, i) => String(row[uuidCol + i] || ''));
     const date          = isV2 ? String(row[dateCol] || '').trim() : '';
     const paymentMethod = pmCol >= 0 ? String(row[pmCol] || '').trim() : '';
-    result.push({ rowIndex: j + 2, description: String(desc), amounts, uuids, date, paymentMethod, _v2: isV2 });
+    const bookingMethod = bmCol >= 0 ? String(row[bmCol] || '').trim() : '';
+    result.push({ rowIndex: j + 2, description: String(desc), amounts, uuids, date, paymentMethod, bookingMethod, _v2: isV2 });
   });
 
   _detailCache.set(cacheKey, { data: result, ts: Date.now() });
