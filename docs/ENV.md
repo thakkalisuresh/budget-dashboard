@@ -25,6 +25,11 @@ Set these in Netlify dashboard > Site settings > Environment variables.
 | `VAPID_PRIVATE_KEY` | Yes | push-alert, push-digest | VAPID private key for Web Push |
 | `VAPID_EMAIL` | Yes | push-alert, push-digest | Contact email for VAPID (e.g. `mailto:you@example.com`) |
 
+## Not configured via env
+
+- **Card reward rates** are pre-seeded in code, not environment variables. They live in `src/cardRewards.js` (client) and `netlify/functions/_card-rewards.mjs` (bot) — the two must be kept in sync. The cards list and card rules are per-user data stored in the `UserSettings` sheet, editable in Settings → Cards & Payment Methods.
+- The Telegram/WhatsApp bot reads cards & rules from `UserSettings` via `getUserSettings()`; no extra env vars are needed for card tracking.
+
 ## Build-time
 
 | Variable | Source | Description |
