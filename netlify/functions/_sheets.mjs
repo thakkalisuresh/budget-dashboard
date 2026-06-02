@@ -469,6 +469,23 @@ async function clearNotesCellInSheet(sheetId) {
   } catch { /* non-critical */ }
 }
 
+async function writeV2HeadersToSheet(sheetId) {
+  const uniqueSheets = [...new Set(Object.values(SHEET_MAP).map(c => c.sheet))];
+  const header = ['Month', 'Year', 'Date', 'Vendor', 'Amount', 'Payment Method', 'UUID', 'Booking Method'];
+  const data = uniqueSheets.map(sheetName => ({
+    range: `'${sheetName}'!A1:H1`,
+    values: [header],
+  }));
+  try {
+    await sheetsRequest(sheetId, '/values:batchUpdate', {
+      method: 'POST',
+      body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data }),
+    });
+  } catch (e) {
+    console.warn('writeV2HeadersToSheet: failed (non-fatal)', e.message);
+  }
+}
+
 async function registerMonth(monthName, sheetId) {
   const range = encodeURIComponent("'Months'!A:B");
   await sheetsRequest(TEMPLATE_ID, `/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
@@ -563,6 +580,7 @@ export async function createMonth({ monthName, salary, budgetChanges }) {
 
   await deleteMonthsTabFromSheet(newSheetId);
   await updateMonthColumnsInSheet(newSheetId, monthName);
+  await writeV2HeadersToSheet(newSheetId);
   await clearNotesCellInSheet(newSheetId);
 
   const settings = await getUserSettings();
