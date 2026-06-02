@@ -158,6 +158,12 @@ export async function loadUserSettings(userId, accessToken) {
       smartRules:              parsed.smartRules              || [],
       cardRewardRates:         parsed.cardRewardRates         || null,
       messages:                parsed.messages                || [],
+      // Append any new default cards the user doesn't already have (preserves user order)
+      cards: (() => {
+        const saved = parsed.cards || DEFAULT_SETTINGS.cards;
+        const newDefaults = DEFAULT_SETTINGS.cards.filter(c => !saved.includes(c));
+        return newDefaults.length ? [...saved, ...newDefaults] : saved;
+      })(),
       reconciledFingerprints:  parsed.reconciledFingerprints  || [],
       hasSeenOnboarding:       parsed.hasSeenOnboarding || localStorage.getItem('budget_onboarding_done') === 'true',
       keyboardShortcuts: (() => {
