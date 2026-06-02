@@ -79,17 +79,16 @@ describe('appendExpense', () => {
       paymentMethod: 'Chase Sapphire Reserve',
     });
 
-    // V2 schema: month, year, date, vendor, amount, paymentMethod(F), bookingMethod(G), uuid(H — always last)
+    // V2 schema (non-travel): month, year, date, vendor, amount, paymentMethod(F), uuid(G — last)
     expect(result.uuid).toMatch(/^tx_4523_/);
-    expect(result.row).toHaveLength(8);
+    expect(result.row).toHaveLength(7);
     expect(result.row[0]).toBe('May');
     expect(result.row[1]).toBe(2026);
     expect(result.row[2]).toBe('2026-05-20');
     expect(result.row[3]).toBe('Walmart');
     expect(result.row[4]).toBe(45.23);
     expect(result.row[5]).toBe('Chase Sapphire Reserve');
-    expect(result.row[6]).toBe(''); // bookingMethod defaults to ''
-    expect(result.row[7]).toBe(result.uuid); // UUID always last
+    expect(result.row[6]).toBe(result.uuid); // UUID last (no Booking Method on Grocery)
 
     const calls = mockFetch.mock.calls.filter(c => !c[0].includes('oauth2'));
     const appendCall = calls[0];

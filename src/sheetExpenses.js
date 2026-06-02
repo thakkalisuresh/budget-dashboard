@@ -37,12 +37,14 @@ export async function addOrUpdateExpense(
   const newUUID = generateTransactionUUID(amount);
 
   if (isV2) {
-    const dateVal   = coerceTxDate(txDate);
-    const descColV2 = 3;
-    const amtColV2  = 4;
-    const pmColV2   = 5;
-    const bmColV2   = 6;
-    const uuidColV2 = 7; // UUID is always last
+    const dateVal      = coerceTxDate(txDate);
+    const descColV2    = 3;
+    const amtColV2     = 4;
+    const pmColV2      = 5;
+    // Booking Method only on Travel/Holiday; UUID is always the last column
+    const isTravelCat  = categoryName === 'Travel' || categoryName === 'Holiday';
+    const bmColV2      = isTravelCat ? 6 : -1;
+    const uuidColV2    = isTravelCat ? 7 : 6;
 
     const newRow = Array(uuidColV2 + 1).fill('');
     newRow[0]         = month;
@@ -51,7 +53,7 @@ export async function addOrUpdateExpense(
     newRow[descColV2] = safeText(vendorName);
     newRow[amtColV2]  = amount;
     newRow[pmColV2]   = safeText(paymentMethod || '');
-    newRow[bmColV2]   = safeText(bookingMethod || '');
+    if (bmColV2 >= 0) newRow[bmColV2] = safeText(bookingMethod || '');
     newRow[uuidColV2] = newUUID;
 
     await appendRow(sheetId, config.sheet, newRow, accessToken);
@@ -124,8 +126,9 @@ export async function updateVendorAmounts(
 ) {
   const config  = getEffectiveSheetMap()[categoryName];
   if (!config) throw new Error(`Unknown category: ${categoryName}`);
-  const amtCol  = v2 ? 4 : config.amtCol;
-  const uuidCol = v2 ? 7 : uuidStart(config);
+  const amtCol       = v2 ? 4 : config.amtCol;
+  const isTravelCat  = categoryName === 'Travel' || categoryName === 'Holiday';
+  const uuidCol      = v2 ? (isTravelCat ? 7 : 6) : uuidStart(config);
 
   if (amounts.length === 0) {
     await clearRowRange(sheetId, config.sheet, rowIndex, uuidCol + 19, accessToken);

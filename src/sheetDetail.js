@@ -52,8 +52,10 @@ export async function fetchDetailRows(categoryName, accessToken, sheetId, monthN
   const descCol = isV2 ? 3 : config.descCol;
   const amtCol  = isV2 ? 4 : config.amtCol;
   const pmCol   = isV2 ? 5 : -1;   // Payment Method col (F) — V2 only
-  const bmCol   = isV2 ? 6 : -1;   // Booking Method col (G) — V2 only
-  const uuidCol = isV2 ? 7 : uuidStart(config);  // UUID col (H for V2, always last)
+  // Booking Method only on Travel/Holiday; UUID is last (col H for travel, col G for others)
+  const isTravelCat = categoryName === 'Travel' || categoryName === 'Holiday';
+  const bmCol   = (isV2 && isTravelCat) ? 6 : -1;
+  const uuidCol = isV2 ? (isTravelCat ? 7 : 6) : uuidStart(config);
   const dateCol = isV2 ? 2 : -1;
 
   const result = [];
