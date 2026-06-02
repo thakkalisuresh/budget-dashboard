@@ -135,14 +135,21 @@ async function updateMonthColumns(newSheetId, monthName, accessToken) {
   }
 }
 
-/** Write V2 header row to every category sheet so new expenses are saved in V2 format. */
+const TRAVEL_SHEETS = new Set(['Travel', 'Holiday']);
+
+/** Write V2 header row to every category sheet so new expenses are saved in V2 format.
+ *  Travel/Holiday get 8 cols (with Booking Method before UUID); all others get 7. */
 async function writeV2Headers(sheetId, accessToken) {
   const uniqueSheets = [...new Set(Object.values(SHEET_MAP).map(c => c.sheet))];
-  const header = ['Month', 'Year', 'Date', 'Vendor', 'Amount', 'Payment Method', 'Booking Method', 'UUID'];
-  const data = uniqueSheets.map(sheetName => ({
-    range: `'${sheetName}'!A1:H1`,
-    values: [header],
-  }));
+  const data = uniqueSheets.map(sheetName => {
+    const isTravel = TRAVEL_SHEETS.has(sheetName);
+    return {
+      range: isTravel ? `'${sheetName}'!A1:H1` : `'${sheetName}'!A1:G1`,
+      values: [isTravel
+        ? ['Month', 'Year', 'Date', 'Vendor', 'Amount', 'Payment Method', 'Booking Method', 'UUID']
+        : ['Month', 'Year', 'Date', 'Vendor', 'Amount', 'Payment Method', 'UUID']],
+    };
+  });
   try {
     await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values:batchUpdate`,

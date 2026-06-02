@@ -95,8 +95,12 @@ export async function appendExpense({ category, vendor, amount, txDate, sheetId,
   const dateVal = txDate || now.toISOString().slice(0, 10);
   const uuid    = generateUUID(amount);
 
-  // V2 schema: month, year, date, vendor, amount, paymentMethod(F), bookingMethod(G), uuid(H — always last)
-  const row = [month, year, dateVal, safeString(vendor), amount, safeString(paymentMethod || ''), safeString(bookingMethod || ''), uuid];
+  // V2 schema: Travel/Holiday get 8 cols (col G = bookingMethod, col H = uuid);
+  // all other categories get 7 cols (col G = uuid). UUID is always last.
+  const isTravelCat = category === 'Travel' || category === 'Holiday';
+  const row = isTravelCat
+    ? [month, year, dateVal, safeString(vendor), amount, safeString(paymentMethod || ''), safeString(bookingMethod || ''), uuid]
+    : [month, year, dateVal, safeString(vendor), amount, safeString(paymentMethod || ''), uuid];
 
   const range = encodeURIComponent(`'${config.sheet}'!A1`);
   await sheetsRequest(sheetId, `/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
@@ -469,13 +473,19 @@ async function clearNotesCellInSheet(sheetId) {
   } catch { /* non-critical */ }
 }
 
+const TRAVEL_SHEETS = new Set(['Travel', 'Holiday']);
+
 async function writeV2HeadersToSheet(sheetId) {
   const uniqueSheets = [...new Set(Object.values(SHEET_MAP).map(c => c.sheet))];
-  const header = ['Month', 'Year', 'Date', 'Vendor', 'Amount', 'Payment Method', 'Booking Method', 'UUID'];
-  const data = uniqueSheets.map(sheetName => ({
-    range: `'${sheetName}'!A1:H1`,
-    values: [header],
-  }));
+  const data = uniqueSheets.map(sheetName => {
+    const isTravel = TRAVEL_SHEETS.has(sheetName);
+    return {
+      range: isTravel ? `'${sheetName}'!A1:H1` : `'${sheetName}'!A1:G1`,
+      values: [isTravel
+        ? ['Month', 'Year', 'Date', 'Vendor', 'Amount', 'Payment Method', 'Booking Method', 'UUID']
+        : ['Month', 'Year', 'Date', 'Vendor', 'Amount', 'Payment Method', 'UUID']],
+    };
+  });
   try {
     await sheetsRequest(sheetId, '/values:batchUpdate', {
       method: 'POST',
