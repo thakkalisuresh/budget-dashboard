@@ -152,7 +152,9 @@ All animations respect `prefers-reduced-motion` — the DonutChart tween and Bud
 
 Transactions can record which card/account paid for them. Tracking is active for **V2 sheets (June 2026 onward)**; older rows stay blank — there is no migration.
 
-**V2 category-sheet schema** (col indices, 0-based):
+**V2 category-sheet schema** — two variants depending on category:
+
+**Travel / Holiday** (8 cols):
 
 | Col | Index | Field |
 |-----|-------|-------|
@@ -162,8 +164,17 @@ Transactions can record which card/account paid for them. Tracking is active for
 | D | 3 | Vendor |
 | E | 4 | Amount |
 | F | 5 | Payment Method |
-| G | 6 | UUID |
-| H | 7 | Booking Method (`''` = portal default, `'direct'` = direct booking) |
+| G | 6 | Booking Method (`''` = portal default, `'direct'` = direct booking) |
+| H | 7 | UUID (always last) |
+
+**All other categories** (7 cols, no Booking Method):
+
+| Col | Index | Field |
+|-----|-------|-------|
+| A–F | 0–5 | Same as above |
+| G | 6 | UUID (always last) |
+
+Booking Method is only meaningful for CSR airline/hotel transactions — writing it to every category sheet would add an empty column with no purpose. UUID is always the last column in both variants.
 
 **History sheet schema** (cols A–L):
 - Col K (index 10): Payment Method
@@ -204,11 +215,26 @@ Rates are keyed by Merchant Category Code (MCC), not app category name, so they 
 }
 ```
 
+Reward cards and rates:
+
+| Card | Type | Key rates |
+|---|---|---|
+| Chase Sapphire Reserve | Points (UR, 1.5¢) | 3x dining, 8x travel portal / 4x direct, 1x default |
+| American Express Blue Cash Preferred | Cashback | 6% supermarkets (cap $6k/yr), 6% streaming, 3% gas, 3% transit, 1% default |
+| Capital One Quicksilver | Cashback | 1.5% flat |
+| Chase Freedom Unlimited | Points (UR, 1¢) | 3x dining + pharmacy, 1.5x default |
+| Bilt Blue Card | Points (Bilt, 1.25¢) | 3x dining, 2x travel, 1x default |
+
 Key functions:
 - `calculateRewards(card, mcc, amount, ytdSpend, bookingMethod, rates)` — `mcc` from `resolveMCC`; `bookingMethod` for CSR portal/direct; `rates` defaults to `CARD_REWARDS` but respects `getEffectiveRates(settings)`.
 - `getEffectiveRates(settings)` — returns `settings.cardRewardRates` if set, otherwise `CARD_REWARDS`. Used by CardsTab, bot confirm flow, and rate-check application.
 - `getBestCard(category, vendor, rates)` — ranks all reward cards by estimated $/$ return; ties prefer cash back.
 - The two rate modules (`cardRewards.js` and `_card-rewards.mjs`) are **duplicated and must be kept in sync** — the server can't import client modules. The drift-guard test `cardRewardsSync.test.js` fails CI on any divergence.
+
+**New month creation** (`src/useMonths.js` → `createMonth`):
+After copying the template, `writeV2Headers` writes the correct V2 header row to every category sheet AND clears rows 2–20 to remove stale template content. This prevents Google Sheets named-table definitions (RentTable, GroceryTable, etc.) from causing new expense rows to be written at the wrong position — the Sheets `:append` API was skipping to the end of the table range instead of the first empty row. New expenses now use a direct row write (`PUT` to `values.length + 1`) rather than `:append`.
+
+**Settings merge** (`loadUserSettings`): Any cards in `DEFAULT_SETTINGS.cards` that are missing from the user's saved list are automatically appended on load, so new pre-seeded cards (e.g. Bilt Blue Card) appear without requiring a manual Settings entry.
 
 **Booking method** — stored per transaction only when card = CSR and MCC is a travel code (4511 airlines, 7011 hotels, CHASE_PORTAL). The UI shows the booking method toggle in AddExpenseDialog and ReceiptScanner when both conditions are met.
 
