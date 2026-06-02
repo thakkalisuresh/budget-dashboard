@@ -79,7 +79,7 @@ export async function getCurrentMonthSheetId(monthName) {
   throw new Error(`No sheet found for month: ${target}`);
 }
 
-export async function appendExpense({ category, vendor, amount, txDate, sheetId, monthName, paymentMethod = '', channel = 'whatsapp' }) {
+export async function appendExpense({ category, vendor, amount, txDate, sheetId, monthName, paymentMethod = '', channel = 'whatsapp', bookingMethod = '' }) {
   const config = SHEET_MAP[category];
   if (!config) throw new Error(`Unknown category: ${category}`);
   const channelLabel = channel === 'telegram' ? 'Telegram' : 'WhatsApp';
@@ -95,8 +95,8 @@ export async function appendExpense({ category, vendor, amount, txDate, sheetId,
   const dateVal = txDate || now.toISOString().slice(0, 10);
   const uuid    = generateUUID(amount);
 
-  // V2 schema (matches web app): month, year, date, vendor, amount, paymentMethod(F), uuid(G)
-  const row = [month, year, dateVal, safeString(vendor), amount, safeString(paymentMethod || ''), uuid];
+  // V2 schema: month, year, date, vendor, amount, paymentMethod(F), uuid(G), bookingMethod(H)
+  const row = [month, year, dateVal, safeString(vendor), amount, safeString(paymentMethod || ''), uuid, safeString(bookingMethod || '')];
 
   const range = encodeURIComponent(`'${config.sheet}'!A1`);
   await sheetsRequest(sheetId, `/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
@@ -113,12 +113,13 @@ export async function appendExpense({ category, vendor, amount, txDate, sheetId,
     txDate: dateVal,
     paymentMethod,
     channel,
+    bookingMethod,
   });
 
   return { uuid, row };
 }
 
-async function appendHistory(sheetId, { action, category, vendor, amount, uuid, txDate, details, paymentMethod, channel = 'whatsapp' }) {
+async function appendHistory(sheetId, { action, category, vendor, amount, uuid, txDate, details, paymentMethod, channel = 'whatsapp', bookingMethod = '' }) {
   const now = new Date().toISOString();
   const channelLabel = channel === 'telegram' ? 'Telegram' : 'WhatsApp';
   // Bot 8-col layout preserved (uuid@6, user@7 — getRecentExpenses detects this),
@@ -135,6 +136,7 @@ async function appendHistory(sheetId, { action, category, vendor, amount, uuid, 
     '',
     txDate || '',
     safeString(paymentMethod || ''),
+    safeString(bookingMethod || ''),
   ];
 
   const range = encodeURIComponent("'History'!A1");
@@ -516,6 +518,44 @@ export async function getUserSettings() {
   const row = rows.find(r => r[0] === userId);
   if (!row) return {};
   try { return JSON.parse(row[1] || '{}'); } catch { return {}; }
+}
+
+// Household accounts that share this budget (rate changes apply to all of them).
+export function getAllowedEmails() {
+  return ALLOWED_EMAILS.slice();
+}
+
+/**
+ * Read-modify-write one user's UserSettings JSON row server-side.
+ * `mutate(settings)` may return a new object or mutate in place; the result is
+ * persisted. Creates the row if the user has none yet.
+ */
+export async function updateUserSettingsFor(email, mutate) {
+  if (!TEMPLATE_ID) throw new Error('VITE_TEMPLATE_SHEET_ID not configured');
+  const range = encodeURIComponent("'UserSettings'!A:B");
+  const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
+  const rows = data.values || [];
+  const idx = rows.findIndex(r => r[0] === email);
+
+  let settings = {};
+  if (idx >= 0) { try { settings = JSON.parse(rows[idx][1] || '{}'); } catch { settings = {}; } }
+
+  const next = mutate(settings) || settings;
+  const json = JSON.stringify(next);
+
+  if (idx >= 0) {
+    const writeRange = encodeURIComponent(`'UserSettings'!A${idx + 1}:B${idx + 1}`);
+    await sheetsRequest(TEMPLATE_ID, `/values/${writeRange}?valueInputOption=RAW`, {
+      method: 'PUT',
+      body: JSON.stringify({ values: [[email, json]] }),
+    });
+  } else {
+    await sheetsRequest(TEMPLATE_ID, `/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
+      method: 'POST',
+      body: JSON.stringify({ values: [[email, json]] }),
+    });
+  }
+  return next;
 }
 
 export async function createMonth({ monthName, salary, budgetChanges }) {

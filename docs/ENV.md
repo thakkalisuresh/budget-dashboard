@@ -27,8 +27,9 @@ Set these in Netlify dashboard > Site settings > Environment variables.
 
 ## Not configured via env
 
-- **Card reward rates** are pre-seeded in code, not environment variables. They live in `src/cardRewards.js` (client) and `netlify/functions/_card-rewards.mjs` (bot) — the two must be kept in sync. The cards list and card rules are per-user data stored in the `UserSettings` sheet, editable in Settings → Cards & Payment Methods.
-- The Telegram/WhatsApp bot reads cards & rules from `UserSettings` via `getUserSettings()`; no extra env vars are needed for card tracking.
+- **Card reward rates** — the default rate table is hardcoded in `src/cardRewards.js` (client) and `netlify/functions/_card-rewards.mjs` (bot); both must stay in sync (enforced by `cardRewardsSync.test.js`). User overrides are stored in `UserSettings.cardRewardRates` and applied via `getEffectiveRates(settings)` — no env var needed.
+- **Rate auto-check** (`rate-check.mjs`, runs 1st of month) uses `ANTHROPIC_API_KEY`, `TELEGRAM_ALLOWED_USERS`, and `ALLOWED_EMAILS` — all already required. No new env vars.
+- The cards list, card rules, and reward-rate overrides are per-user data in the `UserSettings` sheet, editable in Settings → Cards & Payment Methods.
 
 ## Build-time
 

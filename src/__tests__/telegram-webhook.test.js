@@ -585,6 +585,73 @@ describe('telegram webhook — DELETE 3-layer flow', () => {
 
 /* ── Empty / unknown update types ── */
 
+describe('telegram webhook — APPLY RATES / IGNORE', () => {
+  function setupRateMocks() {
+    mockFetch.mockImplementation((url, opts) => {
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      // UserSettings read (GET) — one household row with no overrides yet
+      if (url.includes('UserSettings') && (!opts || !opts.method || opts.method === 'GET')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['nair.sabarish97@gmail.com', '{}']] }) });
+      }
+      // UserSettings write (PUT)
+      if (url.includes('UserSettings') && opts?.method === 'PUT') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+      }
+      if (url.includes('/sendMessage')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true, result: { message_id: 99 } }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+  }
+
+  it('APPLY RATES writes proposed rates to UserSettings and confirms', async () => {
+    setupRateMocks();
+    // Seed a pending proposal (mockStore is shared across all getStore names)
+    mockStore.data.set('latest', {
+      proposedAt: '2026-06-01T09:00:00Z',
+      rates: { 'Chase Sapphire Reserve': { type: 'points', unit: 'UR', mccs: { '5812': 4 }, default: 1 } },
+      summary: [{ card: 'Chase Sapphire Reserve', diffs: [] }],
+    });
+
+    const res = await handler(buildRequest(textMessage('APPLY RATES')));
+    expect(res.status).toBe(200);
+
+    const putCall = mockFetch.mock.calls.find(c => c[0].includes('UserSettings') && c[1]?.method === 'PUT');
+    expect(putCall).toBeTruthy();
+    expect(putCall[1].body).toContain('cardRewardRates');
+
+    const sendCall = mockFetch.mock.calls.find(c => c[0].includes('/sendMessage'));
+    const body = JSON.parse(sendCall[1].body);
+    expect(body.text).toContain('Rates updated');
+
+    // Proposal blob is cleared after applying
+    expect(mockStore.data.has('latest')).toBe(false);
+  });
+
+  it('APPLY RATES with no pending proposal says so', async () => {
+    setupRateMocks();
+    const res = await handler(buildRequest(textMessage('APPLY RATES')));
+    expect(res.status).toBe(200);
+    const sendCall = mockFetch.mock.calls.find(c => c[0].includes('/sendMessage'));
+    const body = JSON.parse(sendCall[1].body);
+    expect(body.text).toContain('No pending rate change');
+  });
+
+  it('IGNORE discards a pending proposal', async () => {
+    setupRateMocks();
+    mockStore.data.set('latest', { proposedAt: 'x', rates: {}, summary: [] });
+
+    const res = await handler(buildRequest(textMessage('IGNORE')));
+    expect(res.status).toBe(200);
+    const sendCall = mockFetch.mock.calls.find(c => c[0].includes('/sendMessage'));
+    const body = JSON.parse(sendCall[1].body);
+    expect(body.text).toContain('Keeping current rates');
+    expect(mockStore.data.has('latest')).toBe(false);
+  });
+});
+
 describe('telegram webhook — edge cases', () => {
   it('returns 200 ok for unknown update types', async () => {
     const req = buildRequest({ update_id: 12345 });

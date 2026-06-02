@@ -1,12 +1,106 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, RotateCcw, Search, Trash2, Pencil, Check, RefreshCw, Plus, Zap, Keyboard, CreditCard } from 'lucide-react';
+import { X, RotateCcw, Search, Trash2, Pencil, Check, RefreshCw, Plus, Zap, Keyboard, CreditCard, ChevronDown, ChevronRight } from 'lucide-react';
 import { DEFAULT_SETTINGS } from './useSettings.js';
+import { CARD_REWARDS, getEffectiveRates } from './cardRewards.js';
 import { CURRENCIES } from './currency.js';
 import { CATEGORIES, getAllCategoryNames } from './sheetsApi.js';
 import { newRuleId } from './smartRules.js';
 import * as d3 from 'd3';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
+
+const deepCopy = v => JSON.parse(JSON.stringify(v));
+
+// Defines editable rows for each reward card. readFn reads the current value
+// from a card cfg; writeFn returns an updated cfg deep copy with the new value.
+const REWARD_RATE_DEFS = {
+  'Chase Sapphire Reserve': [
+    {
+      label: 'Dining', unit: 'x UR',
+      readFn: cfg => cfg.mccs?.['5812'] ?? cfg.default,
+      writeFn: (cfg, v) => { const c = deepCopy(cfg); ['5812','5813','5814'].forEach(k => { c.mccs[k] = v; }); return c; },
+    },
+    {
+      label: 'Airlines / Hotels — Chase portal', unit: 'x UR',
+      readFn: cfg => cfg.mccs?.['4511']?.portal ?? 8,
+      writeFn: (cfg, v) => {
+        const c = deepCopy(cfg);
+        c.mccs['4511'] = { portal: v, direct: cfg.mccs?.['4511']?.direct ?? 4 };
+        c.mccs['7011'] = { portal: v, direct: cfg.mccs?.['7011']?.direct ?? 4 };
+        c.mccs['CHASE_PORTAL'] = v;
+        return c;
+      },
+    },
+    {
+      label: 'Airlines / Hotels — direct booking', unit: 'x UR',
+      readFn: cfg => cfg.mccs?.['4511']?.direct ?? 4,
+      writeFn: (cfg, v) => {
+        const c = deepCopy(cfg);
+        c.mccs['4511'] = { portal: cfg.mccs?.['4511']?.portal ?? 8, direct: v };
+        c.mccs['7011'] = { portal: cfg.mccs?.['7011']?.portal ?? 8, direct: v };
+        return c;
+      },
+    },
+    {
+      label: 'Everything else', unit: 'x UR',
+      readFn: cfg => cfg.default ?? 1,
+      writeFn: (cfg, v) => { const c = deepCopy(cfg); c.default = v; return c; },
+    },
+  ],
+  'American Express Blue Cash Preferred': [
+    {
+      label: 'US Supermarkets', unit: '% cash back',
+      hint: '$6,000/yr cap, then 1%',
+      readFn: cfg => cfg.mccs?.['5411']?.rate ?? 6,
+      writeFn: (cfg, v) => {
+        const c = deepCopy(cfg);
+        const cap = cfg.mccs?.['5411']?.cap || { annual: 6000, then: 1 };
+        c.mccs['5411'] = { rate: v, cap };
+        c.mccs['5422'] = { rate: v, cap };
+        return c;
+      },
+    },
+    {
+      label: 'Streaming', unit: '% cash back',
+      readFn: cfg => cfg.mccs?.['7372'] ?? 6,
+      writeFn: (cfg, v) => { const c = deepCopy(cfg); c.mccs['7372'] = v; return c; },
+    },
+    {
+      label: 'Gas stations', unit: '% cash back',
+      readFn: cfg => cfg.mccs?.['5541'] ?? 3,
+      writeFn: (cfg, v) => { const c = deepCopy(cfg); ['5541','5542'].forEach(k => { c.mccs[k] = v; }); return c; },
+    },
+    {
+      label: 'Transit & rideshare', unit: '% cash back',
+      readFn: cfg => cfg.mccs?.['4121'] ?? 3,
+      writeFn: (cfg, v) => { const c = deepCopy(cfg); ['4121','4111','4131','4784','7523'].forEach(k => { c.mccs[k] = v; }); return c; },
+    },
+    {
+      label: 'Everything else', unit: '% cash back',
+      readFn: cfg => cfg.default ?? 1,
+      writeFn: (cfg, v) => { const c = deepCopy(cfg); c.default = v; return c; },
+    },
+  ],
+  'Capital One Quicksilver': [
+    {
+      label: 'Everything', unit: '% cash back',
+      readFn: cfg => cfg.default ?? 1.5,
+      writeFn: (cfg, v) => { const c = deepCopy(cfg); c.default = v; return c; },
+    },
+  ],
+  'Chase Freedom Unlimited': [
+    {
+      label: 'Dining & Drugstores', unit: 'x UR',
+      readFn: cfg => cfg.mccs?.['5812'] ?? 3,
+      writeFn: (cfg, v) => { const c = deepCopy(cfg); ['5812','5813','5814','5912'].forEach(k => { c.mccs[k] = v; }); return c; },
+    },
+    {
+      label: 'Everything else', unit: 'x UR',
+      readFn: cfg => cfg.default ?? 1.5,
+      writeFn: (cfg, v) => { const c = deepCopy(cfg); c.default = v; return c; },
+    },
+  ],
+};
 
 const VISIBILITY_ITEMS = [
   { key: 'statCards',      label: 'Summary Cards',         desc: 'The 4 stat cards at the top' },
@@ -186,6 +280,11 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
   const [newCardRuleDraft, setNewCardRuleDraft] = useState({ vendorPattern: '', category: '', card: '' });
   const [editingCardRuleId, setEditingCardRuleId] = useState(null);
   const [cardRuleDraft, setCardRuleDraft]       = useState({ vendorPattern: '', category: '', card: '' });
+
+  // Reward Rates state
+  const [openRateCard, setOpenRateCard]         = useState(null); // which card is expanded
+  const [editingRateRow, setEditingRateRow]     = useState(null); // { card, idx }
+  const [rateInputDraft, setRateInputDraft]     = useState('');
 
   // MCP connector config copy feedback
   const [mcpCopied, setMcpCopied]               = useState(false);
@@ -1126,6 +1225,121 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                 ))}
               </div>
             )}
+          </div>
+
+          {/* ── Reward Rates ────────────────────────────────────────────── */}
+          <div>
+            <SectionLabel>Reward Rates</SectionLabel>
+            <p className="text-xs text-slate-400 mb-3 -mt-2">
+              Override earn rates for your reward cards. Changes apply to future calculations.
+              {settings.cardRewardRates && <span className="text-indigo-500 font-bold ml-1">Customised</span>}
+            </p>
+            <div className="space-y-2">
+              {Object.keys(CARD_REWARDS).map(card => {
+                const effectiveRates = getEffectiveRates(settings);
+                const cfg = effectiveRates[card];
+                const isCustomised = !!(settings.cardRewardRates?.[card]);
+                const isOpen = openRateCard === card;
+                const rows = REWARD_RATE_DEFS[card] || [];
+
+                const saveRateRow = () => {
+                  const val = parseFloat(rateInputDraft);
+                  if (isNaN(val) || val < 0) return;
+                  const { idx } = editingRateRow;
+                  const def = rows[idx];
+                  const updatedCfg = def.writeFn(cfg, val);
+                  const existing = settings.cardRewardRates ? { ...settings.cardRewardRates } : {};
+                  existing[card] = updatedCfg;
+                  updateSettings(prev => ({ ...prev, cardRewardRates: existing }));
+                  setEditingRateRow(null);
+                };
+
+                const resetCard = () => {
+                  const existing = settings.cardRewardRates ? { ...settings.cardRewardRates } : {};
+                  delete existing[card];
+                  updateSettings(prev => ({
+                    ...prev,
+                    cardRewardRates: Object.keys(existing).length ? existing : null,
+                  }));
+                };
+
+                return (
+                  <div key={card} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl overflow-hidden">
+                    <button
+                      onClick={() => { setOpenRateCard(isOpen ? null : card); setEditingRateRow(null); }}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                    >
+                      <CreditCard className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
+                      <span className="flex-1 text-sm font-bold text-slate-700 dark:text-slate-200 truncate">{card}</span>
+                      {isCustomised && (
+                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-500 bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 rounded-full">
+                          Custom
+                        </span>
+                      )}
+                      {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400" />}
+                    </button>
+
+                    {isOpen && (
+                      <div className="border-t border-slate-100 dark:border-slate-700 divide-y divide-slate-50 dark:divide-slate-700/50">
+                        {rows.map((def, idx) => {
+                          const currentVal = def.readFn(cfg);
+                          const isEditing = editingRateRow?.card === card && editingRateRow?.idx === idx;
+                          return (
+                            <div key={idx} className="px-4 py-2.5 flex items-center gap-3">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-bold text-slate-700 dark:text-slate-200">{def.label}</p>
+                                {def.hint && <p className="text-[10px] text-slate-400">{def.hint}</p>}
+                              </div>
+                              {isEditing ? (
+                                <div className="flex items-center gap-1.5 flex-shrink-0">
+                                  <input
+                                    autoFocus
+                                    type="number"
+                                    step="0.5"
+                                    min="0"
+                                    value={rateInputDraft}
+                                    onChange={e => setRateInputDraft(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Enter') saveRateRow(); if (e.key === 'Escape') setEditingRateRow(null); }}
+                                    className="w-20 px-2 py-1 text-xs font-bold rounded-lg border border-indigo-300 dark:border-indigo-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                                  />
+                                  <span className="text-[10px] text-slate-400 whitespace-nowrap">{def.unit}</span>
+                                  <button onClick={saveRateRow} className="p-1 rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 transition-colors">
+                                    <Check className="w-3 h-3" />
+                                  </button>
+                                  <button onClick={() => setEditingRateRow(null)} className="p-1 rounded-lg text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 transition-colors">
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5 flex-shrink-0">
+                                  <span className="text-xs font-black text-slate-700 dark:text-slate-200 tabular-nums">{currentVal}{def.unit}</span>
+                                  <button
+                                    onClick={() => { setEditingRateRow({ card, idx }); setRateInputDraft(String(currentVal)); }}
+                                    className="p-1 rounded-lg text-slate-300 dark:text-slate-600 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
+                                  >
+                                    <Pencil className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {isCustomised && (
+                          <div className="px-4 py-2.5">
+                            <button
+                              onClick={resetCard}
+                              className="flex items-center gap-1.5 text-xs font-bold text-slate-400 hover:text-rose-500 transition-colors"
+                            >
+                              <RotateCcw className="w-3 h-3" /> Reset to defaults
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           {/* ── Keyboard Shortcuts ──────────────────────────────────────── */}

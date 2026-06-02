@@ -401,6 +401,11 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                         💳 {row.paymentMethod}
                       </span>
                     )}
+                    {row.bookingMethod === 'direct' && (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded-full">
+                        ✈️ Direct booking · 4x UR
+                      </span>
+                    )}
                   </div>
                   <span className="text-sm font-black text-slate-500 dark:text-slate-400 tabular-nums ml-2 flex-shrink-0">
                     {currencySymbol}{row.amounts.reduce((a, b) => a + b, 0).toFixed(2)}

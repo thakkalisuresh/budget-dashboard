@@ -11,8 +11,14 @@ describe('_card-rewards.mjs parity', () => {
     expect(getBestCard('Health').card).toBe('Chase Freedom Unlimited');
   });
 
+  it('CSR wins Travel with 8x portal rate', () => {
+    const b = getBestCard('Travel');
+    expect(b.card).toBe('Chase Sapphire Reserve');
+    expect(b.rate).toBe(8);
+  });
+
   it('Amex grocery cap rolls 6%→1% past $6000 YTD', () => {
-    const r = calculateRewards('American Express Blue Cash Preferred', 'Grocery', 100, 5950);
+    const r = calculateRewards('American Express Blue Cash Preferred', '5411', 100, 5950);
     expect(r.value).toBeCloseTo(3.5, 5);
   });
 
@@ -43,6 +49,11 @@ describe('buildRewardsLine', () => {
     expect(line).toBe('📊 3x UR points — best card for Eating Out ✓');
   });
 
+  it('marks CSR as best for travel with 8x portal label', () => {
+    const line = buildRewardsLine('Chase Sapphire Reserve', 'Travel', 500);
+    expect(line).toBe('📊 8x UR points — best card for Travel ✓');
+  });
+
   it('warns with savings when a suboptimal card is used on Grocery', () => {
     // Quicksilver 1.5% = $1.50 vs Amex 6% = $6.00 on $100 → saves ~$4.50
     const line = buildRewardsLine('Capital One Quicksilver', 'Grocery', 100);
@@ -52,21 +63,19 @@ describe('buildRewardsLine', () => {
   });
 
   it('warns when CSR is used on Grocery (1x UR @1.5¢=1.5% vs Amex 6%)', () => {
-    // used CSR: 100 pts × 1.5¢ = $1.50; best Amex: $6.00 → saves ~$4.50
     const line = buildRewardsLine('Chase Sapphire Reserve', 'Grocery', 100);
     expect(line).toContain('⚠️');
     expect(line).toContain('saves ~$4.50');
   });
 
   it('treats a tie as best (no warning) — Quicksilver on a flat 1.5% category', () => {
-    // Rent: Quicksilver 1.5% vs CFU 1.5x@1¢=1.5% → tie, savings ~0 → positive line
     const line = buildRewardsLine('Capital One Quicksilver', 'Rent', 100);
     expect(line).toContain('✓');
     expect(line).not.toContain('⚠️');
   });
 
   it('merchant-aware: Amex on Grocery at Costco is NOT best — recommends Quicksilver', () => {
-    // At Costco, Amex earns 1% (excluded), Quicksilver 1.5% wins → warning, ~$0.50 on $100
+    // At Costco (MCC 5300), Amex earns 1%, Quicksilver 1.5% wins → ~$0.50 on $100
     const line = buildRewardsLine('American Express Blue Cash Preferred', 'Grocery', 100, 'Costco Wholesale');
     expect(line).toContain('⚠️');
     expect(line).toContain('Capital One Quicksilver earns 1.5% here');
@@ -76,5 +85,17 @@ describe('buildRewardsLine', () => {
   it('merchant-aware: Amex on Grocery at a real supermarket IS best', () => {
     const line = buildRewardsLine('American Express Blue Cash Preferred', 'Grocery', 100, 'Safeway');
     expect(line).toBe('📊 6% cash back — best card for Grocery ✓');
+  });
+
+  it('Amex is best for streaming vendors (Netflix → 7372 → 6%)', () => {
+    const line = buildRewardsLine('American Express Blue Cash Preferred', 'Entertainment', 15, 'Netflix');
+    expect(line).toContain('6% cash back');
+    expect(line).toContain('✓');
+  });
+
+  it('warns when non-Amex card used for Netflix streaming', () => {
+    const line = buildRewardsLine('Capital One Quicksilver', 'Entertainment', 15, 'Netflix');
+    expect(line).toContain('⚠️');
+    expect(line).toContain('American Express Blue Cash Preferred');
   });
 });

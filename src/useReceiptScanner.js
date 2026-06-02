@@ -6,6 +6,10 @@ import {
   extractFromFile, validateCategories, checkDuplicates, resolveCardName,
   loadFxCache, saveFxCache, isPlausibleRate,
 } from './receiptHelpers.js';
+import { resolveMCC } from './vendorMCC.js';
+
+const CSR = 'Chase Sapphire Reserve';
+const TRAVEL_MCCS = new Set(['4511', '7011', 'CHASE_PORTAL']);
 
 export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, activeCategories = [], scanTriggerRef, smartRules = [], cards = [], cardRules = [], onSaveRecurring }) {
   const [phase, setPhase]         = useState('idle');
@@ -21,6 +25,7 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
   const [category, setCategory] = useState('');
   const [isRandom, setIsRandom] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('');
+  const [bookingMethod, setBookingMethod] = useState('');
   const [formErr, setFormErr]   = useState('');
   const [dupWarning, setDupWarning] = useState(false);
   const [savedReceipts, setSavedReceipts] = useState([]);
@@ -182,7 +187,8 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     try {
       // txDate is null (receipts have no parsed date → logged as today). The
       // "one-time/random" flag is applied via markNonMonthly, not the date slot.
-      await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'scan', null, paymentMethod);
+      const effectiveBM = (paymentMethod === CSR && TRAVEL_MCCS.has(resolveMCC(vendor.trim(), category))) ? bookingMethod : '';
+      await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'scan', null, paymentMethod, effectiveBM);
       if (isRandom) {
         try { await markNonMonthly(sheetId, accessToken, vendor.trim(), amt); } catch { /* non-fatal */ }
       }
@@ -327,7 +333,7 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     phase, scanError, processingProgress, unmatchedLogged,
     queue, queueIndex, wasUnreadable,
     vendor, setVendor, amount, setAmount, category, setCategory,
-    isRandom, setIsRandom, paymentMethod, setPaymentMethod, formErr, dupWarning, setDupWarning,
+    isRandom, setIsRandom, paymentMethod, setPaymentMethod, bookingMethod, setBookingMethod, formErr, dupWarning, setDupWarning,
     savedReceipts, foreignCurrency, showCurrencyPrompt,
     stmtTransactions, setStmtTransactions, stmtSavedCount,
     editingIndex, setEditingIndex, editVendor, setEditVendor,

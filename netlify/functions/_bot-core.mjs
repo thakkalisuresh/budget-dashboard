@@ -14,11 +14,12 @@ import {
   getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID,
   getTotals, getRecentExpenses, writeSalaryAmount, writeBudgetAmount,
   addCategory, checkMonthExists, getLatestMonthData, getUserSettings,
-  createMonth,
+  createMonth, getAllowedEmails, updateUserSettingsFor,
 } from './_sheets.mjs';
+import { getStore } from '@netlify/blobs';
 import { convertToUSD } from './_currency.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
-import { buildRewardsLine } from './_card-rewards.mjs';
+import { buildRewardsLine, getEffectiveRates } from './_card-rewards.mjs';
 import { kbYesCancel, kbYesSkip, kbConfirmDelete } from './_telegram.mjs';
 
 const DAILY_LIMIT    = 50;
@@ -201,6 +202,7 @@ export async function handleTextReply(ctx, text) {
     const amount        = extraction.total_amount;
     const txDate        = extraction.purchase_date;
     const paymentMethod = extraction.payment_method || '';
+    const bookingMethod = extraction.booking_method || '';
     const monthName     = `${month} ${year}`;
 
     let sheetId;
@@ -213,7 +215,7 @@ export async function handleTextReply(ctx, text) {
 
     let result;
     try {
-      result = await appendExpense({ category, vendor, amount, txDate, sheetId, monthName, paymentMethod, channel: ctx.channel });
+      result = await appendExpense({ category, vendor, amount, txDate, sheetId, monthName, paymentMethod, channel: ctx.channel, bookingMethod });
     } catch (e) {
       console.error('bot-core: Sheets append failed', e.message);
       return ctx.send('Failed to log receipt to spreadsheet. Please try via the dashboard.');
@@ -229,7 +231,7 @@ export async function handleTextReply(ctx, text) {
     }
 
     await store.setJSON(`lastlog:${userId}`, {
-      uuid: result.uuid, category, vendor, amount, txDate, paymentMethod,
+      uuid: result.uuid, category, vendor, amount, txDate, paymentMethod, bookingMethod,
       sheetId, monthName, year, month,
       driveFileId: driveFileId || null,
       driveShareLink: pending.driveShareLink || null,
@@ -242,7 +244,9 @@ export async function handleTextReply(ctx, text) {
     const hints = ['UNDO to reverse'];
     if (!driveFileId) hints.push('ATTACH to add receipt photo');
 
-    const rewardsLine = paymentMethod ? buildRewardsLine(paymentMethod, category, amount, vendor) : '';
+    let _rateSettings = {};
+    try { _rateSettings = await getUserSettings(); } catch { /* use defaults */ }
+    const rewardsLine = paymentMethod ? buildRewardsLine(paymentMethod, category, amount, vendor, getEffectiveRates(_rateSettings)) : '';
 
     const summary = [
       'Receipt logged!',
@@ -306,6 +310,43 @@ export async function handleTextReply(ctx, text) {
     return ctx.send(
       `Send the receipt photo for:\n${lastlog.vendor} · $${lastlog.amount} (${lastlog.category})`
     );
+  }
+
+  // ── APPLY RATES / IGNORE (monthly rate auto-check response) ──
+  if (normalized === 'APPLY RATES' || normalized === 'APPLY') {
+    const proposals = getStore('rate-proposals');
+    const proposal = await proposals.get('latest', { type: 'json' }).catch(() => null);
+    if (!proposal || !proposal.rates) {
+      return ctx.send('No pending rate change to apply.');
+    }
+    const emails = getAllowedEmails();
+    let updated = 0;
+    for (const email of emails) {
+      try {
+        await updateUserSettingsFor(email, (s) => { s.cardRewardRates = proposal.rates; return s; });
+        updated++;
+      } catch (e) {
+        console.error('bot-core: APPLY RATES write failed for', email, e.message);
+      }
+    }
+    if (updated === 0) {
+      return ctx.send('Failed to update rates. Please try again or use the dashboard.');
+    }
+    await proposals.delete('latest').catch(() => {});
+    const cards = (proposal.summary || []).map(c => c.card).join(', ');
+    console.log(`bot-core: rates applied to ${updated} account(s) by ${userId}`);
+    return ctx.send(
+      `✅ Rates updated for the household${cards ? ` (${cards})` : ''}. Future rewards calculations will use the new rates.`
+    );
+  }
+  if (normalized === 'IGNORE') {
+    const proposals = getStore('rate-proposals');
+    const proposal = await proposals.get('latest', { type: 'json' }).catch(() => null);
+    if (!proposal) {
+      return ctx.send('No pending rate change to ignore.');
+    }
+    await proposals.delete('latest').catch(() => {});
+    return ctx.send('👍 Keeping current rates. The proposed change has been discarded.');
   }
 
   // ── SET SALARY ──
@@ -386,7 +427,7 @@ export async function handleTextReply(ctx, text) {
   }
 
   // ── Field edit: "category: X", "amount: X", "store: X", "date: X", "card: X" ──
-  const editMatch = text.trim().match(/^(category|amount|store|date|card)\s*:\s*(.+)$/i);
+  const editMatch = text.trim().match(/^(category|amount|store|date|card|booking)\s*:\s*(.+)$/i);
   if (editMatch) {
     const { blobs } = await store.list({ prefix: `confirm:${userId}:` });
     if (!blobs || blobs.length === 0) {
@@ -434,6 +475,12 @@ export async function handleTextReply(ctx, text) {
           : 'No cards configured. Add cards in the dashboard settings first.');
       }
       pending.extraction.payment_method = matched;
+    } else if (field === 'booking') {
+      const method = value.toLowerCase();
+      if (method !== 'portal' && method !== 'direct') {
+        return ctx.send("Booking must be 'portal' (8x UR) or 'direct' (4x UR).");
+      }
+      pending.extraction.booking_method = method === 'direct' ? 'direct' : '';
     }
 
     await store.setJSON(key, pending);
@@ -447,6 +494,7 @@ export async function handleTextReply(ctx, text) {
       `Total: $${e.total_amount ?? '?'}`,
     ];
     if (e.payment_method) lines.push(`Card: ${e.payment_method}`);
+    if (e.booking_method) lines.push(`Booking: Direct (4x UR)`);
     lines.push('', 'Reply YES to log, or CANCEL');
     return ctx.send(lines.join('\n'), kbYesCancel());
   }
@@ -724,10 +772,15 @@ function buildConfirmPrompt(data, conversionInfo) {
     `Total: $${data.total_amount ?? '?'}`,
   ];
   if (data.payment_method) lines.push(`Card: ${data.payment_method}`);
+  if (data.payment_method === 'Chase Sapphire Reserve' &&
+      (data.reward_category === 'Travel' || data.reward_category === 'Holiday')) {
+    const bm = data.booking_method || '';
+    lines.push(`Booking: ${bm === 'direct' ? 'Direct (4x UR)' : 'Chase Travel portal (8x UR)'}`);
+  }
   if (conversionInfo) {
     lines.push(`(Converted from ${conversionInfo.originalCurrency} ${conversionInfo.original} · rate ${conversionInfo.rate.toFixed(4)})`);
   }
-  lines.push('', 'Reply YES to log, or CANCEL', 'Edit: "category: Travel", "amount: 52.10", or "card: Chase"');
+  lines.push('', 'Reply YES to log, or CANCEL', 'Edit: "category: Travel", "amount: 52.10", "card: Chase", or "booking: direct"');
   return lines.join('\n');
 }
 

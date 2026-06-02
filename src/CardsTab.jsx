@@ -3,7 +3,7 @@ import { CreditCard, RefreshCw, Inbox, Award, TrendingUp } from 'lucide-react';
 import { fetchHistory, formatTxDate, ensureCardsSummarySheet, CATEGORIES } from './sheetsApi.js';
 import {
   calculateRewards, rewardsDollarValue, bestCardTable, cardEarnsRewards,
-  isAmexGroceryExcluded, UR_POINT_VALUE_CSR, UR_POINT_VALUE_CFU,
+  resolveMCC, getEffectiveRates, UR_POINT_VALUE_CSR, UR_POINT_VALUE_CFU,
 } from './cardRewards.js';
 
 const SPEND_ACTIONS = new Set(['Added', 'Receipt Scan', 'Import', 'Updated', 'WhatsApp Receipt', 'Telegram Receipt']);
@@ -28,7 +28,7 @@ function monthKeyOf(entry) {
   return d.toLocaleString('en-US', { month: 'short', year: 'numeric' });
 }
 
-export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [] }) {
+export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [], settings = null }) {
   const [entries, setEntries]       = useState([]);
   const [loading, setLoading]       = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -82,30 +82,28 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
   // Rewards: process oldest-first so the Amex grocery cap accumulates correctly
   const rewards = useMemo(() => {
     const chrono = [...cardEntries].reverse();
-    const ytd = {};                 // `${card}__${category}` → cumulative spend
     let urPoints = 0, cashBack = 0; // UR (CSR+CFU) and cash ($ Amex+Quicksilver) — kept separate
-    let amexGroceryYtd = 0;
+    let amexGroceryYtd = 0;         // qualifying supermarket spend (MCCs 5411/5422) for the $6k cap
     const monthly = {};             // 'Jun 2026' → estimated $ value
     const perCard = {};             // card → { points, cash, type }
 
     for (const e of chrono) {
       const card = e.paymentMethod;
-      if (!cardEarnsRewards(card)) continue;
+      if (!cardEarnsRewards(card, rates)) continue;
       const cat = e.category || 'Misc';
       const amt = e.amount ?? 0;
-      const key = `${card}__${cat}`;
-      const r = calculateRewards(card, cat, amt, ytd[key] || 0, e.vendor);
-      // Amex grocery at excluded warehouse clubs earns base 1% and doesn't count toward the $6k cap
-      const qualifiesAmexGrocery = card === AMEX && cat === 'Grocery' && !isAmexGroceryExcluded(e.vendor);
-      if (!(card === AMEX && cat === 'Grocery') || qualifiesAmexGrocery) ytd[key] = (ytd[key] || 0) + amt;
-      if (qualifiesAmexGrocery) amexGroceryYtd += amt;
+      const mcc = resolveMCC(e.vendor, cat);
+      // Only Amex supermarket MCCs contribute to the $6k annual cap
+      const qualifiesAmexCap = card === AMEX && (mcc === '5411' || mcc === '5422');
+      const r = calculateRewards(card, mcc, amt, qualifiesAmexCap ? amexGroceryYtd : 0, 'portal', rates);
+      if (qualifiesAmexCap) amexGroceryYtd += amt;
 
       if (!perCard[card]) perCard[card] = { points: 0, cash: 0, type: r.type };
       if (r.type === 'points')        { urPoints += r.value; perCard[card].points += r.value; }
       else if (r.type === 'cashback') { cashBack += r.value; perCard[card].cash  += r.value; }
 
       const mk = monthKeyOf(e);
-      monthly[mk] = (monthly[mk] || 0) + rewardsDollarValue(card, r);
+      monthly[mk] = (monthly[mk] || 0) + rewardsDollarValue(card, r, rates);
     }
 
     const monthlyList = Object.entries(monthly)
@@ -113,11 +111,12 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
       .sort((a, b) => new Date('1 ' + a.month) - new Date('1 ' + b.month));
 
     return { urPoints, cashBack, amexGroceryYtd, monthlyList, perCard };
-  }, [cardEntries]);
+  }, [cardEntries, rates]);
 
+  const rates      = useMemo(() => getEffectiveRates(settings), [settings]);
   const hasRewards = rewards.urPoints > 0 || rewards.cashBack > 0;
   const maxMonthly = Math.max(1, ...rewards.monthlyList.map(m => m.value));
-  const bestTable  = useMemo(() => bestCardTable(CATEGORIES), []);
+  const bestTable  = useMemo(() => bestCardTable(CATEGORIES, rates), [rates]);
 
   return (
     <div className="space-y-5">
