@@ -13,8 +13,9 @@
 import { resolveMCC } from './vendorMCC.js';
 export { resolveMCC };
 
-export const UR_POINT_VALUE_CSR = 0.015; // $ per UR point (CSR travel portal)
-export const UR_POINT_VALUE_CFU = 0.01;  // $ per UR point (CFU base)
+export const UR_POINT_VALUE_CSR  = 0.015; // $ per UR point (CSR travel portal)
+export const UR_POINT_VALUE_CFU  = 0.01;  // $ per UR point (CFU base)
+export const BILT_POINT_VALUE    = 0.0125; // $ per Bilt point (~1.25¢, partner transfers)
 
 // rate semantics: cashback → percent (6 = 6%); points → multiplier (3 = 3x)
 // MCC entries: number = flat rate; { portal, direct } = booking-method split;
@@ -56,6 +57,14 @@ export const CARD_REWARDS = {
       '5912': 3,                                    // pharmacy/drugstore
     },
     default: 1.5,
+  },
+  'Bilt Blue Card': {
+    type: 'points', unit: 'Bilt', pointValue: BILT_POINT_VALUE,
+    mccs: {
+      '5812': 3, '5813': 3, '5814': 3,            // dining
+      '4511': 2, '7011': 2,                        // airlines, hotels
+    },
+    default: 1,
   },
 };
 

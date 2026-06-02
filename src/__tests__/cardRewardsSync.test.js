@@ -14,6 +14,7 @@ const CARDS = [
   'American Express Blue Cash Preferred',
   'Capital One Quicksilver',
   'Chase Freedom Unlimited',
+  'Bilt Blue Card',
   'Chase Debit Card - Anu',
   'Cash',
 ];

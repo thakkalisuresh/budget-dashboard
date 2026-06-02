@@ -100,6 +100,23 @@ const REWARD_RATE_DEFS = {
       writeFn: (cfg, v) => { const c = deepCopy(cfg); c.default = v; return c; },
     },
   ],
+  'Bilt Blue Card': [
+    {
+      label: 'Dining', unit: 'x Bilt',
+      readFn: cfg => cfg.mccs?.['5812'] ?? 3,
+      writeFn: (cfg, v) => { const c = deepCopy(cfg); ['5812','5813','5814'].forEach(k => { c.mccs[k] = v; }); return c; },
+    },
+    {
+      label: 'Travel', unit: 'x Bilt',
+      readFn: cfg => cfg.mccs?.['4511'] ?? 2,
+      writeFn: (cfg, v) => { const c = deepCopy(cfg); ['4511','7011'].forEach(k => { c.mccs[k] = v; }); return c; },
+    },
+    {
+      label: 'Everything else', unit: 'x Bilt',
+      readFn: cfg => cfg.default ?? 1,
+      writeFn: (cfg, v) => { const c = deepCopy(cfg); c.default = v; return c; },
+    },
+  ],
 };
 
 const VISIBILITY_ITEMS = [
