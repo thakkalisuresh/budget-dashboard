@@ -1,5 +1,21 @@
 # Changelog
 
+## [2026-06-02] — Post-launch fixes & Bilt Blue Card
+
+### New card
+
+- **Bilt Blue Card** added to the household's card list and rewards engine: 3× Bilt points on dining, 2× on travel, 1× everywhere else (1.25¢/pt). Included in best-card comparisons, Cards tab analytics, bot rewards line, and Settings → Reward Rates editor.
+
+### Schema corrections
+
+- **V2 schema final column order**: UUID is now always the last column. Booking Method (col G) only appears on Travel and Holiday sheets where it is meaningful — all other category sheets use a 7-column layout without it. Final layout: Travel/Holiday = `Month|Year|Date|Vendor|Amount|Payment Method|Booking Method|UUID`; all others = `Month|Year|Date|Vendor|Amount|Payment Method|UUID`.
+
+### Bug fixes
+
+- **New expenses written to wrong row**: the Sheets API `:append` endpoint was skipping past named table ranges (RentTable, GroceryTable, etc.) inherited from the template, causing new transactions to land at row 5 instead of row 2. Fixed by reading the current row count first and writing directly to `values.length + 1` (both web and bot paths). `:append` is no longer used for V2 expense rows.
+- **New month template rows**: `createMonth` now writes V2 headers to every category sheet and clears rows 2–20 to remove stale template content that caused the row positioning issue.
+- **Bilt Blue Card not visible**: new default cards added in code were not surfaced to existing users whose settings were already saved. `loadUserSettings` now automatically appends any `DEFAULT_SETTINGS.cards` entries missing from the user's saved list.
+
 ## [2026-06-01] — Rewards Engine Rewrite
 
 ### Functionality
