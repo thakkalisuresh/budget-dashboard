@@ -1,5 +1,23 @@
 # Changelog
 
+## [2026-05-31] — Payment Method & Card Rewards Tracking
+
+### Functionality
+
+- **Payment method per transaction**: every expense can now record which card/account was used. Stored in a new column on each category sheet (V2 layout, col F) and in the History sheet (col K). Card tracking applies to transactions from June 2026 onward; older rows are left blank.
+- **Cards list & rules** (Settings → Cards & Payment Methods): a pre-seeded, user-editable list of cards (4 credit cards, 2 debit cards, 2 bank accounts, Cash), plus *card rules* that auto-assign a card by vendor pattern and optional category (category-specific rules win over vendor-only).
+- **Auto-resolution**: the Add Expense dialog, receipt scanner, statement import, reconciliation, and the Telegram/WhatsApp bot all resolve a card automatically — Vision-extracted card (Apple/Google/Samsung Pay wallet screenshots) → fuzzy match against the cards list → card rules → manual pick.
+- **Cards dashboard tab**: per-card spend totals + a filterable transaction list, plus a **Cards Summary** Google Sheet tab (formula-driven, auto-updating) created on first visit.
+- **Card badges**: payment method shown on Ledger rows, History entries, and category Detail-pane vendor rows.
+- **Rewards analytics** (Cards tab): rewards earned to date (Chase UR points and cash back tracked separately), per-card cash-back breakdown, Amex 6% grocery-cap progress ($6k/yr), a monthly estimated-value trend, and a static "best card per category" recommendation table.
+- **Bot rewards check**: the bot confirmation message flags whether the best card was used (`📊 6% cash back — best card for Grocery ✓`) or recommends a better one with estimated savings (`⚠️ … saves ~$4.50 on this transaction`). Confirmation also links the month's Google Sheet directly.
+
+### Data / Schema
+
+- **V2 category-sheet schema** (effective June 2026): `Month | Year | Date | Vendor | Amount | Payment Method (F) | UUID (G)`. UUID shifted from col F to col G to make room. The bot's `appendExpense` was realigned to match.
+- **History sheet**: extended to col K (`Payment Method`); the bot's history append is padded so its card also lands in col K while preserving the legacy uuid@6 layout.
+- Card reward rates are **pre-seeded in code** (`src/cardRewards.js` + `netlify/functions/_card-rewards.mjs`), not environment-configurable. The two files duplicate the rate table and must be kept in sync.
+
 ## [2026-05-27] — UI Overhaul + Offline Biometric Unlock
 
 ### Visual

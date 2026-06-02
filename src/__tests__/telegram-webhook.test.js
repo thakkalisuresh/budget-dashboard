@@ -1,4 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+
+// Pin the clock so "current month" is deterministically May 2026 (matches the
+// 'May 2026' sheet fixtures below). Without this, tests that call
+// getCurrentMonthSheetId() rot at month boundaries. Date-only fake leaves
+// setTimeout/setInterval real.
+beforeAll(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-05-15T12:00:00Z')); });
+afterAll(() => { vi.useRealTimers(); });
 
 vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-bot-token');
 vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'test-webhook-secret');

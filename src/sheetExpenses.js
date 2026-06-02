@@ -1,7 +1,7 @@
 import { apiFetch, fetchRaw, writeCell, clearRowRange, appendRow } from './sheetApi.js';
 import {
   getEffectiveSheetMap, colLetter, safeText, parseAmounts, buildFormula,
-  generateTransactionUUID, uuidStart, detectV2, todayIso,
+  generateTransactionUUID, uuidStart, detectV2, coerceTxDate,
 } from './sheetHelpers.js';
 import { invalidateDetailCache } from './sheetDetail.js';
 import { appendHistoryEntry } from './sheetHistory.js';
@@ -9,10 +9,10 @@ import { enqueue } from './offlineQueue.js';
 
 export async function addOrUpdateExpense(
   categoryName, vendorName, amount, accessToken, sheetId, monthName,
-  source = 'manual', txDate = null,
+  source = 'manual', txDate = null, paymentMethod = '',
 ) {
   if (!navigator.onLine) {
-    enqueue({ type: 'add_expense', payload: { categoryName, vendorName, amount, monthName, source, txDate } });
+    enqueue({ type: 'add_expense', payload: { categoryName, vendorName, amount, monthName, source, txDate, paymentMethod } });
     return { queued: true };
   }
 
@@ -37,23 +37,26 @@ export async function addOrUpdateExpense(
   const newUUID = generateTransactionUUID(amount);
 
   if (isV2) {
-    const dateVal   = txDate || todayIso();
+    const dateVal   = coerceTxDate(txDate);
     const descColV2 = 3;
     const amtColV2  = 4;
-    const uuidColV2 = 5;
+    const pmColV2   = 5;
+    const uuidColV2 = 6;
 
     const newRow = Array(uuidColV2 + 1).fill('');
-    newRow[0]          = month;
-    newRow[1]          = year;
-    newRow[2]          = dateVal;
-    newRow[descColV2]  = safeText(vendorName);
-    newRow[amtColV2]   = amount;
-    newRow[uuidColV2]  = newUUID;
+    newRow[0]         = month;
+    newRow[1]         = year;
+    newRow[2]         = dateVal;
+    newRow[descColV2] = safeText(vendorName);
+    newRow[amtColV2]  = amount;
+    newRow[pmColV2]   = safeText(paymentMethod || '');
+    newRow[uuidColV2] = newUUID;
 
     await appendRow(sheetId, config.sheet, newRow, accessToken);
     await appendHistoryEntry(sheetId, accessToken, {
       action: source === 'scan' ? 'Receipt Scan' : source === 'import' ? 'Import' : 'Added',
       category: categoryName, vendor: vendorName, amount, uuid: newUUID, txDate: dateVal,
+      paymentMethod,
     });
   } else {
     const uuidCol = uuidStart(config);
@@ -120,7 +123,7 @@ export async function updateVendorAmounts(
   const config  = getEffectiveSheetMap()[categoryName];
   if (!config) throw new Error(`Unknown category: ${categoryName}`);
   const amtCol  = v2 ? 4 : config.amtCol;
-  const uuidCol = v2 ? 5 : uuidStart(config);
+  const uuidCol = v2 ? 6 : uuidStart(config);
 
   if (amounts.length === 0) {
     await clearRowRange(sheetId, config.sheet, rowIndex, uuidCol + 19, accessToken);

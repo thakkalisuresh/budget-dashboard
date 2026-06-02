@@ -133,7 +133,7 @@ All animations respect `prefers-reduced-motion` — the DonutChart tween and Bud
 
 ### Data Layer
 
-`sheetsApi.js` is a barrel that re-exports from 9 focused modules:
+`sheetsApi.js` is a barrel that re-exports from 10 focused modules:
 
 | Module | Responsibility |
 |---|---|
@@ -146,6 +146,30 @@ All animations respect `prefers-reduced-motion` — the DonutChart tween and Bud
 | `sheetExpenses` | Expense add / update / rename / delete, offline enqueue |
 | `sheetNonMonthly` | Non-monthly expense tracking |
 | `sheetCategories` | Category CRUD |
+| `sheetCards` | `ensureCardsSummarySheet()` — formula-driven Cards Summary tab |
+
+### Payment Methods & Card Rewards
+
+Transactions can record which card/account paid for them. Tracking is active for **V2 sheets (June 2026 onward)**; older rows stay blank — there is no migration.
+
+**Storage**
+- Category sheet (V2): `Month | Year | Date(C) | Vendor(D) | Amount(E) | Payment Method(F) | UUID(G)`. The card sits at col F; UUID was shifted from F to G to make room.
+- History sheet: extended to col K (`Payment Method`). The bot's history rows are padded so the card lands at col K while keeping the legacy uuid@6 layout that `getRecentExpenses` detects.
+- **Cards Summary** tab: a formula-driven sheet (`sheetCards.ensureCardsSummarySheet`) created on first visit to the Cards tab. A single `QUERY` over `History!A:K` aggregates spend / count / last-date / last-vendor per card — live, no app writes after creation.
+
+**Settings** (`useSettings` → `DEFAULT_SETTINGS`)
+- `cards`: pre-seeded list of card/account names (user-editable in Settings).
+- `cardRules`: `[{ id, vendorPattern, category, card }]` — auto-assigns a card. Category-specific rules beat vendor-only; longer patterns beat shorter.
+
+**Resolution chain** (used by add-expense, scanner, import, reconcile, bot):
+`Vision-extracted card → resolveCardName() fuzzy match against cards list → applyCardRules(vendor, category) → manual pick`. `resolveCardName` normalizes punctuation/case and guards short names (e.g. "Cash" won't match "…active cash").
+
+**Rewards engine** (`src/cardRewards.js`, mirrored server-side in `netlify/functions/_card-rewards.mjs`)
+- Pre-seeded rates for the 4 reward cards (CSR, Amex Blue Cash Preferred, Quicksilver, Freedom Unlimited). Cashback (% of spend) and points (× multiplier) are tracked **separately** and never summed.
+- `calculateRewards()` handles the Amex 6% grocery cap ($6k/yr → 1% after), accumulating YTD spend oldest-first.
+- Point→dollar valuation for comparison/display only: CSR UR ≈ 1.5¢, CFU UR ≈ 1¢.
+- `getBestCard()` ranks by per-dollar value; on a tie it prefers cash back (more flexible than points needing travel redemption).
+- The two rate modules are **duplicated and must be kept in sync** (client can't be imported by Netlify functions).
 
 ### Key UI Components
 
@@ -160,6 +184,7 @@ All animations respect `prefers-reduced-motion` — the DonutChart tween and Bud
 | `DetailPanel` | Per-category transaction detail view |
 | `HistoryTab` | Month-over-month trend charts |
 | `LedgerTab` | Full transaction log with search/filter |
+| `CardsTab` | Per-card spend totals, transaction list, rewards analytics |
 | `AddExpenseDialog` | Add expense form with receipt scanning |
 | `ReconcileDialog` | Bank statement reconciliation (CSV + PDF) |
 | `ChatAgent` | AI budget assistant |
@@ -182,3 +207,12 @@ All animations respect `prefers-reduced-motion` — the DonutChart tween and Bud
 - **push-subscribe / push-unsubscribe**: Web Push subscription storage via `@netlify/blobs`.
 - **push-alert**: sends a push notification on budget threshold breach.
 - **push-digest**: scheduled weekly spending summary.
+
+### Messaging Bot (Telegram / WhatsApp)
+
+`telegram-webhook.mjs` and `whatsapp-webhook.mjs` share transport-agnostic logic in `_bot-core.mjs`. Receipt/wallet images are parsed by `_extraction.mjs` (Gemini), which now also returns `payment_method`. The bot resolves a card (Vision → fuzzy match → `cardRules`, all via `getUserSettings()`) and surfaces it in two places:
+
+- **Pending confirmation** — adds a `Card:` line and a `card: <name>` edit option alongside the existing `category:` / `amount:` edits.
+- **Logged confirmation** — adds the resolved `Card:`, a **rewards line** from `_card-rewards.mjs` `buildRewardsLine()` (best-card ✓ or a better-card recommendation with estimated savings), and a direct `View Sheet:` link to the month's Google Sheet (`/spreadsheets/d/{sheetId}`).
+
+`_card-rewards.mjs` is a server-side duplicate of `src/cardRewards.js` — keep the rate tables in sync.

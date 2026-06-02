@@ -168,6 +168,11 @@ export function HistoryTab({ sheetId, accessToken, onRefresh, currencySymbol = '
                         {entry.category}
                       </span>
                     )}
+                    {entry.paymentMethod && (
+                      <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-2 py-0.5 rounded-full flex-shrink-0">
+                        💳 {entry.paymentMethod}
+                      </span>
+                    )}
                     {entry.nonMonthly && (
                       <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-2 py-0.5 rounded-full flex-shrink-0">
                         non-monthly

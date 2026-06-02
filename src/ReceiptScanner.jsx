@@ -149,6 +149,15 @@ function ReceiptConfirmModal({ s }) {
                 {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
+            {s.cards?.length > 0 && (
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">Payment Method</label>
+                <select value={s.paymentMethod} onChange={e => s.setPaymentMethod(e.target.value)} className={`${inputCls} cursor-pointer`}>
+                  <option value="">— Select card (optional) —</option>
+                  {s.cards.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+            )}
             <div className="space-y-1.5">
               <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">Amount</label>
               <div className="relative">
@@ -229,9 +238,12 @@ function StatementTransactionRow({ t, i, onToggle, onEdit, onToggleNonMonthly, o
               <span className="text-[10px] font-black px-2 py-0.5 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 rounded-full whitespace-nowrap">Already logged</span>
             )}
           </div>
-          <div className="flex items-center gap-1.5 mt-0.5">
+          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
             <span className="text-xs font-medium text-slate-500 dark:text-slate-400">{t.category || 'No category'}</span>
             {t.date && <span className="text-xs text-slate-400">· {t.date}</span>}
+            {t.card && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-full whitespace-nowrap">💳 {t.card}</span>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0 cursor-pointer" onClick={() => onEdit(i)}>
@@ -359,6 +371,15 @@ function RowEditModal({ s }) {
                 {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
+            {s.cards?.length > 0 && (
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">Payment Method</label>
+                <select value={s.editCard} onChange={e => s.setEditCard(e.target.value)} className={`${inputCls} cursor-pointer`}>
+                  <option value="">— Select card (optional) —</option>
+                  {s.cards.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+            )}
             {s.editErr && <p className="text-xs text-rose-500 font-medium bg-rose-50 dark:bg-rose-900/20 px-4 py-2.5 rounded-xl">{s.editErr}</p>}
           </div>
 

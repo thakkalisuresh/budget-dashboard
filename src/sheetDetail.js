@@ -51,7 +51,8 @@ export async function fetchDetailRows(categoryName, accessToken, sheetId, monthN
   const isV2    = detectV2(values, monthName);
   const descCol = isV2 ? 3 : config.descCol;
   const amtCol  = isV2 ? 4 : config.amtCol;
-  const uuidCol = isV2 ? 5 : uuidStart(config);
+  const pmCol   = isV2 ? 5 : -1;   // Payment Method col (F) — V2 only
+  const uuidCol = isV2 ? 6 : uuidStart(config);  // UUID col (G for V2, shifted from F in Phase 1)
   const dateCol = isV2 ? 2 : -1;
 
   const result = [];
@@ -63,9 +64,10 @@ export async function fetchDetailRows(categoryName, accessToken, sheetId, monthN
       ? (() => { const n = parseFloat(String(rawAmt || '').replace(/[$,]/g, '')); return (!isNaN(n) && n > 0) ? [n] : []; })()
       : parseAmounts(rawAmt);
     if (amounts.length === 0) return;
-    const uuids = amounts.map((_, i) => String(row[uuidCol + i] || ''));
-    const date  = isV2 ? String(row[dateCol] || '').trim() : '';
-    result.push({ rowIndex: j + 2, description: String(desc), amounts, uuids, date, _v2: isV2 });
+    const uuids         = amounts.map((_, i) => String(row[uuidCol + i] || ''));
+    const date          = isV2 ? String(row[dateCol] || '').trim() : '';
+    const paymentMethod = pmCol >= 0 ? String(row[pmCol] || '').trim() : '';
+    result.push({ rowIndex: j + 2, description: String(desc), amounts, uuids, date, paymentMethod, _v2: isV2 });
   });
 
   _detailCache.set(cacheKey, { data: result, ts: Date.now() });
