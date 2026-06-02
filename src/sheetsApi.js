@@ -30,6 +30,7 @@ export {
 export {
   appendHistoryEntry,
   fetchHistory,
+  updateHistoryPaymentMethod,
 } from './sheetHistory.js';
 
 // ─── Undo ────────────────────────────────────────────────────────────────────
@@ -55,6 +56,7 @@ export {
   updateTransactionDate,
   updateVendorName,
   updateVendorAmounts,
+  updatePaymentMethod,
 } from './sheetExpenses.js';
 
 // ─── Non-monthly expenses ────────────────────────────────────────────────────

@@ -118,6 +118,23 @@ export async function addOrUpdateExpense(
   invalidateDetailCache(sheetId, categoryName);
 }
 
+/**
+ * Update the Payment Method (card) of an existing V2 transaction.
+ * Writes to col F (index 5) of the category sheet row, logs to History,
+ * and invalidates the detail cache.
+ */
+export async function updatePaymentMethod(categoryName, rowIndex, newCard, accessToken, sheetId) {
+  const config = getEffectiveSheetMap()[categoryName];
+  if (!config) throw new Error(`Unknown category: ${categoryName}`);
+  await writeCell(sheetId, config.sheet, rowIndex, 5, safeText(newCard || ''), accessToken);
+  await appendHistoryEntry(sheetId, accessToken, {
+    action: 'Card Updated',
+    category: categoryName,
+    details: newCard || '(removed)',
+  });
+  invalidateDetailCache(sheetId, categoryName);
+}
+
 export async function updateTransactionDate(categoryName, rowIndex, newDate, accessToken, sheetId) {
   const config = getEffectiveSheetMap()[categoryName];
   if (!config) throw new Error(`Unknown category: ${categoryName}`);

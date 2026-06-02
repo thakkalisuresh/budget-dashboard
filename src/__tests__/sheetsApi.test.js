@@ -437,3 +437,38 @@ describe('applyCardRules', () => {
     expect(applyCardRules('Amazon', 'Grocery', rules)).toBeNull();
   });
 });
+
+// ── History UUID search (mirrors updateHistoryPaymentMethod logic) ─────────────
+
+describe('History UUID search', () => {
+  // Row layout: [timestamp, action, category, vendor, amount, details, uuid_or_empty, user, uuid_or_empty, txDate, paymentMethod, bookingMethod]
+  const HEADER = ['Timestamp', 'Action', 'Category', 'Vendor', 'Amount', 'Details', 'Reserved', 'User', 'UUID', 'TxDate', 'Payment Method', 'Booking Method'];
+  const webRow  = (uuid) => ['2026-06-01', 'Added', 'Grocery', 'Walmart', 50, '', '', 'Sabarish', uuid, '2026-06-01', '', ''];
+  const botRow  = (uuid) => ['2026-06-01', 'Telegram Receipt', 'Travel', 'Delta', 350, '', uuid, 'telegram-bot', '', '2026-06-01', 'CSR', ''];
+
+  function findHistoryRowIdx(rows, uuid) {
+    return rows.findIndex((row, i) =>
+      i > 0 && ((row[8] || '') === uuid || (row[6] || '') === uuid)
+    );
+  }
+
+  it('finds web row by UUID at index 8', () => {
+    const rows = [HEADER, webRow('tx_5000_abc'), webRow('tx_9999_xyz')];
+    expect(findHistoryRowIdx(rows, 'tx_9999_xyz')).toBe(2); // sheet row 3 (1-indexed = 3)
+  });
+
+  it('finds bot row by UUID at index 6', () => {
+    const rows = [HEADER, webRow('tx_5000_abc'), botRow('tx_bot_123')];
+    expect(findHistoryRowIdx(rows, 'tx_bot_123')).toBe(2);
+  });
+
+  it('returns -1 when UUID not found', () => {
+    const rows = [HEADER, webRow('tx_5000_abc')];
+    expect(findHistoryRowIdx(rows, 'tx_missing')).toBe(-1);
+  });
+
+  it('does not match header row (i=0)', () => {
+    const rows = [['tx_header_should_not_match', ...HEADER.slice(1)]];
+    expect(findHistoryRowIdx(rows, 'tx_header_should_not_match')).toBe(-1);
+  });
+});
