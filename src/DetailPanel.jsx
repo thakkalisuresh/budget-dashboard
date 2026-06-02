@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Repeat, Plus } from 'lucide-react';
-import { updateVendorName, updateVendorAmounts, updateTransactionDate, unmarkNonMonthly, renameNonMonthly, markNonMonthly, formatTxDate, todayIso } from './sheetsApi.js';
+import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Repeat, Plus, CreditCard } from 'lucide-react';
+import { updateVendorName, updateVendorAmounts, updateTransactionDate, unmarkNonMonthly, renameNonMonthly, markNonMonthly, formatTxDate, todayIso, updatePaymentMethod, updateHistoryPaymentMethod } from './sheetsApi.js';
 
 // ── Vendor logo helpers ───────────────────────────────────────────────────────
 
@@ -110,7 +110,7 @@ function VendorLogo({ name, size = 22, onEditDomain }) {
 /**
  * rows: Array of { rowIndex, description, amounts: number[] }
  */
-export function DetailPanel({ expense, rows, loading, onClose, accessToken, sheetId, onRefresh, currencySymbol = '$', onVendorRenamed, monthName, transactionNotes = {}, onUpdateNote, nonMonthlyVendors = [], onNonMonthlyChanged, onAddExpense }) {
+export function DetailPanel({ expense, rows, loading, onClose, accessToken, sheetId, onRefresh, currencySymbol = '$', onVendorRenamed, monthName, transactionNotes = {}, onUpdateNote, nonMonthlyVendors = [], onNonMonthlyChanged, onAddExpense, cards = [] }) {
   const total = rows ? rows.reduce((s, r) => s + r.amounts.reduce((a, b) => a + b, 0), 0) : 0;
 
   // Editing state
@@ -121,6 +121,9 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
   const [error, setError]                   = useState('');
   const [editingDomain, setEditingDomain]   = useState(null);
   const [, forceLogoRefresh]               = useState(0);
+  // Card edit state
+  const [editingCardRow, setEditingCardRow] = useState(null); // { rowIndex, uuid }
+  const [cardDraft, setCardDraft]           = useState('');
   // Transaction-level note dialog
   const [noteDialog, setNoteDialog]         = useState(null); // { key, vendor, amount, data }
   const [noteDraft, setNoteDraft]           = useState({ note: '', tags: [] });
@@ -396,7 +399,61 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                         {row.date ? formatTxDate(row.date) : '— tap to add date'}
                       </span>
                     )}
-                    {row.paymentMethod && (
+                    {/* Card badge — editable on V2 rows when cards list is available */}
+                    {row._v2 && cards.length > 0 && (
+                      editingCardRow?.rowIndex === row.rowIndex ? (
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <select
+                            autoFocus
+                            value={cardDraft}
+                            onChange={e => setCardDraft(e.target.value)}
+                            className="text-[10px] font-bold rounded-lg border border-indigo-300 dark:border-indigo-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                          >
+                            <option value="">— Remove card —</option>
+                            {cards.filter(c => !['Chase Debit Card - Anu','Chase Debit Card - Sabarish','Chase Bank Account - Anu','Chase Bank Account - Sabarish','Cash'].includes(c)).map(c => (
+                              <option key={c} value={c}>{c}</option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={() => withSave(async () => {
+                              const uuid = row.uuids?.[0] || '';
+                              await updatePaymentMethod(expense, row.rowIndex, cardDraft, accessToken, sheetId);
+                              if (uuid) await updateHistoryPaymentMethod(sheetId, accessToken, uuid, cardDraft);
+                              setEditingCardRow(null);
+                              onRefresh?.();
+                            })}
+                            disabled={saving}
+                            className="p-0.5 rounded text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+                          >
+                            <Check className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={() => setEditingCardRow(null)}
+                            className="p-0.5 rounded text-slate-400 hover:text-slate-600 transition-colors"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1 mt-0.5">
+                          {row.paymentMethod ? (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-full">
+                              💳 {row.paymentMethod}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-300 dark:text-slate-600 italic">No card</span>
+                          )}
+                          <button
+                            onClick={() => { setEditingCardRow({ rowIndex: row.rowIndex, uuid: row.uuids?.[0] || '' }); setCardDraft(row.paymentMethod || ''); }}
+                            className="p-0.5 rounded text-slate-300 dark:text-slate-600 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
+                            title="Edit card"
+                          >
+                            <CreditCard className="w-3 h-3" />
+                          </button>
+                        </div>
+                      )
+                    )}
+                    {!row._v2 && row.paymentMethod && (
                       <span className="text-[10px] font-bold px-1.5 py-0.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-full">
                         💳 {row.paymentMethod}
                       </span>
