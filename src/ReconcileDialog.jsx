@@ -11,6 +11,7 @@ const getPdfParsers = () => Promise.all([
 ]);
 import { runDeduplication, reconcileFingerprint } from './reconcileDedup.js';
 import { getAllCategoryNames, fetchDetailRows, updateVendorAmounts, fuzzyNamesMatch } from './sheetsApi.js';
+import { applyCardRules } from './smartRules.js';
 import { addOrUpdateExpense } from './useExpense.js';
 
 const BANK_LABELS = { chase: 'Chase', amex: 'American Express', generic: 'Generic' };
@@ -472,7 +473,7 @@ function initDecisions(annotated) {
   return d;
 }
 
-export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onComplete, smartRules = [], reconciledFingerprints = [], onAddFingerprints }) {
+export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onComplete, smartRules = [], cardRules = [], reconciledFingerprints = [], onAddFingerprints }) {
   const [step, setStep]             = useState('upload'); // 'upload'|'deduping'|'deduped'|'review'|'importing'|'done'
   const [files, setFiles]           = useState([]);
   const [dragging, setDragging]     = useState(false);
@@ -603,7 +604,8 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
         if (d.action === 'import') {
           const category = d.category || tx.suggestedCategory || 'Misc';
           const vendor   = (d.vendor || tx.vendor).trim();
-          await addOrUpdateExpense(category, vendor, tx.amount, accessToken, sheetId, monthName, 'import');
+          const card     = applyCardRules(vendor, category, cardRules) || '';
+          await addOrUpdateExpense(category, vendor, tx.amount, accessToken, sheetId, monthName, 'import', null, card);
           imported++;
         } else if (d.action === 'apply' && tx.matchedCategory && tx.matchedVendor) {
           const rows = await fetchDetailRows(tx.matchedCategory, accessToken, sheetId);

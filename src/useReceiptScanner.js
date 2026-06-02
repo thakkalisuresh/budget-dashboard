@@ -1,13 +1,17 @@
 import { useState, useRef, useEffect } from 'react';
 import { CATEGORIES, checkExistingExpense, fuzzyNamesMatch, fetchAllLoggedTransactions, markNonMonthly, normalizeStatementDate, todayIso } from './sheetsApi.js';
 import { addOrUpdateExpense } from './useExpense.js';
-import { applySmartRules } from './smartRules.js';
+import { applySmartRules, applyCardRules } from './smartRules.js';
 import {
-  extractFromFile, validateCategories, checkDuplicates,
+  extractFromFile, validateCategories, checkDuplicates, resolveCardName,
   loadFxCache, saveFxCache, isPlausibleRate,
 } from './receiptHelpers.js';
+import { resolveMCC } from './vendorMCC.js';
 
-export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, activeCategories = [], scanTriggerRef, smartRules = [], onSaveRecurring }) {
+const CSR = 'Chase Sapphire Reserve';
+const TRAVEL_MCCS = new Set(['4511', '7011', 'CHASE_PORTAL']);
+
+export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, activeCategories = [], scanTriggerRef, smartRules = [], cards = [], cardRules = [], onSaveRecurring }) {
   const [phase, setPhase]         = useState('idle');
   const [scanError, setScanError] = useState('');
   const [processingProgress, setProcessingProgress] = useState(null);
@@ -20,6 +24,8 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
   const [amount, setAmount]     = useState('');
   const [category, setCategory] = useState('');
   const [isRandom, setIsRandom] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState('');
+  const [bookingMethod, setBookingMethod] = useState('');
   const [formErr, setFormErr]   = useState('');
   const [dupWarning, setDupWarning] = useState(false);
   const [savedReceipts, setSavedReceipts] = useState([]);
@@ -33,7 +39,12 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
   const [editVendor, setEditVendor]       = useState('');
   const [editAmount, setEditAmount]       = useState('');
   const [editCategory, setEditCategory]   = useState('');
+  const [editCard, setEditCard]           = useState('');
   const [editErr, setEditErr]             = useState('');
+
+  // Resolve a card for a transaction: Vision result → fuzzy match → card rules → ''
+  const resolveCard = (visionCard, vendorName, categoryName) =>
+    resolveCardName(visionCard, cards) || applyCardRules(vendorName, categoryName, cardRules) || '';
 
   const fileInputRef = useRef(null);
 
@@ -47,11 +58,15 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     setScanError('');
     setDupWarning(false);
     try {
-      const result = await extractFromFile(file, accessToken);
+      const result = await extractFromFile(file, accessToken, cards);
 
       if (result.type === 'statement' && result.transactions?.length) {
         const debitsOnly = result.transactions.filter(t => t.txType !== 'credit');
-        const withFlags = debitsOnly.map(t => ({ ...t, isNonMonthly: false, isRecurring: false }));
+        const stmtCard = resolveCardName(result.paymentMethod, cards);
+        const withFlags = debitsOnly.map(t => ({
+          ...t, isNonMonthly: false, isRecurring: false,
+          card: stmtCard || applyCardRules(t.vendor, t.category, cardRules) || '',
+        }));
         const checked = await checkDuplicates(validateCategories(withFlags), accessToken, sheetId, activeCategories, monthName);
         setStmtTransactions(checked);
         setPhase('statement-reviewing');
@@ -62,7 +77,9 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
       setWasUnreadable(unreadable);
       setVendor(result.vendor || '');
       const ruleCategory = applySmartRules(result.vendor, smartRules);
-      setCategory(ruleCategory || result.category || 'Misc');
+      const resolvedCategory = ruleCategory || result.category || 'Misc';
+      setCategory(resolvedCategory);
+      setPaymentMethod(resolveCard(result.paymentMethod, result.vendor, resolvedCategory));
       setIsRandom(false);
       setFormErr('');
       setForeignCurrency(null);
@@ -130,9 +147,13 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     for (let i = 0; i < files.length; i++) {
       setProcessingProgress({ current: i + 1, total: files.length });
       try {
-        const result = await extractFromFile(files[i], accessToken);
+        const result = await extractFromFile(files[i], accessToken, cards);
         if (result.type === 'statement' && result.transactions?.length) {
-          const debits = result.transactions.filter(t => t.txType !== 'credit').map(t => ({ ...t, isNonMonthly: false, isRecurring: false }));
+          const stmtCard = resolveCardName(result.paymentMethod, cards);
+          const debits = result.transactions.filter(t => t.txType !== 'credit').map(t => ({
+            ...t, isNonMonthly: false, isRecurring: false,
+            card: stmtCard || applyCardRules(t.vendor, t.category, cardRules) || '',
+          }));
           allStmtTransactions = [...allStmtTransactions, ...debits];
         } else {
           receiptFiles.push(files[i]);
@@ -164,7 +185,13 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     setDupWarning(false);
     setPhase('saving');
     try {
-      await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'scan', isRandom);
+      // txDate is null (receipts have no parsed date → logged as today). The
+      // "one-time/random" flag is applied via markNonMonthly, not the date slot.
+      const effectiveBM = (paymentMethod === CSR && TRAVEL_MCCS.has(resolveMCC(vendor.trim(), category))) ? bookingMethod : '';
+      await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'scan', null, paymentMethod, effectiveBM);
+      if (isRandom) {
+        try { await markNonMonthly(sheetId, accessToken, vendor.trim(), amt); } catch { /* non-fatal */ }
+      }
 
       const newSaved = [...savedReceipts, { vendor: vendor.trim(), amount: amt, category }];
       setSavedReceipts(newSaved);
@@ -223,7 +250,7 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
         await addOrUpdateExpense(
           t.category || 'Misc', t.vendor, t.amount,
           accessToken, sheetId, monthName, 'import',
-          normalizeStatementDate(t.date) || todayIso()
+          normalizeStatementDate(t.date) || todayIso(), t.card || ''
         );
         if (t.isNonMonthly) {
           try { await markNonMonthly(sheetId, accessToken, t.vendor, t.amount); } catch { /* non-fatal */ }
@@ -281,6 +308,7 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     setEditVendor(t.vendor || '');
     setEditAmount(t.amount != null ? String(t.amount) : '');
     setEditCategory(t.category || '');
+    setEditCard(t.card || '');
     setEditErr('');
     setEditingIndex(i);
   };
@@ -291,21 +319,27 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     if (isNaN(amt) || amt <= 0)               { setEditErr('Please enter a valid amount.'); return; }
     if (!editCategory)                        { setEditErr('Please select a category.');    return; }
     setStmtTransactions(prev => prev.map((t, i) =>
-      i === editingIndex ? { ...t, vendor: editVendor.trim(), amount: amt, category: editCategory } : t
+      i === editingIndex ? { ...t, vendor: editVendor.trim(), amount: amt, category: editCategory, card: editCard } : t
     ));
     setEditingIndex(null);
   };
+
+  // Set the card on a single statement row inline
+  const setRowCard = (i, card) =>
+    setStmtTransactions(prev => prev.map((t, j) => j === i ? { ...t, card } : t));
 
   return {
     // State
     phase, scanError, processingProgress, unmatchedLogged,
     queue, queueIndex, wasUnreadable,
     vendor, setVendor, amount, setAmount, category, setCategory,
-    isRandom, setIsRandom, formErr, dupWarning, setDupWarning,
+    isRandom, setIsRandom, paymentMethod, setPaymentMethod, bookingMethod, setBookingMethod, formErr, dupWarning, setDupWarning,
     savedReceipts, foreignCurrency, showCurrencyPrompt,
     stmtTransactions, setStmtTransactions, stmtSavedCount,
     editingIndex, setEditingIndex, editVendor, setEditVendor,
-    editAmount, setEditAmount, editCategory, setEditCategory, editErr,
+    editAmount, setEditAmount, editCategory, setEditCategory,
+    editCard, setEditCard, editErr,
+    cards,
     fileInputRef,
     // Derived
     totalInQueue: queue.length,
@@ -314,7 +348,7 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     duplicateCount: stmtTransactions.filter(t => t.isDuplicate).length,
     // Handlers
     handleFileChange, handleConfirm, doReceiptSave, handleSkip,
-    handleStatementImport, handleClose, openRowEdit, saveRowEdit,
+    handleStatementImport, handleClose, openRowEdit, saveRowEdit, setRowCard,
     setScanError,
   };
 }

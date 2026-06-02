@@ -2,7 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Plus, Zap, Sparkles, MapPin, Loader2 } from 'lucide-react';
 import { CATEGORIES, fetchDetailRows, checkExistingExpense, markNonMonthly, todayIso } from './sheetsApi.js';
 import { addOrUpdateExpense } from './useExpense.js';
-import { applySmartRules } from './smartRules.js';
+import { applySmartRules, applyCardRules } from './smartRules.js';
+import { DEFAULT_SETTINGS } from './useSettings.js';
+import { resolveMCC } from './vendorMCC.js';
+
+const CSR = 'Chase Sapphire Reserve';
+const TRAVEL_MCCS = new Set(['4511', '7011', 'CHASE_PORTAL']);
 
 const VENDOR_EXAMPLES = {
   'Grocery':       "e.g. Walmart, Costco, Trader Joe's…",
@@ -21,11 +26,14 @@ const VENDOR_EXAMPLES = {
   'Wi-Fi':         'e.g. Comcast, AT&T…',
 };
 
-export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess, categories: categoriesProp, onSaveRecurring, onSaveTransactionNote, smartRules = [], prefillCategory = null, lockCategory = false, prefillVendor = '', prefillAmount = '', geoTagEnabled = false, geoPrivacyBlur = true }) {
+export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess, categories: categoriesProp, onSaveRecurring, onSaveTransactionNote, smartRules = [], cardRules = [], cards = DEFAULT_SETTINGS.cards, prefillCategory = null, lockCategory = false, prefillVendor = '', prefillAmount = '', geoTagEnabled = false, geoPrivacyBlur = true }) {
   const categoryList = categoriesProp?.length ? categoriesProp : CATEGORIES;
   const [category, setCategory]         = useState(prefillCategory || '');
   const [vendor, setVendor]             = useState(prefillVendor);
   const [ruleHint, setRuleHint]         = useState(''); // category auto-filled by a rule
+  const [paymentMethod, setPaymentMethod] = useState('');
+  const [cardHint, setCardHint]           = useState(false); // card auto-filled by a rule
+  const [bookingMethod, setBookingMethod] = useState('');    // '' = portal (default), 'direct'
   const [amount, setAmount]             = useState(prefillAmount);
   const [txDate, setTxDate]             = useState(todayIso);
   const [isNonMonthly, setIsNonMonthly] = useState(false);
@@ -149,15 +157,25 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
       setSuggestions([]);
       setShowSuggestions(false);
       setRuleHint('');
+      setCardHint(false);
       return;
     }
     // Auto-fill category from smart rules
     const matched = applySmartRules(val, smartRules);
+    const resolvedCategory = (matched && categoryList.includes(matched)) ? matched : category;
     if (matched && categoryList.includes(matched)) {
       setCategory(matched);
       setRuleHint(matched);
     } else {
       setRuleHint('');
+    }
+    // Auto-fill card from card rules
+    const matchedCard = applyCardRules(val, resolvedCategory, cardRules);
+    if (matchedCard) {
+      setPaymentMethod(matchedCard);
+      setCardHint(true);
+    } else {
+      setCardHint(false);
     }
     const filtered = allVendors.filter(v =>
       v.toLowerCase().startsWith(val.trim().toLowerCase())
@@ -181,7 +199,8 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
     setSaving(true);
     setDupWarning(false);
     try {
-      const result = await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'manual', txDate);
+      const effectiveBM = (paymentMethod === CSR && TRAVEL_MCCS.has(resolveMCC(vendor.trim(), category))) ? bookingMethod : '';
+      const result = await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'manual', txDate, paymentMethod, effectiveBM);
       if (result?.queued) {
         if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
         setQueued(true);
@@ -215,7 +234,8 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
     setSaving(true);
     setDupWarning(false);
     try {
-      const result = await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'manual', txDate);
+      const effectiveBM = (paymentMethod === CSR && TRAVEL_MCCS.has(resolveMCC(vendor.trim(), category))) ? bookingMethod : '';
+      const result = await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'manual', txDate, paymentMethod, effectiveBM);
       if (result?.queued) {
         if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
         onSuccess?.({ queued: true, category, vendor: vendor.trim(), amount: amt });
@@ -233,7 +253,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
         }
         onSuccess?.();
       }
-      // Reset for next entry — keep category and date
+      // Reset for next entry — keep category, date, and paymentMethod
       setVendor('');
       setAmount('');
       setIsNonMonthly(false);
@@ -245,6 +265,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
       setGeoEnabled(false);
       setGeoLocation(null);
       setGeoError('');
+      setCardHint(false);
       setAddedToast(true);
       setTimeout(() => setAddedToast(false), 2000);
     } catch (err) {
@@ -342,7 +363,18 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
               </div>
               <select
                 value={category}
-                onChange={e => { if (!lockCategory) { setCategory(e.target.value); setVendor(''); setRuleHint(''); } }}
+                onChange={e => {
+                  if (!lockCategory) {
+                    const newCat = e.target.value;
+                    setCategory(newCat);
+                    setVendor('');
+                    setRuleHint('');
+                    // Re-resolve card for new category with existing vendor (if any)
+                    const matchedCard = applyCardRules(vendor, newCat, cardRules);
+                    if (matchedCard) { setPaymentMethod(matchedCard); setCardHint(true); }
+                    else { setCardHint(false); }
+                  }
+                }}
                 disabled={lockCategory}
                 className={`${inputCls} ${lockCategory ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}`}
               >
@@ -429,6 +461,46 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                 className={inputCls}
               />
             </div>
+
+            {/* Payment method */}
+            {cards.length > 0 && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+                    Payment Method
+                  </label>
+                  {cardHint && (
+                    <span className="flex items-center gap-1 text-[10px] font-bold text-indigo-500 dark:text-indigo-400">
+                      <Zap className="w-2.5 h-2.5" /> Auto-filled by rule
+                    </span>
+                  )}
+                </div>
+                <select
+                  value={paymentMethod}
+                  onChange={e => { setPaymentMethod(e.target.value); setCardHint(false); setBookingMethod(''); }}
+                  className={`${inputCls} cursor-pointer`}
+                >
+                  <option value="">— Select card (optional) —</option>
+                  {cards.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+            )}
+
+            {/* Booking method override — CSR + travel vendors only */}
+            {paymentMethod === CSR && TRAVEL_MCCS.has(resolveMCC(vendor, category)) && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-bold text-indigo-500">
+                  📊 {bookingMethod === 'direct' ? '4x UR — Booked direct' : '8x UR — Chase Travel portal'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setBookingMethod(bm => bm === 'direct' ? '' : 'direct')}
+                  className="text-xs text-slate-400 hover:text-indigo-500 underline transition-colors"
+                >
+                  {bookingMethod === 'direct' ? '← Switch to portal (8x)' : 'Booked direct instead? → 4x'}
+                </button>
+              </div>
+            )}
 
             {/* Toggles row */}
             <div className="space-y-2.5">

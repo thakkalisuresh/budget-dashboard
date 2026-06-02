@@ -15,18 +15,18 @@ async function ensureHistorySheet(sheetId, accessToken) {
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ requests: [{ addSheet: { properties: { title: 'History' } } }] }),
     });
-    const range = encodeURIComponent("'History'!A1:H1");
+    const range = encodeURIComponent("'History'!A1:L1");
     await apiFetch(sheetId, `/values/${range}?valueInputOption=RAW`, {
       method: 'PUT',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ values: [['Timestamp', 'Action', 'Category', 'Vendor', 'Amount', 'Details', 'Reserved', 'User', 'UUID']] }),
+      body: JSON.stringify({ values: [['Timestamp', 'Action', 'Category', 'Vendor', 'Amount', 'Details', 'Reserved', 'User', 'UUID', 'TxDate', 'Payment Method', 'Booking Method']] }),
     });
   }
   _historyReady.add(sheetId);
 }
 
 export async function appendHistoryEntry(sheetId, accessToken, {
-  action, category = '', vendor = '', amount = null, details = '', uuid = '', txDate = '',
+  action, category = '', vendor = '', amount = null, details = '', uuid = '', txDate = '', paymentMethod = '', bookingMethod = '',
 }) {
   try {
     await ensureHistorySheet(sheetId, accessToken);
@@ -47,6 +47,8 @@ export async function appendHistoryEntry(sheetId, accessToken, {
       safeText(userName),
       uuid || '',
       txDate || '',
+      safeText(paymentMethod || ''),
+      safeText(bookingMethod || ''),
     ];
 
     const colARange = encodeURIComponent("'History'!A:A");
@@ -54,7 +56,7 @@ export async function appendHistoryEntry(sheetId, accessToken, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     const nextRow = (colAData.values || []).length + 1;
-    const writeRange = encodeURIComponent(`'History'!A${nextRow}:J${nextRow}`);
+    const writeRange = encodeURIComponent(`'History'!A${nextRow}:L${nextRow}`);
     await apiFetch(sheetId, `/values/${writeRange}?valueInputOption=USER_ENTERED`, {
       method: 'PUT',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -67,23 +69,25 @@ export async function appendHistoryEntry(sheetId, accessToken, {
 
 export async function fetchHistory(sheetId, accessToken) {
   try {
-    const range = encodeURIComponent("'History'!A:J");
+    const range = encodeURIComponent("'History'!A:L");
     const json = await apiFetch(sheetId, `/values/${range}?valueRenderOption=UNFORMATTED_VALUE`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     const rows = json.values || [];
     if (rows.length <= 1) return [];
     return rows.slice(1).map((row, i) => ({
-      id:        i,
-      timestamp: row[0] || '',
-      action:    row[1] || '',
-      category:  row[2] || '',
-      vendor:    row[3] || '',
-      amount:    row[4] !== undefined && row[4] !== '' ? Number(row[4]) : null,
-      details:   row[5] || '',
-      user:      row[7] || '',
-      uuid:      row[8] || '',
-      txDate:    row[9] || '',
+      id:            i,
+      timestamp:     row[0] || '',
+      action:        row[1] || '',
+      category:      row[2] || '',
+      vendor:        row[3] || '',
+      amount:        row[4] !== undefined && row[4] !== '' ? Number(row[4]) : null,
+      details:       row[5] || '',
+      user:          row[7] || '',
+      uuid:          row[8] || '',
+      txDate:        row[9] || '',
+      paymentMethod: row[10] || '',
+      bookingMethod: row[11] || '',
     }))
     .filter(e => e.action)
     .reverse();

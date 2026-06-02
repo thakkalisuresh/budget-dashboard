@@ -35,6 +35,9 @@ export {
 // ─── Undo ────────────────────────────────────────────────────────────────────
 export { undoHistoryEntry } from './sheetUndo.js';
 
+// ─── Cards Summary Sheet ──────────────────────────────────────────────────────
+export { ensureCardsSummarySheet } from './sheetCards.js';
+
 // ─── Totals ──────────────────────────────────────────────────────────────────
 export {
   fetchTotalsForEdit,

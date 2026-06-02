@@ -46,6 +46,19 @@ export const DEFAULT_SETTINGS = {
   recurringExpenses: [],  // [{ category, vendor, amount }]
   nonMonthlyItems:   {},  // { 'April 2026': ['Vendor1', 'Vendor2', ...] }
   transactionNotes:  {},  // { 'sheetId_category_vendor': { note: '', tags: [], location?: {lat,lng} } }
+  cards: [
+    'Chase Sapphire Reserve',
+    'American Express Blue Cash Preferred',
+    'Capital One Quicksilver',
+    'Chase Freedom Unlimited',
+    'Chase Debit Card - Anu',
+    'Chase Debit Card - Sabarish',
+    'Chase Bank Account - Anu',
+    'Chase Bank Account - Sabarish',
+    'Cash',
+  ],
+  cardRules:               [],  // [{ id, vendorPattern, category, card }]
+  cardRewardRates:         null, // null = use hardcoded CARD_REWARDS; set by rate auto-check / Settings
   smartRules:              [],  // [{ id, pattern, category }]
   messages:                [],  // [{ id, type, title, body, timestamp, read }]
   pushHour:                20,  // preferred local hour for daily push (18-22)
@@ -142,6 +155,7 @@ export async function loadUserSettings(userId, accessToken) {
       nonMonthlyItems:   parsed.nonMonthlyItems   || {},
       transactionNotes:  parsed.transactionNotes  || {},
       smartRules:              parsed.smartRules              || [],
+      cardRewardRates:         parsed.cardRewardRates         || null,
       messages:                parsed.messages                || [],
       reconciledFingerprints:  parsed.reconciledFingerprints  || [],
       hasSeenOnboarding:       parsed.hasSeenOnboarding || localStorage.getItem('budget_onboarding_done') === 'true',

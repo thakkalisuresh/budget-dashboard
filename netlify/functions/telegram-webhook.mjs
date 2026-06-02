@@ -33,6 +33,7 @@ function makeTelegramCtx(store, userId, chatId) {
     store,
     userId: String(userId),
     chatId,
+    channel: 'telegram',
     async send(message, markup = null) {
       await sendMessage(chatId, message, markup);
     },

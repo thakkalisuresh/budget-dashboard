@@ -25,6 +25,12 @@ Set these in Netlify dashboard > Site settings > Environment variables.
 | `VAPID_PRIVATE_KEY` | Yes | push-alert, push-digest | VAPID private key for Web Push |
 | `VAPID_EMAIL` | Yes | push-alert, push-digest | Contact email for VAPID (e.g. `mailto:you@example.com`) |
 
+## Not configured via env
+
+- **Card reward rates** — the default rate table is hardcoded in `src/cardRewards.js` (client) and `netlify/functions/_card-rewards.mjs` (bot); both must stay in sync (enforced by `cardRewardsSync.test.js`). User overrides are stored in `UserSettings.cardRewardRates` and applied via `getEffectiveRates(settings)` — no env var needed.
+- **Rate auto-check** (`rate-check.mjs`, runs 1st of month) uses `ANTHROPIC_API_KEY`, `TELEGRAM_ALLOWED_USERS`, and `ALLOWED_EMAILS` — all already required. No new env vars.
+- The cards list, card rules, and reward-rate overrides are per-user data in the `UserSettings` sheet, editable in Settings → Cards & Payment Methods.
+
 ## Build-time
 
 | Variable | Source | Description |

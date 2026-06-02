@@ -32,6 +32,7 @@ const ChatAgent        = lazy(() => import('./ChatAgent.jsx').then(m => ({ defau
 import { HistoryTab } from './HistoryTab.jsx';
 import { LedgerTab, ledgerCache } from './LedgerTab.jsx';
 const SettingsPanel    = lazy(() => import('./SettingsPanel.jsx').then(m => ({ default: m.SettingsPanel })));
+const CardsTab         = lazy(() => import('./CardsTab.jsx').then(m => ({ default: m.CardsTab })));
 const AddCategoryDialog    = lazy(() => import('./AddCategoryDialog.jsx').then(m => ({ default: m.AddCategoryDialog })));
 const ReconcileDialog      = lazy(() => import('./ReconcileDialog.jsx').then(m => ({ default: m.ReconcileDialog })));
 const BulkRecurringDialog  = lazy(() => import('./BulkRecurringDialog.jsx').then(m => ({ default: m.BulkRecurringDialog })));
@@ -379,7 +380,7 @@ function Dashboard({ auth }) {
 
         {/* Tab switcher */}
         {(() => {
-          const TABS = [['budget', 'Dashboard'], ['ledger', 'Ledger'], ['history', 'History']];
+          const TABS = [['budget', 'Dashboard'], ['ledger', 'Ledger'], ['history', 'History'], ['cards', 'Cards']];
           const tabIdx = TABS.findIndex(([t]) => t === activeTab);
           return (
             <div role="tablist" className="relative flex p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl w-fit border border-slate-200 dark:border-slate-700">
@@ -476,6 +477,19 @@ function Dashboard({ auth }) {
             refreshKey={refreshKey}
             months={months}
           />
+        )}
+
+        {/* Cards tab */}
+        {activeTab === 'cards' && (
+          <Suspense fallback={null}>
+            <CardsTab
+              sheetId={selectedSheetId}
+              accessToken={user.accessToken}
+              currencySymbol={currencySymbol}
+              cards={settings.cards || []}
+              settings={settings}
+            />
+          </Suspense>
         )}
 
         {/* Loading skeleton */}
@@ -602,6 +616,8 @@ function Dashboard({ auth }) {
                   ],
                 }))}
                 smartRules={settings.smartRules || []}
+                cards={settings.cards || []}
+                cardRules={settings.cardRules || []}
               />
 
               {/* Insight cards */}
@@ -727,6 +743,8 @@ function Dashboard({ auth }) {
             }
           }}
           smartRules={settings.smartRules || []}
+          cards={settings.cards || []}
+          cardRules={settings.cardRules || []}
           onSaveRecurring={item => updateSettings(prev => ({
             ...prev,
             recurringExpenses: [
@@ -809,6 +827,7 @@ function Dashboard({ auth }) {
           onClose={() => setShowReconcile(false)}
           onComplete={() => refresh()}
           smartRules={settings.smartRules || []}
+          cardRules={settings.cardRules || []}
           reconciledFingerprints={settings.reconciledFingerprints || []}
           onAddFingerprints={fps => updateSettings(prev => ({
             ...prev,

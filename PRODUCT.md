@@ -10,7 +10,7 @@ Broader audience — primarily individuals who want to take their personal finan
 
 ## Product Purpose
 
-Fundient is a personal budget dashboard backed by Google Sheets. It turns a live spreadsheet into a real financial tool — tracking monthly spending by category, comparing actual vs. budget, surfacing insights, and supporting bank reconciliation. Success looks like: a user opens it, immediately sees their financial position, and knows exactly what to do next (or feels reassured that nothing needs doing).
+Fundient is a personal budget dashboard backed by Google Sheets. It turns a live spreadsheet into a real financial tool — tracking monthly spending by category, comparing actual vs. budget, surfacing insights, tracking which card paid for each transaction (with rewards analytics and best-card recommendations), and supporting bank reconciliation. Success looks like: a user opens it, immediately sees their financial position, and knows exactly what to do next (or feels reassured that nothing needs doing).
 
 ## Brand Personality
 
