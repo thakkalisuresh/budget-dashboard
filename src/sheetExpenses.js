@@ -1,4 +1,4 @@
-import { apiFetch, fetchRaw, writeCell, clearRowRange, appendRow } from './sheetApi.js';
+import { apiFetch, fetchRaw, writeCell, clearRowRange } from './sheetApi.js';
 import {
   getEffectiveSheetMap, colLetter, safeText, parseAmounts, buildFormula,
   generateTransactionUUID, uuidStart, detectV2, coerceTxDate,
@@ -56,7 +56,16 @@ export async function addOrUpdateExpense(
     if (bmColV2 >= 0) newRow[bmColV2] = safeText(bookingMethod || '');
     newRow[uuidColV2] = newUUID;
 
-    await appendRow(sheetId, config.sheet, newRow, accessToken);
+    // Write directly to the next row after existing data — avoids the :append
+    // API skipping past named table bounds (RentTable, GroceryTable, etc.)
+    const nextRow  = values.length + 1;
+    const endCol   = colLetter(uuidColV2);
+    const rowRange = encodeURIComponent(`'${config.sheet}'!A${nextRow}:${endCol}${nextRow}`);
+    await apiFetch(sheetId, `/values/${rowRange}?valueInputOption=USER_ENTERED`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values: [newRow] }),
+    });
     await appendHistoryEntry(sheetId, accessToken, {
       action: source === 'scan' ? 'Receipt Scan' : source === 'import' ? 'Import' : 'Added',
       category: categoryName, vendor: vendorName, amount, uuid: newUUID, txDate: dateVal,
@@ -91,7 +100,14 @@ export async function addOrUpdateExpense(
       newRow[config.amtCol]  = amount;
       newRow[uuidCol]        = newUUID;
 
-      await appendRow(sheetId, config.sheet, newRow, accessToken);
+      const nextRowV1 = values.length + 1;
+      const endColV1  = colLetter(uuidCol);
+      const rangeV1   = encodeURIComponent(`'${config.sheet}'!A${nextRowV1}:${endColV1}${nextRowV1}`);
+      await apiFetch(sheetId, `/values/${rangeV1}?valueInputOption=USER_ENTERED`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: [newRow] }),
+      });
       await appendHistoryEntry(sheetId, accessToken, {
         action: source === 'scan' ? 'Receipt Scan' : source === 'import' ? 'Import' : 'Added',
         category: categoryName, vendor: vendorName, amount, uuid: newUUID,
