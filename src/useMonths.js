@@ -135,6 +135,28 @@ async function updateMonthColumns(newSheetId, monthName, accessToken) {
   }
 }
 
+/** Write V2 header row to every category sheet so new expenses are saved in V2 format. */
+async function writeV2Headers(sheetId, accessToken) {
+  const uniqueSheets = [...new Set(Object.values(SHEET_MAP).map(c => c.sheet))];
+  const header = ['Month', 'Year', 'Date', 'Vendor', 'Amount', 'Payment Method', 'UUID', 'Booking Method'];
+  const data = uniqueSheets.map(sheetName => ({
+    range: `'${sheetName}'!A1:H1`,
+    values: [header],
+  }));
+  try {
+    await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values:batchUpdate`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data }),
+      }
+    );
+  } catch (e) {
+    console.warn('writeV2Headers: failed (non-fatal)', e.message);
+  }
+}
+
 /** Clear the non-monthly notes cell (Totals!I4) so stale template data doesn't carry over */
 async function clearNotesCell(sheetId, accessToken) {
   try {
@@ -216,6 +238,7 @@ export function useMonths(accessToken, allowedEmails = []) {
     const newSheetId = await copyTemplate(name, driveToken);
     await deleteMonthsTab(newSheetId, accessToken);
     await updateMonthColumns(newSheetId, name, accessToken);
+    await writeV2Headers(newSheetId, accessToken);
     await clearNotesCell(newSheetId, accessToken);
     // Share with all household members so everyone can access the new month
     await shareSheetWithUsers(newSheetId, allowedEmails, driveToken);
