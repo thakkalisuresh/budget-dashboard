@@ -4,8 +4,9 @@
  * calculation logic are duplicated here. Keep in sync with both src/ files.
  */
 
-export const UR_POINT_VALUE_CSR = 0.015; // $ per UR point (CSR travel portal)
-export const UR_POINT_VALUE_CFU = 0.01;  // $ per UR point (CFU base)
+export const UR_POINT_VALUE_CSR  = 0.015; // $ per UR point (CSR travel portal)
+export const UR_POINT_VALUE_CFU  = 0.01;  // $ per UR point (CFU base)
+export const BILT_POINT_VALUE    = 0.0125; // $ per Bilt point (~1.25¢, partner transfers)
 
 // ── Vendor MCC table (mirror of src/vendorMCC.js) ───────────────────────────
 // More specific keys must appear before shorter prefixes so the longer match wins.
@@ -119,6 +120,14 @@ export const CARD_REWARDS = {
       '5912': 3,
     },
     default: 1.5,
+  },
+  'Bilt Blue Card': {
+    type: 'points', unit: 'Bilt', pointValue: BILT_POINT_VALUE,
+    mccs: {
+      '5812': 3, '5813': 3, '5814': 3,            // dining
+      '4511': 2, '7011': 2,                        // airlines, hotels
+    },
+    default: 1,
   },
 };
 
