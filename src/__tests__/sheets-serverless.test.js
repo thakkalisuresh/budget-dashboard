@@ -62,11 +62,15 @@ describe('getCurrentMonthSheetId', () => {
   });
 });
 
+// col A read returns 1 row (header only) → next expense goes to row 2
+const colAHeader = jsonResponse({ values: [['Month']] });
+
 describe('appendExpense', () => {
-  it('appends a V2 row to the correct category sheet', async () => {
+  it('writes a V2 row directly to the next available row (not via :append)', async () => {
     mockTokenThenApi(
-      jsonResponse({ updates: { updatedRows: 1 } }),
-      jsonResponse({ updates: { updatedRows: 1 } })
+      colAHeader,                                  // GET col A count
+      jsonResponse({ updatedRows: 1 }),            // PUT expense row
+      jsonResponse({ updates: { updatedRows: 1 } }) // POST history
     );
 
     const result = await appendExpense({
@@ -88,18 +92,20 @@ describe('appendExpense', () => {
     expect(result.row[3]).toBe('Walmart');
     expect(result.row[4]).toBe(45.23);
     expect(result.row[5]).toBe('Chase Sapphire Reserve');
-    expect(result.row[6]).toBe(result.uuid); // UUID last (no Booking Method on Grocery)
+    expect(result.row[6]).toBe(result.uuid);
 
     const calls = mockFetch.mock.calls.filter(c => !c[0].includes('oauth2'));
-    const appendCall = calls[0];
-    expect(appendCall[0]).toContain("'Grocery'!A1");
-    expect(appendCall[0]).toContain(':append');
-    expect(appendCall[1].method).toBe('POST');
+    // calls[0] = GET col A; calls[1] = PUT expense; calls[2] = POST history
+    expect(calls[0][0]).toContain('Grocery'); // row count read (col A)
+    expect(calls[0][1]?.method).not.toBe('PUT'); // it's a GET
+    expect(calls[1][0]).toContain('Grocery');    // direct row write
+    expect(calls[1][1].method).toBe('PUT');
   });
 
   it('stamps the History row with the channel (telegram → Telegram Receipt / telegram-bot)', async () => {
     mockTokenThenApi(
-      jsonResponse({ updates: { updatedRows: 1 } }),
+      colAHeader,
+      jsonResponse({ updatedRows: 1 }),
       jsonResponse({ updates: { updatedRows: 1 } })
     );
 
@@ -110,17 +116,18 @@ describe('appendExpense', () => {
     });
 
     const calls = mockFetch.mock.calls.filter(c => !c[0].includes('oauth2'));
-    // second non-oauth call is the History append
-    const historyBody = JSON.parse(calls[1][1].body);
+    // calls[2] = history POST :append
+    const historyBody = JSON.parse(calls[2][1].body);
     const row = historyBody.values[0];
-    expect(row[1]).toBe('Telegram Receipt'); // action
-    expect(row[7]).toBe('telegram-bot');     // user column
-    expect(row[10]).toBe('Chase Sapphire Reserve'); // payment method @ col K
+    expect(row[1]).toBe('Telegram Receipt');
+    expect(row[7]).toBe('telegram-bot');
+    expect(row[10]).toBe('Chase Sapphire Reserve');
   });
 
   it('defaults the channel to whatsapp (WhatsApp Receipt / whatsapp-bot)', async () => {
     mockTokenThenApi(
-      jsonResponse({ updates: { updatedRows: 1 } }),
+      colAHeader,
+      jsonResponse({ updatedRows: 1 }),
       jsonResponse({ updates: { updatedRows: 1 } })
     );
 
@@ -130,7 +137,7 @@ describe('appendExpense', () => {
     });
 
     const calls = mockFetch.mock.calls.filter(c => !c[0].includes('oauth2'));
-    const historyBody = JSON.parse(calls[1][1].body);
+    const historyBody = JSON.parse(calls[2][1].body);
     const row = historyBody.values[0];
     expect(row[1]).toBe('WhatsApp Receipt');
     expect(row[7]).toBe('whatsapp-bot');
@@ -138,7 +145,8 @@ describe('appendExpense', () => {
 
   it('sanitizes vendor name before appending', async () => {
     mockTokenThenApi(
-      jsonResponse({ updates: { updatedRows: 1 } }),
+      colAHeader,
+      jsonResponse({ updatedRows: 1 }),
       jsonResponse({ updates: { updatedRows: 1 } })
     );
 
@@ -166,7 +174,8 @@ describe('appendExpense', () => {
 
   it('defaults to current date when txDate is null', async () => {
     mockTokenThenApi(
-      jsonResponse({ updates: { updatedRows: 1 } }),
+      colAHeader,
+      jsonResponse({ updatedRows: 1 }),
       jsonResponse({ updates: { updatedRows: 1 } })
     );
 
@@ -182,9 +191,10 @@ describe('appendExpense', () => {
     expect(result.row[2]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  it('stores bookingMethod at col H (index 7) when provided', async () => {
+  it('stores bookingMethod at col H (index 7) when provided (Travel = 8-col row)', async () => {
     mockTokenThenApi(
-      jsonResponse({ updates: { updatedRows: 1 } }),
+      colAHeader,
+      jsonResponse({ updatedRows: 1 }),
       jsonResponse({ updates: { updatedRows: 1 } })
     );
 
@@ -201,13 +211,14 @@ describe('appendExpense', () => {
 
     expect(result.row).toHaveLength(8);
     expect(result.row[5]).toBe('Chase Sapphire Reserve');
-    expect(result.row[6]).toBe('direct'); // bookingMethod @ G
-    expect(result.row[7]).toMatch(/^tx_/); // UUID @ H (always last)
+    expect(result.row[6]).toBe('direct');
+    expect(result.row[7]).toMatch(/^tx_/);
   });
 
   it('stores bookingMethod at col L (index 11) in History row', async () => {
     mockTokenThenApi(
-      jsonResponse({ updates: { updatedRows: 1 } }),
+      colAHeader,
+      jsonResponse({ updatedRows: 1 }),
       jsonResponse({ updates: { updatedRows: 1 } })
     );
 
@@ -223,10 +234,11 @@ describe('appendExpense', () => {
     });
 
     const calls = mockFetch.mock.calls.filter(c => !c[0].includes('oauth2'));
-    const historyBody = JSON.parse(calls[1][1].body);
+    // calls[2] = history POST
+    const historyBody = JSON.parse(calls[2][1].body);
     const row = historyBody.values[0];
-    expect(row[10]).toBe('Chase Sapphire Reserve'); // paymentMethod @ K
-    expect(row[11]).toBe('direct');                 // bookingMethod @ L
+    expect(row[10]).toBe('Chase Sapphire Reserve');
+    expect(row[11]).toBe('direct');
   });
 });
 

@@ -102,9 +102,15 @@ export async function appendExpense({ category, vendor, amount, txDate, sheetId,
     ? [month, year, dateVal, safeString(vendor), amount, safeString(paymentMethod || ''), safeString(bookingMethod || ''), uuid]
     : [month, year, dateVal, safeString(vendor), amount, safeString(paymentMethod || ''), uuid];
 
-  const range = encodeURIComponent(`'${config.sheet}'!A1`);
-  await sheetsRequest(sheetId, `/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
-    method: 'POST',
+  // Read current row count so we can write directly to the next row — avoids
+  // the :append API skipping past named table bounds (RentTable, etc.)
+  const colARange = encodeURIComponent(`'${config.sheet}'!A:A`);
+  const colAData  = await sheetsRequest(sheetId, `/values/${colARange}`);
+  const nextRow   = (colAData.values || []).length + 1;
+  const endCol    = isTravelCat ? 'H' : 'G';
+  const rowRange  = encodeURIComponent(`'${config.sheet}'!A${nextRow}:${endCol}${nextRow}`);
+  await sheetsRequest(sheetId, `/values/${rowRange}?valueInputOption=USER_ENTERED`, {
+    method: 'PUT',
     body: JSON.stringify({ values: [row] }),
   });
 
