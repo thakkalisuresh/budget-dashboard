@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 /**
  * Manages dark/light mode, font size, and accent color CSS injection.
@@ -58,10 +58,15 @@ export function useTheme(settings, updateSettings) {
     `;
   }, [settings.colorScheme]);
 
-  // Apply dark class + persist + sync settings
+  // Apply dark class + persist + sync settings.
+  // Skip the first fire (initial mount) — settings haven't loaded yet at that
+  // point, so calling updateSettings would save DEFAULT_SETTINGS (including the
+  // default colorScheme) and overwrite the user's saved accent color.
+  const isFirstDarkRender = useRef(true);
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark);
     localStorage.setItem('theme', isDark ? 'dark' : 'light');
+    if (isFirstDarkRender.current) { isFirstDarkRender.current = false; return; }
     updateSettings(prev => ({ ...prev, theme: isDark ? 'dark' : 'light' }));
   }, [isDark]);
 
