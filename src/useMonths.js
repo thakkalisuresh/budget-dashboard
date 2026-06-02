@@ -138,7 +138,7 @@ async function updateMonthColumns(newSheetId, monthName, accessToken) {
 /** Write V2 header row to every category sheet so new expenses are saved in V2 format. */
 async function writeV2Headers(sheetId, accessToken) {
   const uniqueSheets = [...new Set(Object.values(SHEET_MAP).map(c => c.sheet))];
-  const header = ['Month', 'Year', 'Date', 'Vendor', 'Amount', 'Payment Method', 'UUID', 'Booking Method'];
+  const header = ['Month', 'Year', 'Date', 'Vendor', 'Amount', 'Payment Method', 'Booking Method', 'UUID'];
   const data = uniqueSheets.map(sheetName => ({
     range: `'${sheetName}'!A1:H1`,
     values: [header],

@@ -95,8 +95,8 @@ export async function appendExpense({ category, vendor, amount, txDate, sheetId,
   const dateVal = txDate || now.toISOString().slice(0, 10);
   const uuid    = generateUUID(amount);
 
-  // V2 schema: month, year, date, vendor, amount, paymentMethod(F), uuid(G), bookingMethod(H)
-  const row = [month, year, dateVal, safeString(vendor), amount, safeString(paymentMethod || ''), uuid, safeString(bookingMethod || '')];
+  // V2 schema: month, year, date, vendor, amount, paymentMethod(F), bookingMethod(G), uuid(H — always last)
+  const row = [month, year, dateVal, safeString(vendor), amount, safeString(paymentMethod || ''), safeString(bookingMethod || ''), uuid];
 
   const range = encodeURIComponent(`'${config.sheet}'!A1`);
   await sheetsRequest(sheetId, `/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
@@ -471,7 +471,7 @@ async function clearNotesCellInSheet(sheetId) {
 
 async function writeV2HeadersToSheet(sheetId) {
   const uniqueSheets = [...new Set(Object.values(SHEET_MAP).map(c => c.sheet))];
-  const header = ['Month', 'Year', 'Date', 'Vendor', 'Amount', 'Payment Method', 'UUID', 'Booking Method'];
+  const header = ['Month', 'Year', 'Date', 'Vendor', 'Amount', 'Payment Method', 'Booking Method', 'UUID'];
   const data = uniqueSheets.map(sheetName => ({
     range: `'${sheetName}'!A1:H1`,
     values: [header],

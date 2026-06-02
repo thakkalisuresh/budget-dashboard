@@ -41,18 +41,18 @@ export async function addOrUpdateExpense(
     const descColV2 = 3;
     const amtColV2  = 4;
     const pmColV2   = 5;
-    const uuidColV2 = 6;
-    const bmColV2   = 7;
+    const bmColV2   = 6;
+    const uuidColV2 = 7; // UUID is always last
 
-    const newRow = Array(bmColV2 + 1).fill('');
+    const newRow = Array(uuidColV2 + 1).fill('');
     newRow[0]         = month;
     newRow[1]         = year;
     newRow[2]         = dateVal;
     newRow[descColV2] = safeText(vendorName);
     newRow[amtColV2]  = amount;
     newRow[pmColV2]   = safeText(paymentMethod || '');
-    newRow[uuidColV2] = newUUID;
     newRow[bmColV2]   = safeText(bookingMethod || '');
+    newRow[uuidColV2] = newUUID;
 
     await appendRow(sheetId, config.sheet, newRow, accessToken);
     await appendHistoryEntry(sheetId, accessToken, {
@@ -125,7 +125,7 @@ export async function updateVendorAmounts(
   const config  = getEffectiveSheetMap()[categoryName];
   if (!config) throw new Error(`Unknown category: ${categoryName}`);
   const amtCol  = v2 ? 4 : config.amtCol;
-  const uuidCol = v2 ? 6 : uuidStart(config);
+  const uuidCol = v2 ? 7 : uuidStart(config);
 
   if (amounts.length === 0) {
     await clearRowRange(sheetId, config.sheet, rowIndex, uuidCol + 19, accessToken);
