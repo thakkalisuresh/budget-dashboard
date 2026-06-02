@@ -52,8 +52,8 @@ export async function fetchDetailRows(categoryName, accessToken, sheetId, monthN
   const descCol = isV2 ? 3 : config.descCol;
   const amtCol  = isV2 ? 4 : config.amtCol;
   const pmCol   = isV2 ? 5 : -1;   // Payment Method col (F) — V2 only
-  const uuidCol = isV2 ? 6 : uuidStart(config);  // UUID col (G for V2)
-  const bmCol   = isV2 ? 7 : -1;   // Booking Method col (H) — V2 only
+  const bmCol   = isV2 ? 6 : -1;   // Booking Method col (G) — V2 only
+  const uuidCol = isV2 ? 7 : uuidStart(config);  // UUID col (H for V2, always last)
   const dateCol = isV2 ? 2 : -1;
 
   const result = [];

@@ -79,7 +79,7 @@ describe('appendExpense', () => {
       paymentMethod: 'Chase Sapphire Reserve',
     });
 
-    // V2 schema: month, year, date, vendor, amount, paymentMethod(F), uuid(G), bookingMethod(H)
+    // V2 schema: month, year, date, vendor, amount, paymentMethod(F), bookingMethod(G), uuid(H — always last)
     expect(result.uuid).toMatch(/^tx_4523_/);
     expect(result.row).toHaveLength(8);
     expect(result.row[0]).toBe('May');
@@ -88,8 +88,8 @@ describe('appendExpense', () => {
     expect(result.row[3]).toBe('Walmart');
     expect(result.row[4]).toBe(45.23);
     expect(result.row[5]).toBe('Chase Sapphire Reserve');
-    expect(result.row[6]).toBe(result.uuid);
-    expect(result.row[7]).toBe(''); // bookingMethod defaults to ''
+    expect(result.row[6]).toBe(''); // bookingMethod defaults to ''
+    expect(result.row[7]).toBe(result.uuid); // UUID always last
 
     const calls = mockFetch.mock.calls.filter(c => !c[0].includes('oauth2'));
     const appendCall = calls[0];
@@ -202,7 +202,8 @@ describe('appendExpense', () => {
 
     expect(result.row).toHaveLength(8);
     expect(result.row[5]).toBe('Chase Sapphire Reserve');
-    expect(result.row[7]).toBe('direct');
+    expect(result.row[6]).toBe('direct'); // bookingMethod @ G
+    expect(result.row[7]).toMatch(/^tx_/); // UUID @ H (always last)
   });
 
   it('stores bookingMethod at col L (index 11) in History row', async () => {
