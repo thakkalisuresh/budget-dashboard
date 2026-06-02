@@ -491,6 +491,13 @@ async function writeV2HeadersToSheet(sheetId) {
       method: 'POST',
       body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data }),
     });
+    // Clear stale template rows 2-20 so named table definitions don't push
+    // new :append writes past the template rows.
+    const clearRanges = uniqueSheets.map(s => `'${s}'!A2:H20`);
+    await sheetsRequest(sheetId, '/values:batchClear', {
+      method: 'POST',
+      body: JSON.stringify({ ranges: clearRanges }),
+    });
   } catch (e) {
     console.warn('writeV2HeadersToSheet: failed (non-fatal)', e.message);
   }

@@ -159,6 +159,17 @@ async function writeV2Headers(sheetId, accessToken) {
         body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data }),
       }
     );
+    // Clear stale template rows 2-20 so the named table rows don't push new
+    // appends to the wrong position (the :append API skips to end-of-table otherwise).
+    const clearRanges = uniqueSheets.map(s => `'${s}'!A2:H20`);
+    await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values:batchClear`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ranges: clearRanges }),
+      }
+    );
   } catch (e) {
     console.warn('writeV2Headers: failed (non-fatal)', e.message);
   }
