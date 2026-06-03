@@ -792,7 +792,7 @@ function buildConfirmPrompt(data, conversionInfo) {
   }
   const DINING_CATS = new Set(['Eating Out', 'Thakkali']);
   const tipHint = DINING_CATS.has(data.reward_category) ? ', or "tip: 5.00" to add tip' : '';
-  lines.push('', 'Reply YES to log, or CANCEL', `Edit: "category: Travel", "amount: 52.10", "card: Chase"${tipHint}`);
+  lines.push('', 'Reply YES to log, or CANCEL', `Edit: "category: Travel", "amount: 52.10", "card: Chase", "booking: direct"${tipHint}`);
   return lines.join('\n');
 }
 
