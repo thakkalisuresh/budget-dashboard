@@ -410,7 +410,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                             className="text-[10px] font-bold rounded-lg border border-indigo-300 dark:border-indigo-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-400"
                           >
                             <option value="">— Remove card —</option>
-                            {cards.filter(c => !['Chase Debit Card - Anu','Chase Debit Card - Sabarish','Chase Bank Account - Anu','Chase Bank Account - Sabarish','Cash'].includes(c)).map(c => (
+                            {cards.filter(c => !c.toLowerCase().includes('debit') && !c.toLowerCase().includes('bank') && c.toLowerCase() !== 'cash').map(c => (
                               <option key={c} value={c}>{c}</option>
                             ))}
                           </select>
