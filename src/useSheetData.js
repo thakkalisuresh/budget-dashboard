@@ -1,4 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
+import { getMockSheetData } from './mockData.js';
+
+const DEV_MOCK = import.meta.env.DEV && import.meta.env.VITE_DEV_MOCK === 'true';
 
 const RANGE = 'Totals!A1:J30';
 const POLL_MS = 60000; // 60s — reduces quota pressure
@@ -20,13 +23,14 @@ function parseValues(values) {
 }
 
 export function useSheetData(sheetId, accessToken) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState(() => DEV_MOCK ? getMockSheetData(sheetId) : null);
+  const [loading, setLoading] = useState(!DEV_MOCK);
   const [error, setError] = useState(null);
-  const [lastUpdated, setLastUpdated] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(() => DEV_MOCK ? new Date() : null);
   const [isFromCache, setIsFromCache] = useState(false);
 
   const fetchData = useCallback(async () => {
+    if (DEV_MOCK) return;
     if (!sheetId) return;
     try {
       const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${RANGE}`;
@@ -63,6 +67,7 @@ export function useSheetData(sheetId, accessToken) {
 
   // When sheet changes: show cached data immediately, fetch fresh in background
   useEffect(() => {
+    if (DEV_MOCK) { setData(getMockSheetData(sheetId)); return; }
     setLoading(true);
     setLastUpdated(null);
     setError(null);
@@ -85,6 +90,7 @@ export function useSheetData(sheetId, accessToken) {
   }, [sheetId]);
 
   useEffect(() => {
+    if (DEV_MOCK) return;
     fetchData();
     const id = setInterval(fetchData, POLL_MS);
     return () => clearInterval(id);

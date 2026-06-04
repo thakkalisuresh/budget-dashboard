@@ -5,6 +5,9 @@ import {
   derivePinKey, aesEncrypt, aesDecrypt, ensureEncSalt,
   PIN_HASH_KEY, BIOMETRIC_KEY, verifyBiometric,
 } from './PinLock.jsx';
+import { MOCK_USER } from './mockData.js';
+
+const DEV_MOCK = import.meta.env.DEV && import.meta.env.VITE_DEV_MOCK === 'true';
 
 const STORAGE_KEY    = 'budget_auth';
 const AUTH_CACHE_KEY = 'budget_auth_cache';
@@ -74,6 +77,7 @@ function loadOfflineCache() {
 
 export function useAuth() {
   const [user, setUser]         = useState(() => {
+    if (DEV_MOCK) return MOCK_USER;
     const stored = loadStored();
     if (stored) return stored;
     return null;
@@ -91,10 +95,11 @@ export function useAuth() {
   });
 
   // ── Localhost dev bypass ──────────────────────────────────────────────────
-  // When VITE_DEV_ACCESS_TOKEN is set in .env, skip the OAuth popup entirely
-  // and auto-login on page load. No-op in production.
+  // When VITE_DEV_MOCK=true: skip OAuth entirely — MOCK_USER is pre-set above.
+  // When VITE_DEV_ACCESS_TOKEN is set: skip OAuth popup and auto-login on load.
   const devAutoLoginFired = useRef(false);
   useEffect(() => {
+    if (DEV_MOCK) return;
     if (!import.meta.env.DEV) return;
     if (devAutoLoginFired.current) return;
     if (user) return;
@@ -335,6 +340,7 @@ export function useAuth() {
   // Auto-clear expired sessions — but try silent refresh first (SEC-14)
   // Skip for offline sessions: no token to refresh, expiry is stale
   useEffect(() => {
+    if (DEV_MOCK) return;
     if (!user?.expiresAt || user.isOfflineSession) return;
     const ms = user.expiresAt - Date.now();
     if (ms <= 0) { attemptSilentRefresh(); return; }
@@ -369,6 +375,7 @@ export function useAuth() {
   // the window has already passed (e.g. laptop resumed from sleep).
   // Skip for offline sessions: handled by the online event upgrade effect.
   useEffect(() => {
+    if (DEV_MOCK) return;
     if (!user?.expiresAt || user.isOfflineSession) return;
     const refreshIn = user.expiresAt - Date.now() - 5 * 60 * 1000;
     if (refreshIn <= 0) { attemptSilentRefresh(); return; }
