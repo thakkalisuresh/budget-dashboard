@@ -52,6 +52,7 @@ import { DeleteMonthDialog } from './DeleteMonthDialog.jsx';
 import { MonthPickerBar } from './MonthPickerBar.jsx';
 import { HeaderBar } from './HeaderBar.jsx';
 import { BottomNav } from './BottomNav.jsx';
+import { CameraFab } from './CameraFab.jsx';
 
 function App() {
   const auth = useAuth();
@@ -955,6 +956,8 @@ function Dashboard({ auth }) {
           />
         </div>
       )}
+
+      <CameraFab activeTab={activeTab} scanTriggerRef={scanTriggerRef} />
 
       <BottomNav
         activeTab={activeTab}
