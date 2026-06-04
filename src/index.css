@@ -1,9 +1,47 @@
+@import "@fontsource-variable/geist";
 @import "tailwindcss";
 @custom-variant dark (&:is(.dark *));
 
-/* ── Animation tokens ──────────────────────────────────────────────────────── */
+/* ── OKLCH Design Tokens — redesign/v2 ────────────────────────────────────── */
 :root {
+  /* Single hue knob — 0–360, user-chosen in Settings (Phase 19).
+     Set by useTheme.js on every colorScheme change; CSS default is amber. */
+  --accent-hue: 55;
+
+  /* Page & surface (dark-primary) */
+  --color-bg:      oklch(10% 0.008 var(--accent-hue));
+  --color-surface: oklch(14% 0.010 var(--accent-hue));
+
+  /* Text hierarchy */
+  --color-text:           oklch(94% 0.004 var(--accent-hue));
+  --color-text-secondary: oklch(58% 0.005 var(--accent-hue));
+  --color-text-muted:     oklch(40% 0.004 var(--accent-hue));
+
+  /* Accent */
+  --color-accent:        oklch(65% 0.18 var(--accent-hue));
+  --color-accent-subtle: oklch(65% 0.18 var(--accent-hue) / 12%);
+  --color-accent-border: oklch(50% 0.14 var(--accent-hue));
+  --color-accent-text:   oklch(72% 0.16 var(--accent-hue));
+
+  /* Semantic — fixed hues, not accent-derived */
+  --color-success: oklch(72% 0.17 145);
+  --color-danger:  oklch(62% 0.22 25);
+  --color-warning: oklch(78% 0.16 75);
+
+  /* Glass depth layers (Phase 2) */
+  --glass-bg-heavy:    oklch(16% 0.012 var(--accent-hue) / 65%);
+  --glass-bg-medium:   oklch(18% 0.010 var(--accent-hue) / 55%);
+  --glass-bg-light:    oklch(20% 0.008 var(--accent-hue) / 45%);
+  --glass-blur-heavy:  blur(24px) saturate(180%);
+  --glass-blur-medium: blur(16px) saturate(160%);
+  --glass-blur-light:  blur(10px) saturate(140%);
+  /* Top inner border specular highlight on glass surfaces */
+  --glass-specular: inset 0 0.5px 0 0 oklch(100% 0 0 / 6%);
+
+  /* Motion */
   --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
   --ease-in:     cubic-bezier(0.4, 0, 1, 1);
 
   --dur-fast:   150ms;
@@ -12,22 +50,6 @@
 
   /* enter-delay is set inline per element for staggering */
   --enter-delay: 0ms;
-}
-
-/* ── Accent color tokens (hue-driven, OKLCH) ───────────────────────────────── */
-:root {
-  --primary-hue: 30;
-  --color-accent:        oklch(65% 0.18 var(--primary-hue));
-  --color-accent-subtle: oklch(95% 0.06 var(--primary-hue));
-  --color-accent-border: oklch(75% 0.14 var(--primary-hue));
-  --color-accent-text:   oklch(45% 0.16 var(--primary-hue));
-}
-
-.dark {
-  --color-accent:        oklch(72% 0.18 var(--primary-hue));
-  --color-accent-subtle: oklch(22% 0.08 var(--primary-hue));
-  --color-accent-border: oklch(50% 0.14 var(--primary-hue));
-  --color-accent-text:   oklch(72% 0.16 var(--primary-hue));
 }
 
 /* ── Keyframes ─────────────────────────────────────────────────────────────── */
@@ -192,8 +214,8 @@
   --shadow:
     rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
 
-  --sans: 'Plus Jakarta Sans', system-ui, sans-serif;
-  --heading: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --sans: 'Geist Variable', 'Geist', system-ui, sans-serif;
+  --heading: 'Geist Variable', 'Geist', system-ui, sans-serif;
   --mono: ui-monospace, Consolas, monospace;
 
   font: 18px/145% var(--sans);

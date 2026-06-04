@@ -7,9 +7,7 @@
     <title>Budget Tracker</title>
     <meta name="description" content="Personal budget dashboard" />
     <meta name="theme-color" content="#e07c00" />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;700;800&display=optional" rel="stylesheet">
+    <!-- Geist loaded via @fontsource-variable/geist npm package (index.css) -->
 
     <!-- iOS PWA -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -20,8 +18,9 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <script>
       (function(){
-        var h = localStorage.getItem('budget_theme_hue');
-        if (h) document.documentElement.style.setProperty('--primary-hue', h);
+        /* FOUC prevention: restore --accent-hue before React mounts */
+        var h = localStorage.getItem('budget_accent_hue') || localStorage.getItem('budget_theme_hue');
+        if (h) document.documentElement.style.setProperty('--accent-hue', h);
       })();
     </script>
   </head>

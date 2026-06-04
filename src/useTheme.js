@@ -24,8 +24,16 @@ export function useTheme(settings, updateSettings) {
     document.documentElement.style.fontSize = sizes[settings.fontSize] || '16px';
   }, [settings.fontSize]);
 
-  // Accent color — injects a <style> block that overrides every indigo-* class
+  // Accent color — injects a <style> block that overrides every indigo-* class.
+  // Also sets --accent-hue for the redesign/v2 OKLCH token system.
   useEffect(() => {
+    const HUE_MAP = {
+      default: 270, rose: 10, emerald: 145, amber: 55, sky: 210, violet: 285,
+    };
+    document.documentElement.style.setProperty(
+      '--accent-hue', String(HUE_MAP[settings.colorScheme] ?? 55)
+    );
+
     const SCHEMES = {
       default: { c600:'#4f46e5', c700:'#4338ca', c500:'#6366f1', c400:'#818cf8', c50:'#eef2ff', cdark:'rgba(99,102,241,0.2)',  cshadow:'rgba(99,102,241,0.25)',  c300:'#a5b4fc' },
       rose:    { c600:'#e11d48', c700:'#be123c', c500:'#f43f5e', c400:'#fb7185', c50:'#fff1f2', cdark:'rgba(225,29,72,0.2)',   cshadow:'rgba(225,29,72,0.25)',   c300:'#fda4af' },
