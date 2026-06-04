@@ -51,6 +51,7 @@ import { InsightCards } from './InsightCards.jsx';
 import { DeleteMonthDialog } from './DeleteMonthDialog.jsx';
 import { MonthPickerBar } from './MonthPickerBar.jsx';
 import { HeaderBar } from './HeaderBar.jsx';
+import { BottomNav } from './BottomNav.jsx';
 
 function App() {
   const auth = useAuth();
@@ -307,7 +308,7 @@ function Dashboard({ auth }) {
         paddingRight: 'calc(env(safe-area-inset-right) + 1rem)',
       }}
     >
-      <div className="max-w-7xl mx-auto space-y-6 pb-12">
+      <div className="max-w-7xl mx-auto space-y-6 pb-24 lg:pb-12">
 
         {/* Read-only banner */}
         {isReadOnly && (
@@ -383,7 +384,7 @@ function Dashboard({ auth }) {
           const TABS = [['budget', 'Dashboard'], ['ledger', 'Ledger'], ['history', 'History'], ['cards', 'Cards']];
           const tabIdx = TABS.findIndex(([t]) => t === activeTab);
           return (
-            <div role="tablist" className="relative flex p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl w-fit border border-slate-200 dark:border-slate-700">
+            <div role="tablist" className="relative hidden lg:flex p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl w-fit border border-slate-200 dark:border-slate-700">
               {/* Sliding indicator */}
               <div
                 aria-hidden="true"
@@ -942,16 +943,25 @@ function Dashboard({ auth }) {
       )}
 
       {!isReadOnly && (
-        <SpeedDial
-          fabOpen={fabOpen}
-          setFabOpen={setFabOpen}
-          detail={detail}
-          scanTriggerRef={scanTriggerRef}
-          onAddExpense={() => setShowAddDialog(true)}
-          onOpenChat={() => setChatOpen(true)}
-          onBulkRecurring={(settings.recurringExpenses || []).length > 0 ? () => setShowBulkRecurring(true) : null}
-        />
+        <div className="hidden lg:block">
+          <SpeedDial
+            fabOpen={fabOpen}
+            setFabOpen={setFabOpen}
+            detail={detail}
+            scanTriggerRef={scanTriggerRef}
+            onAddExpense={() => setShowAddDialog(true)}
+            onOpenChat={() => setChatOpen(true)}
+            onBulkRecurring={(settings.recurringExpenses || []).length > 0 ? () => setShowBulkRecurring(true) : null}
+          />
+        </div>
       )}
+
+      <BottomNav
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        onAdd={() => setShowAddDialog(true)}
+        isReadOnly={isReadOnly}
+      />
     </div>
   );
 }
