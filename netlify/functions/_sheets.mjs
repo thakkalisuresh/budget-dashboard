@@ -109,7 +109,8 @@ export async function appendExpense({ category, vendor, amount, txDate, sheetId,
   const nextRow   = (colAData.values || []).length + 1;
   const endCol    = isTravelCat ? 'H' : 'G';
   const rowRange  = encodeURIComponent(`'${config.sheet}'!A${nextRow}:${endCol}${nextRow}`);
-  await sheetsRequest(sheetId, `/values/${rowRange}?valueInputOption=USER_ENTERED`, {
+  // RAW preserves the date string as text so Sheets doesn't convert it to a serial number.
+  await sheetsRequest(sheetId, `/values/${rowRange}?valueInputOption=RAW`, {
     method: 'PUT',
     body: JSON.stringify({ values: [row] }),
   });
