@@ -38,7 +38,7 @@ const ReconcileDialog      = lazy(() => import('./ReconcileDialog.jsx').then(m =
 const BulkRecurringDialog  = lazy(() => import('./BulkRecurringDialog.jsx').then(m => ({ default: m.BulkRecurringDialog })));
 const DeleteCategoryDialog = lazy(() => import('./DeleteCategoryDialog.jsx').then(m => ({ default: m.DeleteCategoryDialog })));
 const RenameCategoryDialog = lazy(() => import('./RenameCategoryDialog.jsx').then(m => ({ default: m.RenameCategoryDialog })));
-import { StatCard } from './StatCard.jsx';
+import { StatCard, StatCardCompact } from './StatCard.jsx';
 import { IconPickerModal } from './IconPickerModal.jsx';
 import { CategoryActionSheet } from './CategoryActionSheet.jsx';
 import { EyeOff, WifiOff, CalendarX } from 'lucide-react';
@@ -496,44 +496,85 @@ function Dashboard({ auth }) {
 
         {/* Stat Cards — keyed on selectedSheetId so entering month triggers re-animation */}
         {activeTab === 'budget' && settings.visibility.statCards !== false && (!loading || lastUpdated) && (
-          <div key={`stats-${selectedSheetId}`} className="space-y-4 animate-crossfade-in">
-            <StatCard
-              hero
-              title="Remaining Income"
-              value={salaryReceived - totalActual}
-              subtext={
-                (salaryReceived - totalActual) > 0 ? 'Surplus' :
-                (salaryReceived - totalActual) === 0 ? 'Break Even' :
-                'Deficit'
-              }
-              currencySymbol={currencySymbol}
-              enterDelay={0}
-            />
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <StatCard
+          <div key={`stats-${selectedSheetId}`} className="animate-crossfade-in">
+
+            {/* Mobile: 2×2 compact grid */}
+            <div className="grid grid-cols-2 gap-3 lg:hidden">
+              <StatCardCompact
+                title="Remaining"
+                value={salaryReceived - totalActual}
+                subtext={
+                  (salaryReceived - totalActual) > 0 ? 'Surplus' :
+                  (salaryReceived - totalActual) === 0 ? 'Break Even' :
+                  'Deficit'
+                }
+                currencySymbol={currencySymbol}
+                enterDelay={0}
+              />
+              <StatCardCompact
                 title="Income"
                 value={salaryReceived}
                 onEdit={() => setEditingSalary(true)}
                 currencySymbol={currencySymbol}
-                valueColor="text-slate-900 dark:text-white"
-                enterDelay={60}
+                enterDelay={50}
               />
-              <StatCard
-                title="Actual Expenses"
+              <StatCardCompact
+                title="Expenses"
                 value={totalActual}
-                subtext={`of ${currencySymbol}${totalBudget.toFixed(2)} budget`}
+                subtext={`of ${currencySymbol}${totalBudget.toFixed(2)}`}
                 currencySymbol={currencySymbol}
-                valueColor="text-slate-900 dark:text-white"
-                enterDelay={100}
+                enterDelay={80}
               />
-              <StatCard
-                title="Budget Variance"
+              <StatCardCompact
+                title="Variance"
                 value={overallRemaining}
-                subtext={overallRemaining >= 0 ? 'Under Budget' : 'Over Budget'}
+                subtext={overallRemaining >= 0 ? 'Under' : 'Over'}
                 currencySymbol={currencySymbol}
-                enterDelay={140}
+                enterDelay={110}
               />
             </div>
+
+            {/* Desktop: hero + 3-col strip */}
+            <div className="hidden lg:block space-y-4">
+              <StatCard
+                hero
+                title="Remaining Income"
+                value={salaryReceived - totalActual}
+                subtext={
+                  (salaryReceived - totalActual) > 0 ? 'Surplus' :
+                  (salaryReceived - totalActual) === 0 ? 'Break Even' :
+                  'Deficit'
+                }
+                currencySymbol={currencySymbol}
+                enterDelay={0}
+              />
+              <div className="grid grid-cols-3 gap-4">
+                <StatCard
+                  title="Income"
+                  value={salaryReceived}
+                  onEdit={() => setEditingSalary(true)}
+                  currencySymbol={currencySymbol}
+                  valueColor="text-slate-900 dark:text-white"
+                  enterDelay={60}
+                />
+                <StatCard
+                  title="Actual Expenses"
+                  value={totalActual}
+                  subtext={`of ${currencySymbol}${totalBudget.toFixed(2)} budget`}
+                  currencySymbol={currencySymbol}
+                  valueColor="text-slate-900 dark:text-white"
+                  enterDelay={100}
+                />
+                <StatCard
+                  title="Budget Variance"
+                  value={overallRemaining}
+                  subtext={overallRemaining >= 0 ? 'Under Budget' : 'Over Budget'}
+                  currencySymbol={currencySymbol}
+                  enterDelay={140}
+                />
+              </div>
+            </div>
+
           </div>
         )}
 
