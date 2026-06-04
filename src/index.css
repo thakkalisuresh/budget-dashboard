@@ -97,6 +97,36 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0);    }
+}
+
+@keyframes sheet-down {
+  from { transform: translateY(0);    }
+  to   { transform: translateY(100%); }
+}
+
+@keyframes dialog-enter {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0);   }
+}
+
+@keyframes dialog-exit {
+  from { opacity: 1; transform: scale(1)    translateY(0);   }
+  to   { opacity: 0; transform: scale(0.96) translateY(8px); }
+}
+
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes overlay-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
 /* ── @property animated bar fills (Phase 9, Direction B) ───────────────────── */
 @property --bar-pct {
   syntax: '<number>';
@@ -154,6 +184,52 @@
   animation: crossfade-in 200ms var(--ease-out) both;
 }
 
+.animate-sheet-up {
+  animation: sheet-up var(--dur-normal) var(--ease-out-quart) both;
+}
+
+.animate-sheet-down {
+  animation: sheet-down var(--dur-fast) var(--ease-in) both;
+}
+
+.animate-dialog-enter {
+  animation: dialog-enter var(--dur-normal) var(--ease-out-expo) both;
+}
+
+.animate-dialog-exit {
+  animation: dialog-exit var(--dur-fast) var(--ease-in) both;
+}
+
+.animate-overlay-in {
+  animation: overlay-in var(--dur-normal) var(--ease-out) both;
+}
+
+.animate-overlay-out {
+  animation: overlay-out var(--dur-fast) var(--ease-in) both;
+}
+
+/* ── Glass utility classes (Phase 2) ──────────────────────────────────────── */
+.glass-heavy {
+  background: var(--glass-bg-heavy);
+  backdrop-filter: var(--glass-blur-heavy);
+  -webkit-backdrop-filter: var(--glass-blur-heavy);
+  box-shadow: var(--glass-specular);
+}
+
+.glass-medium {
+  background: var(--glass-bg-medium);
+  backdrop-filter: var(--glass-blur-medium);
+  -webkit-backdrop-filter: var(--glass-blur-medium);
+  box-shadow: var(--glass-specular);
+}
+
+.glass-light {
+  background: var(--glass-bg-light);
+  backdrop-filter: var(--glass-blur-light);
+  -webkit-backdrop-filter: var(--glass-blur-light);
+  box-shadow: var(--glass-specular);
+}
+
 /* ── Skeleton shimmer ──────────────────────────────────────────────────────── */
 .skeleton {
   background: linear-gradient(
@@ -182,7 +258,13 @@
   .animate-enter,
   .animate-fade-in,
   .animate-dropdown,
-  .animate-crossfade-in {
+  .animate-crossfade-in,
+  .animate-sheet-up,
+  .animate-sheet-down,
+  .animate-dialog-enter,
+  .animate-dialog-exit,
+  .animate-overlay-in,
+  .animate-overlay-out {
     animation: none !important;
     opacity: 1;
     transform: none;
