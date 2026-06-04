@@ -26,6 +26,7 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
   const [isRandom, setIsRandom] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('');
   const [bookingMethod, setBookingMethod] = useState('');
+  const [tip, setTip]           = useState('');
   const [formErr, setFormErr]   = useState('');
   const [dupWarning, setDupWarning] = useState(false);
   const [savedReceipts, setSavedReceipts] = useState([]);
@@ -187,8 +188,11 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     try {
       // txDate is null (receipts have no parsed date → logged as today). The
       // "one-time/random" flag is applied via markNonMonthly, not the date slot.
+      const DINING_CATS = new Set(['Eating Out', 'Thakkali']);
+      const tipAmt = DINING_CATS.has(category) ? (Math.max(0, parseFloat(tip) || 0)) : 0;
+      const effectiveAmt = tipAmt > 0 ? Math.round((amt + tipAmt) * 100) / 100 : amt;
       const effectiveBM = (paymentMethod === CSR && TRAVEL_MCCS.has(resolveMCC(vendor.trim(), category))) ? bookingMethod : '';
-      await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'scan', null, paymentMethod, effectiveBM);
+      await addOrUpdateExpense(category, vendor.trim(), effectiveAmt, accessToken, sheetId, monthName, 'scan', null, paymentMethod, effectiveBM);
       if (isRandom) {
         try { await markNonMonthly(sheetId, accessToken, vendor.trim(), amt); } catch { /* non-fatal */ }
       }
@@ -333,7 +337,7 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     phase, scanError, processingProgress, unmatchedLogged,
     queue, queueIndex, wasUnreadable,
     vendor, setVendor, amount, setAmount, category, setCategory,
-    isRandom, setIsRandom, paymentMethod, setPaymentMethod, bookingMethod, setBookingMethod, formErr, dupWarning, setDupWarning,
+    isRandom, setIsRandom, paymentMethod, setPaymentMethod, bookingMethod, setBookingMethod, tip, setTip, formErr, dupWarning, setDupWarning,
     savedReceipts, foreignCurrency, showCurrencyPrompt,
     stmtTransactions, setStmtTransactions, stmtSavedCount,
     editingIndex, setEditingIndex, editVendor, setEditVendor,

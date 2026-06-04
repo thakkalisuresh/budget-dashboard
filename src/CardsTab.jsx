@@ -79,6 +79,8 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
     return [...list].sort((a, b) => 0); // already reverse-chronological from fetchHistory
   }, [cardEntries, selectedCard]);
 
+  const rates = useMemo(() => getEffectiveRates(settings), [settings]);
+
   // Rewards: process oldest-first so the Amex grocery cap accumulates correctly
   const rewards = useMemo(() => {
     const chrono = [...cardEntries].reverse();
@@ -113,7 +115,6 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
     return { urPoints, cashBack, amexGroceryYtd, monthlyList, perCard };
   }, [cardEntries, rates]);
 
-  const rates      = useMemo(() => getEffectiveRates(settings), [settings]);
   const hasRewards = rewards.urPoints > 0 || rewards.cashBack > 0;
   const maxMonthly = Math.max(1, ...rewards.monthlyList.map(m => m.value));
   const bestTable  = useMemo(() => bestCardTable(CATEGORIES, rates), [rates]);
