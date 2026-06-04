@@ -652,6 +652,59 @@ describe('telegram webhook — APPLY RATES / IGNORE', () => {
   });
 });
 
+describe('telegram webhook — tip edit field', () => {
+  it('tip: X adds to total and shows incl. tip in Updated confirmation', async () => {
+    setupTelegramMocks();
+    // Seed a pending Eating Out receipt
+    mockStore.data.set(`confirm:123456789:tip-test`, {
+      id: 'tip-test',
+      extraction: { store_name: 'Chipotle', reward_category: 'Eating Out', total_amount: 18.50, purchase_date: '2026-06-02' },
+      year: 2026, month: 'June',
+    });
+
+    const res = await handler(buildRequest(textMessage('tip: 5.00')));
+    expect(res.status).toBe(200);
+
+    const sendCall = mockFetch.mock.calls.find(c => c[0].includes('/sendMessage'));
+    const body = JSON.parse(sendCall[1].body);
+    expect(body.text).toContain('Total: $23.5'); // 18.50 + 5.00
+    expect(body.text).toContain('incl. $5.00 tip');
+    expect(body.text).toContain('Updated!');
+  });
+
+  it('re-applying tip: X replaces the previous tip (not double-adds)', async () => {
+    setupTelegramMocks();
+    mockStore.data.set(`confirm:123456789:tip-test2`, {
+      id: 'tip-test2',
+      extraction: { store_name: 'Chipotle', reward_category: 'Eating Out', total_amount: 23.50, tip: 5.00, purchase_date: '2026-06-02' },
+      year: 2026, month: 'June',
+    });
+
+    const res = await handler(buildRequest(textMessage('tip: 8.00')));
+    expect(res.status).toBe(200);
+
+    const sendCall = mockFetch.mock.calls.find(c => c[0].includes('/sendMessage'));
+    const body = JSON.parse(sendCall[1].body);
+    // total should be 18.50 (original pre-tip) + 8.00 = 26.50, not 23.50 + 8.00
+    expect(body.text).toContain('Total: $26.5');
+    expect(body.text).toContain('incl. $8.00 tip');
+  });
+
+  it('invalid tip value returns error', async () => {
+    setupTelegramMocks();
+    mockStore.data.set(`confirm:123456789:tip-test3`, {
+      id: 'tip-test3',
+      extraction: { store_name: 'Chipotle', reward_category: 'Eating Out', total_amount: 18.50 },
+    });
+
+    const res = await handler(buildRequest(textMessage('tip: abc')));
+    expect(res.status).toBe(200);
+    const sendCall = mockFetch.mock.calls.find(c => c[0].includes('/sendMessage'));
+    const body = JSON.parse(sendCall[1].body);
+    expect(body.text).toContain('Invalid tip');
+  });
+});
+
 describe('telegram webhook — edge cases', () => {
   it('returns 200 ok for unknown update types', async () => {
     const req = buildRequest({ update_id: 12345 });
