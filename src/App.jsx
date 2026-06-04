@@ -301,8 +301,10 @@ function Dashboard({ auth }) {
 
 
   return (
-    <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans p-4 lg:p-8 transition-colors duration-300"
+    <div className="min-h-screen font-sans p-4 lg:p-8"
       style={{
+        background: 'var(--color-bg)',
+        color: 'var(--color-text)',
         paddingTop: 'calc(env(safe-area-inset-top) + 1rem)',
         paddingBottom: 'calc(env(safe-area-inset-bottom) + 1rem)',
         paddingLeft: 'calc(env(safe-area-inset-left) + 1rem)',
@@ -360,13 +362,13 @@ function Dashboard({ auth }) {
           {lastUpdated && selectedMonth?.name ? `${selectedMonth.name} data loaded` : ''}
         </div>
 
-        {/* Page title */}
-        <div className="text-center">
-          <h1 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
+        {/* Page title — mobile only; desktop has glass header branding */}
+        <div className="text-center lg:hidden">
+          <h1 className="text-2xl sm:text-3xl font-black tracking-tight" style={{ color: 'var(--color-text)' }}>
             {user.name ? `${user.name.split(' ')[0]}'s Budget` : 'My Budget'}
           </h1>
           {selectedMonth?.name && (
-            <p className="text-sm sm:text-base font-semibold text-slate-400 dark:text-slate-500 mt-1 tracking-wide">
+            <p className="text-sm font-semibold mt-1 tracking-wide" style={{ color: 'var(--color-text-secondary)' }}>
               {selectedMonth.name}
             </p>
           )}
@@ -471,25 +473,20 @@ function Dashboard({ auth }) {
         {/* Loading skeleton */}
         {activeTab === 'budget' && loading && !lastUpdated && (
           <div className="space-y-4">
-            {/* Hero card skeleton */}
-            <div className="bg-white dark:bg-slate-900 rounded-[1.25rem] border border-slate-100 dark:border-slate-800 p-8 sm:p-10">
-              <div className="skeleton h-3 w-28 mb-8" />
-              <div className="skeleton h-14 w-52" />
-              <div className="skeleton h-6 w-16 rounded-full mt-5" />
-            </div>
-            {/* Stat row skeleton */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              {[...Array(3)].map((_, i) => (
-                <div key={i} className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800 px-5 py-4 flex items-center justify-between">
-                  <div className="skeleton h-2.5 w-20" />
-                  <div className="skeleton h-5 w-16" />
+            {/* Stat grid skeleton — 2×2 mobile / 1×3 desktop */}
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 lg:gap-4">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="rounded-2xl p-4 h-24"
+                  style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 8%)' }}>
+                  <div className="skeleton h-2.5 w-16 mb-3" />
+                  <div className="skeleton h-7 w-24" />
                 </div>
               ))}
             </div>
             {/* Main grid skeleton */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              <div className="lg:col-span-2 skeleton h-64 rounded-[1.25rem]" />
-              <div className="skeleton h-64 rounded-[1.25rem]" />
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2 skeleton h-64 rounded-2xl" />
+              <div className="skeleton h-64 rounded-2xl" />
             </div>
           </div>
         )}
@@ -580,7 +577,7 @@ function Dashboard({ auth }) {
 
         {/* Main 2-column grid — keyed so month switch re-animates content */}
         {activeTab === 'budget' && (!loading || lastUpdated) && (
-          <div key={`grid-${selectedSheetId}`} className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start mt-4 animate-crossfade-in">
+          <div key={`grid-${selectedSheetId}`} className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8 items-start animate-crossfade-in">
 
             {/* Left column */}
             <div className="lg:col-span-2 space-y-4">
@@ -674,7 +671,7 @@ function Dashboard({ auth }) {
             </div>
 
             {/* Right column */}
-            <div className="space-y-8 lg:sticky lg:top-8">
+            <div className="space-y-6 lg:sticky lg:top-[5rem]">
 
               {/* Donut chart */}
               {settings.visibility.donutChart !== false && (
