@@ -18,6 +18,8 @@ import {
   formatTxDate,
   coerceTxDate,
   todayIso,
+  parseSheetDate,
+  sheetsSerialToISO,
 } from '../sheetHelpers.js';
 
 // ── safeText ─────────────────────────────────────────────────────────────────
@@ -454,7 +456,7 @@ describe('History UUID search', () => {
 
   it('finds web row by UUID at index 8', () => {
     const rows = [HEADER, webRow('tx_5000_abc'), webRow('tx_9999_xyz')];
-    expect(findHistoryRowIdx(rows, 'tx_9999_xyz')).toBe(2); // sheet row 3 (1-indexed = 3)
+    expect(findHistoryRowIdx(rows, 'tx_9999_xyz')).toBe(2);
   });
 
   it('finds bot row by UUID at index 6', () => {
@@ -470,5 +472,40 @@ describe('History UUID search', () => {
   it('does not match header row (i=0)', () => {
     const rows = [['tx_header_should_not_match', ...HEADER.slice(1)]];
     expect(findHistoryRowIdx(rows, 'tx_header_should_not_match')).toBe(-1);
+  });
+});
+
+// ── parseSheetDate / sheetsSerialToISO ────────────────────────────────────────
+
+describe('parseSheetDate', () => {
+  it('returns empty string for falsy input', () => {
+    expect(parseSheetDate(null)).toBe('');
+    expect(parseSheetDate(undefined)).toBe('');
+    expect(parseSheetDate('')).toBe('');
+  });
+
+  it('passes through a valid ISO date string unchanged', () => {
+    expect(parseSheetDate('2026-06-01')).toBe('2026-06-01');
+    expect(parseSheetDate('2025-12-31')).toBe('2025-12-31');
+  });
+
+  it('converts a numeric serial to ISO (number type)', () => {
+    const result = parseSheetDate(46174);
+    expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(result.startsWith('2026')).toBe(true);
+  });
+
+  it('converts a numeric serial string to ISO', () => {
+    const result = parseSheetDate('46174');
+    expect(result).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(result.startsWith('2026')).toBe(true);
+  });
+
+  it('sheetsSerialToISO matches known date — serial 1 = Jan 1 1900', () => {
+    expect(sheetsSerialToISO(1)).toBe('1899-12-31');
+  });
+
+  it('sheetsSerialToISO is consistent with parseSheetDate for numbers', () => {
+    expect(parseSheetDate(46000)).toBe(sheetsSerialToISO(46000));
   });
 });

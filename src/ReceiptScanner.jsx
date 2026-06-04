@@ -144,7 +144,7 @@ function ReceiptConfirmModal({ s }) {
             </div>
             <div className="space-y-1.5">
               <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">Category</label>
-              <select value={s.category} onChange={e => s.setCategory(e.target.value)} className={`${!s.category && s.formErr ? inputErrCls : inputCls} cursor-pointer`}>
+              <select value={s.category} onChange={e => { s.setCategory(e.target.value); if (!['Eating Out','Thakkali'].includes(e.target.value)) s.setTip(''); }} className={`${!s.category && s.formErr ? inputErrCls : inputCls} cursor-pointer`}>
                 <option value="">Select a category…</option>
                 {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
@@ -173,12 +173,36 @@ function ReceiptConfirmModal({ s }) {
               </div>
             )}
             <div className="space-y-1.5">
-              <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">Amount</label>
+              <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+                Amount{['Eating Out', 'Thakkali'].includes(s.category) && parseFloat(s.tip) > 0 ? ' (before tip)' : ''}
+              </label>
               <div className="relative">
                 <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">$</span>
                 <input type="number" step="0.01" min="0.01" placeholder="0.00" value={s.amount} onChange={e => s.setAmount(e.target.value)} className={`${(!s.amount || parseFloat(s.amount) <= 0) && s.formErr ? inputErrCls : inputCls} pl-8`} />
               </div>
             </div>
+            {['Eating Out', 'Thakkali'].includes(s.category) && (
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">Tip <span className="font-medium text-slate-300">(optional)</span></label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">$</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    value={s.tip}
+                    onChange={e => s.setTip(e.target.value)}
+                    className={`${inputCls} pl-8`}
+                  />
+                </div>
+                {parseFloat(s.tip) > 0 && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400 px-1">
+                    Total: <span className="font-black text-slate-700 dark:text-slate-200">${(parseFloat(s.amount || 0) + parseFloat(s.tip)).toFixed(2)}</span>
+                  </p>
+                )}
+              </div>
+            )}
             <label className="flex items-start gap-3 cursor-pointer group">
               <div className="relative flex-shrink-0 mt-0.5">
                 <input type="checkbox" checked={s.isRandom} onChange={e => s.setIsRandom(e.target.checked)} className="sr-only" />

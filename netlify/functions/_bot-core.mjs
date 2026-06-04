@@ -254,7 +254,7 @@ export async function handleTextReply(ctx, text) {
       `Store/Vendor: ${vendor}`,
       `Date: ${txDate || 'Today'}`,
       `Category: ${category}`,
-      `Total: $${amount}`,
+      `Total: $${amount}${extraction.tip ? ` (incl. $${extraction.tip.toFixed(2)} tip)` : ''}`,
       ...(paymentMethod ? [`Card: ${paymentMethod}`] : []),
       ...(rewardsLine ? [rewardsLine] : []),
       ...(pending.conversionInfo ? [`(Converted from ${pending.conversionInfo.originalCurrency} ${pending.conversionInfo.original} · rate ${pending.conversionInfo.rate.toFixed(4)})`] : []),
@@ -427,7 +427,7 @@ export async function handleTextReply(ctx, text) {
   }
 
   // ── Field edit: "category: X", "amount: X", "store: X", "date: X", "card: X" ──
-  const editMatch = text.trim().match(/^(category|amount|store|date|card|booking)\s*:\s*(.+)$/i);
+  const editMatch = text.trim().match(/^(category|amount|store|date|card|booking|tip)\s*:\s*(.+)$/i);
   if (editMatch) {
     const { blobs } = await store.list({ prefix: `confirm:${userId}:` });
     if (!blobs || blobs.length === 0) {
@@ -481,17 +481,27 @@ export async function handleTextReply(ctx, text) {
         return ctx.send("Booking must be 'portal' (8x UR) or 'direct' (4x UR).");
       }
       pending.extraction.booking_method = method === 'direct' ? 'direct' : '';
+    } else if (field === 'tip') {
+      const num = parseFloat(value);
+      if (isNaN(num) || num <= 0) {
+        return ctx.send("Invalid tip. Use a positive number (e.g., 'tip: 5.00')");
+      }
+      // Remove any previous tip before adding the new one
+      const prevTip = pending.extraction.tip || 0;
+      pending.extraction.tip = num;
+      pending.extraction.total_amount = Math.round(((pending.extraction.total_amount || 0) - prevTip + num) * 100) / 100;
     }
 
     await store.setJSON(key, pending);
 
     const e = pending.extraction;
+    const tipLine = e.tip ? ` (incl. $${e.tip.toFixed(2)} tip)` : '';
     const lines = [
       'Updated!',
       `Store: ${e.store_name || 'Unknown'}`,
       `Date: ${e.purchase_date || 'Unknown'}`,
       `Category: ${e.reward_category || 'Misc'}`,
-      `Total: $${e.total_amount ?? '?'}`,
+      `Total: $${e.total_amount ?? '?'}${tipLine}`,
     ];
     if (e.payment_method) lines.push(`Card: ${e.payment_method}`);
     if (e.booking_method) lines.push(`Booking: Direct (4x UR)`);
@@ -780,7 +790,9 @@ function buildConfirmPrompt(data, conversionInfo) {
   if (conversionInfo) {
     lines.push(`(Converted from ${conversionInfo.originalCurrency} ${conversionInfo.original} · rate ${conversionInfo.rate.toFixed(4)})`);
   }
-  lines.push('', 'Reply YES to log, or CANCEL', 'Edit: "category: Travel", "amount: 52.10", "card: Chase", or "booking: direct"');
+  const DINING_CATS = new Set(['Eating Out', 'Thakkali']);
+  const tipHint = DINING_CATS.has(data.reward_category) ? ', or "tip: 5.00" to add tip' : '';
+  lines.push('', 'Reply YES to log, or CANCEL', `Edit: "category: Travel", "amount: 52.10", "card: Chase", "booking: direct"${tipHint}`);
   return lines.join('\n');
 }
 

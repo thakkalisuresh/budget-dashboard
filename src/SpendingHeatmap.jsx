@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { getAllCategoryNames, fetchDetailRows } from './sheetsApi.js';
+import { fetchHistory } from './sheetsApi.js';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+
+const SPEND_ACTIONS = new Set(['Added', 'Receipt Scan', 'Import', 'Updated', 'WhatsApp Receipt', 'Telegram Receipt']);
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = [
@@ -18,22 +20,20 @@ function parseMonthLabel(label) {
 }
 
 async function fetchDailyTotals(sheetId, accessToken, year, month) {
-  const categories = getAllCategoryNames();
   const dailyMap = {};
-  await Promise.all(
-    categories.map(async (cat) => {
-      try {
-        const rows = await fetchDetailRows(cat, accessToken, sheetId);
-        rows.forEach(row => {
-          if (!row.date) return;
-          const [y, mo] = row.date.split('-').map(Number);
-          if (y !== year || mo - 1 !== month) return;
-          const sum = (row.amounts || []).reduce((a, b) => a + b, 0);
-          dailyMap[row.date] = (dailyMap[row.date] || 0) + sum;
-        });
-      } catch { /* skip failed categories */ }
-    })
-  );
+  try {
+    const entries = await fetchHistory(sheetId, accessToken);
+    entries.forEach(entry => {
+      if (!SPEND_ACTIONS.has(entry.action)) return;
+      const date = entry.txDate;
+      if (!date) return;
+      const [y, mo] = date.split('-').map(Number);
+      if (y !== year || mo - 1 !== month) return;
+      if (entry.amount > 0) {
+        dailyMap[date] = (dailyMap[date] || 0) + entry.amount;
+      }
+    });
+  } catch { /* non-fatal */ }
   return dailyMap;
 }
 

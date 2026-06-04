@@ -389,7 +389,7 @@ function Dashboard({ auth }) {
                 aria-hidden="true"
                 className="absolute top-1 bottom-1 left-1 rounded-xl bg-white dark:bg-slate-700 shadow-sm pointer-events-none"
                 style={{
-                  width: 'calc((100% - 8px) / 3)',
+                  width: `calc((100% - 8px) / ${TABS.length})`,
                   transform: `translateX(calc(${tabIdx} * 100%))`,
                   transition: `transform 150ms var(--ease-out)`,
                 }}

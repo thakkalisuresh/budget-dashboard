@@ -1,5 +1,5 @@
 import { apiFetch } from './sheetApi.js';
-import { safeText } from './sheetHelpers.js';
+import { safeText, parseSheetDate } from './sheetHelpers.js';
 
 const _historyReady = new Set();
 
@@ -115,7 +115,7 @@ export async function fetchHistory(sheetId, accessToken) {
       details:       row[5] || '',
       user:          row[7] || '',
       uuid:          row[8] || '',
-      txDate:        row[9] || '',
+      txDate:        parseSheetDate(row[9]),
       paymentMethod: row[10] || '',
       bookingMethod: row[11] || '',
     }))

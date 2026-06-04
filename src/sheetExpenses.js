@@ -61,7 +61,8 @@ export async function addOrUpdateExpense(
     const nextRow  = values.length + 1;
     const endCol   = colLetter(uuidColV2);
     const rowRange = encodeURIComponent(`'${config.sheet}'!A${nextRow}:${endCol}${nextRow}`);
-    await apiFetch(sheetId, `/values/${rowRange}?valueInputOption=USER_ENTERED`, {
+    // RAW preserves the date string as text so Sheets doesn't convert it to a serial number.
+    await apiFetch(sheetId, `/values/${rowRange}?valueInputOption=RAW`, {
       method: 'PUT',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ values: [newRow] }),
