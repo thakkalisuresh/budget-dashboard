@@ -307,8 +307,11 @@ function Dashboard({ auth }) {
         paddingBottom: 'calc(env(safe-area-inset-bottom) + 1rem)',
         paddingLeft: 'calc(env(safe-area-inset-left) + 1rem)',
         paddingRight: 'calc(env(safe-area-inset-right) + 1rem)',
+        '--header-offset': '4.5rem',
       }}
     >
+      {/* Spacer that pushes content below the fixed glass header on desktop */}
+      <div className="hidden lg:block" style={{ height: 'var(--header-offset)' }} />
       <div className="max-w-7xl mx-auto space-y-6 pb-24 lg:pb-12">
 
         {/* Read-only banner */}
@@ -380,37 +383,6 @@ function Dashboard({ auth }) {
           onDeleteMonth={() => { setDeleteConfirm(selectedMonth); setDeleteInput(''); }}
         />
 
-        {/* Tab switcher */}
-        {(() => {
-          const TABS = [['budget', 'Dashboard'], ['ledger', 'Ledger'], ['history', 'History'], ['cards', 'Cards']];
-          const tabIdx = TABS.findIndex(([t]) => t === activeTab);
-          return (
-            <div role="tablist" className="relative hidden lg:flex p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl w-fit border border-slate-200 dark:border-slate-700">
-              {/* Sliding indicator */}
-              <div
-                aria-hidden="true"
-                className="absolute top-1 bottom-1 left-1 rounded-xl bg-white dark:bg-slate-700 shadow-sm pointer-events-none"
-                style={{
-                  width: `calc((100% - 8px) / ${TABS.length})`,
-                  transform: `translateX(calc(${tabIdx} * 100%))`,
-                  transition: `transform 150ms var(--ease-out)`,
-                }}
-              />
-              {TABS.map(([tab, label]) => (
-                <button
-                  key={tab}
-                  role="tab"
-                  aria-selected={activeTab === tab}
-                  onClick={() => setActiveTab(tab)}
-                  className="relative flex-1 px-5 py-2 rounded-xl text-sm font-black transition-colors duration-150 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
-                  style={activeTab === tab ? { color: 'var(--color-accent)' } : undefined}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          );
-        })()}
 
         {/* Missing current month banner */}
         {currentMonthMissing && (
@@ -455,6 +427,8 @@ function Dashboard({ auth }) {
           setShowReconcile={setShowReconcile}
           isMonthEnded={isMonthEnded}
           selectedMonth={selectedMonth}
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
         />
 
         {/* History tab */}
