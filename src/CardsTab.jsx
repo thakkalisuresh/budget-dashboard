@@ -120,20 +120,21 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
   const bestTable  = useMemo(() => bestCardTable(CATEGORIES, rates), [rates]);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 animate-fade-in">
 
       {/* Header */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <CreditCard className="w-4 h-4 text-indigo-500" />
-          <h2 className="text-sm font-black uppercase tracking-widest text-slate-800 dark:text-slate-100">
+          <CreditCard className="w-4 h-4" style={{ color: 'var(--color-accent-text)' }} />
+          <h2 className="text-sm font-black uppercase tracking-widest" style={{ color: 'var(--color-text)' }}>
             Cards
           </h2>
         </div>
         <button
           onClick={() => load(true)}
           disabled={refreshing}
-          className="p-2 rounded-xl text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors disabled:opacity-40"
+          className="p-2 rounded-xl transition-colors disabled:opacity-40 hover:bg-white/5"
+          style={{ color: 'var(--color-text-muted)' }}
         >
           <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
         </button>
@@ -144,11 +145,10 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
         <div className="flex gap-3 flex-wrap">
           <button
             onClick={() => setSelectedCard('all')}
-            className={`flex flex-col items-start px-4 py-3 rounded-2xl border transition-all text-left ${
-              selectedCard === 'all'
-                ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-200 dark:shadow-indigo-900/30'
-                : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-indigo-300 dark:hover:border-indigo-600'
-            }`}
+            className="flex flex-col items-start px-4 py-3 rounded-2xl transition-all text-left"
+            style={selectedCard === 'all'
+              ? { background: 'var(--color-accent)', border: '1px solid var(--color-accent)', color: 'white' }
+              : { background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 10%)', color: 'var(--color-text)' }}
           >
             <span className="text-[10px] font-black uppercase tracking-wider opacity-70">All Cards</span>
             <span className="text-lg font-black tabular-nums mt-0.5">
@@ -166,11 +166,10 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
               <button
                 key={card}
                 onClick={() => setSelectedCard(active ? 'all' : card)}
-                className={`flex flex-col items-start px-4 py-3 rounded-2xl border transition-all text-left max-w-[200px] ${
-                  active
-                    ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-200 dark:shadow-indigo-900/30'
-                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:border-indigo-300 dark:hover:border-indigo-600'
-                }`}
+                className="flex flex-col items-start px-4 py-3 rounded-2xl transition-all text-left max-w-[200px]"
+                style={active
+                  ? { background: 'var(--color-accent)', border: '1px solid var(--color-accent)', color: 'white' }
+                  : { background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 10%)', color: 'var(--color-text)' }}
               >
                 <span className="text-[10px] font-black uppercase tracking-wider opacity-70 truncate w-full">{card}</span>
                 <span className="text-lg font-black tabular-nums mt-0.5">
@@ -185,29 +184,32 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
 
       {/* Rewards earned to date */}
       {!loading && hasRewards && (
-        <div className="bg-white dark:bg-slate-800 rounded-[2rem] border border-slate-100 dark:border-slate-700 p-5 space-y-4">
+        <div className="rounded-3xl p-5 space-y-4"
+          style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 8%)' }}>
           <div className="flex items-center gap-2">
-            <Award className="w-4 h-4 text-amber-500" />
-            <h3 className="text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-200">Rewards Earned</h3>
+            <Award className="w-4 h-4" style={{ color: 'oklch(78% 0.16 75)' }} />
+            <h3 className="text-xs font-black uppercase tracking-widest" style={{ color: 'var(--color-text)' }}>Rewards Earned</h3>
           </div>
           <div className="grid grid-cols-2 gap-3">
             {/* UR points */}
-            <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl p-4">
-              <p className="text-[10px] font-black uppercase tracking-wider text-indigo-400">Chase UR Points</p>
-              <p className="text-2xl font-black text-indigo-700 dark:text-indigo-300 tabular-nums mt-1">
+            <div className="rounded-2xl p-4"
+              style={{ background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}>
+              <p className="text-[10px] font-black uppercase tracking-wider" style={{ color: 'var(--color-accent-text)' }}>Chase UR Points</p>
+              <p className="text-2xl font-black tabular-nums mt-1" style={{ color: 'var(--color-accent-text)' }}>
                 {Math.round(rewards.urPoints).toLocaleString()}
               </p>
-              <p className="text-[10px] text-slate-400 mt-1">
+              <p className="text-[10px] mt-1" style={{ color: 'var(--color-text-muted)' }}>
                 ≈ {currencySymbol}{(rewards.urPoints * UR_POINT_VALUE_CFU).toFixed(0)}–{(rewards.urPoints * UR_POINT_VALUE_CSR).toFixed(0)} (1–1.5¢/pt)
               </p>
             </div>
             {/* Cash back */}
-            <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl p-4">
-              <p className="text-[10px] font-black uppercase tracking-wider text-emerald-500">Cash Back</p>
-              <p className="text-2xl font-black text-emerald-700 dark:text-emerald-300 tabular-nums mt-1">
+            <div className="rounded-2xl p-4"
+              style={{ background: 'oklch(70% 0.15 145 / 12%)', border: '1px solid oklch(70% 0.15 145 / 25%)' }}>
+              <p className="text-[10px] font-black uppercase tracking-wider" style={{ color: 'var(--color-success)' }}>Cash Back</p>
+              <p className="text-2xl font-black tabular-nums mt-1" style={{ color: 'var(--color-success)' }}>
                 {currencySymbol}{rewards.cashBack.toFixed(2)}
               </p>
-              <p className="text-[10px] text-slate-400 mt-1">Amex + Quicksilver</p>
+              <p className="text-[10px] mt-1" style={{ color: 'var(--color-text-muted)' }}>Amex + Quicksilver</p>
             </div>
           </div>
 
@@ -219,8 +221,8 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
                 .sort((a, b) => b[1].cash - a[1].cash)
                 .map(([card, v]) => (
                   <div key={card} className="flex items-center justify-between text-xs">
-                    <span className="text-slate-500 dark:text-slate-400 truncate">{card}</span>
-                    <span className="font-bold text-slate-700 dark:text-slate-200 tabular-nums">{currencySymbol}{v.cash.toFixed(2)}</span>
+                    <span className="truncate" style={{ color: 'var(--color-text-muted)' }}>{card}</span>
+                    <span className="font-bold tabular-nums" style={{ color: 'var(--color-text)' }}>{currencySymbol}{v.cash.toFixed(2)}</span>
                   </div>
                 ))}
             </div>
@@ -229,14 +231,17 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
           {/* Amex grocery cap indicator */}
           {rewards.amexGroceryYtd > 0 && (
             <div className="pt-1">
-              <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 mb-1">
+              <div className="flex items-center justify-between text-[10px] font-bold mb-1" style={{ color: 'var(--color-text-muted)' }}>
                 <span>Amex grocery 6% cap (yearly)</span>
                 <span>{currencySymbol}{Math.round(rewards.amexGroceryYtd).toLocaleString()} / {currencySymbol}6,000</span>
               </div>
-              <div className="h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+              <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'oklch(100% 0 0 / 8%)' }}>
                 <div
-                  className={`h-full rounded-full ${rewards.amexGroceryYtd >= 6000 ? 'bg-rose-400' : 'bg-emerald-400'}`}
-                  style={{ width: `${Math.min(100, (rewards.amexGroceryYtd / 6000) * 100)}%` }}
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${Math.min(100, (rewards.amexGroceryYtd / 6000) * 100)}%`,
+                    background: rewards.amexGroceryYtd >= 6000 ? 'var(--color-danger)' : 'var(--color-success)',
+                  }}
                 />
               </div>
             </div>
@@ -246,19 +251,23 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
 
       {/* Monthly rewards trend */}
       {!loading && rewards.monthlyList.length > 0 && (
-        <div className="bg-white dark:bg-slate-800 rounded-[2rem] border border-slate-100 dark:border-slate-700 p-5 space-y-3">
+        <div className="rounded-3xl p-5 space-y-3"
+          style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 8%)' }}>
           <div className="flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-indigo-500" />
-            <h3 className="text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-200">Monthly Rewards Value</h3>
+            <TrendingUp className="w-4 h-4" style={{ color: 'var(--color-accent-text)' }} />
+            <h3 className="text-xs font-black uppercase tracking-widest" style={{ color: 'var(--color-text)' }}>Monthly Rewards Value</h3>
           </div>
           <div className="space-y-2">
             {rewards.monthlyList.map(({ month, value }) => (
               <div key={month} className="flex items-center gap-3">
-                <span className="text-[10px] font-bold text-slate-400 w-16 flex-shrink-0">{month}</span>
-                <div className="flex-1 h-5 bg-slate-50 dark:bg-slate-700/40 rounded-lg overflow-hidden">
+                <span className="text-[10px] font-bold w-16 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>{month}</span>
+                <div className="flex-1 h-5 rounded-lg overflow-hidden" style={{ background: 'oklch(100% 0 0 / 6%)' }}>
                   <div
-                    className="h-full bg-gradient-to-r from-indigo-400 to-indigo-500 rounded-lg flex items-center justify-end px-2"
-                    style={{ width: `${Math.max(8, (value / maxMonthly) * 100)}%` }}
+                    className="h-full rounded-lg flex items-center justify-end px-2"
+                    style={{
+                      width: `${Math.max(8, (value / maxMonthly) * 100)}%`,
+                      background: 'var(--color-accent)',
+                    }}
                   >
                     <span className="text-[10px] font-black text-white tabular-nums">{currencySymbol}{value.toFixed(2)}</span>
                   </div>
@@ -266,7 +275,7 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
               </div>
             ))}
           </div>
-          <p className="text-[10px] text-slate-400">Estimated value — points at 1.5¢ (CSR) / 1¢ (CFU), cash back as-is.</p>
+          <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>Estimated value — points at 1.5¢ (CSR) / 1¢ (CFU), cash back as-is.</p>
         </div>
       )}
 
@@ -274,19 +283,20 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
       {loading && (
         <div className="space-y-3">
           {[...Array(5)].map((_, i) => (
-            <div key={i} className="h-16 bg-slate-100 dark:bg-slate-800 rounded-2xl animate-pulse" />
+            <div key={i} className="h-16 rounded-2xl animate-pulse" style={{ background: 'oklch(100% 0 0 / 6%)' }} />
           ))}
         </div>
       )}
 
       {/* Empty state */}
       {!loading && cardEntries.length === 0 && (
-        <div className="bg-white dark:bg-slate-800 rounded-[2rem] border border-slate-100 dark:border-slate-700 p-16 flex flex-col items-center gap-3">
-          <div className="w-12 h-12 bg-slate-100 dark:bg-slate-700 rounded-2xl flex items-center justify-center">
-            <Inbox className="w-6 h-6 text-slate-400" />
+        <div className="rounded-3xl p-16 flex flex-col items-center gap-3"
+          style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 8%)' }}>
+          <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ background: 'oklch(100% 0 0 / 8%)' }}>
+            <Inbox className="w-6 h-6" style={{ color: 'var(--color-text-muted)' }} />
           </div>
-          <p className="text-sm font-bold text-slate-500 dark:text-slate-400">No card transactions yet</p>
-          <p className="text-xs text-slate-400 text-center max-w-xs">
+          <p className="text-sm font-bold" style={{ color: 'var(--color-text-muted)' }}>No card transactions yet</p>
+          <p className="text-xs text-center max-w-xs" style={{ color: 'var(--color-text-muted)' }}>
             Transactions with a payment method selected will appear here. Card tracking starts June 2026.
           </p>
         </div>
@@ -294,27 +304,33 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
 
       {/* Transaction list */}
       {!loading && displayed.length > 0 && (
-        <div className="bg-white dark:bg-slate-800 rounded-[2rem] border border-slate-100 dark:border-slate-700 overflow-hidden divide-y divide-slate-50 dark:divide-slate-700/50">
-          {displayed.map(entry => (
-            <div key={entry.id} className="flex items-center gap-3 px-5 py-4 hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors">
+        <div className="rounded-3xl overflow-hidden"
+          style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 8%)' }}>
+          {displayed.map((entry, i) => (
+            <div key={entry.id}
+              className="flex items-center gap-3 px-5 py-4 transition-colors hover:bg-white/5"
+              style={i > 0 ? { borderTop: '1px solid oklch(100% 0 0 / 6%)' } : {}}>
 
               {/* Card icon */}
-              <div className="w-8 h-8 bg-indigo-50 dark:bg-indigo-900/30 rounded-xl flex items-center justify-center flex-shrink-0">
-                <CreditCard className="w-4 h-4 text-indigo-500" />
+              <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0"
+                style={{ background: 'var(--color-accent-subtle)' }}>
+                <CreditCard className="w-4 h-4" style={{ color: 'var(--color-accent-text)' }} />
               </div>
 
               {/* Vendor + category */}
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">
+                <p className="text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>
                   {entry.vendor || '—'}
                 </p>
                 <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                   {entry.category && (
-                    <span className="text-[10px] font-bold text-slate-400 bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                      style={{ background: 'oklch(100% 0 0 / 8%)', color: 'var(--color-text-muted)' }}>
                       {entry.category}
                     </span>
                   )}
-                  <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-2 py-0.5 rounded-full">
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                    style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
                     {entry.paymentMethod}
                   </span>
                 </div>
@@ -322,10 +338,10 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
 
               {/* Amount + date */}
               <div className="text-right flex-shrink-0">
-                <span className="text-sm font-black text-slate-900 dark:text-slate-100 tabular-nums">
+                <span className="text-sm font-black tabular-nums" style={{ color: 'var(--color-text)' }}>
                   {entry.amount != null ? `${currencySymbol}${Number(entry.amount).toFixed(2)}` : '—'}
                 </span>
-                <p className="text-[10px] text-slate-400 mt-0.5">
+                <p className="text-[10px] mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
                   {entry.txDate ? formatTxDate(entry.txDate) : formatTimestamp(entry.timestamp)}
                 </p>
               </div>
@@ -334,23 +350,29 @@ export function CardsTab({ sheetId, accessToken, currencySymbol = '$', cards = [
         </div>
       )}
 
-      {/* Best card per category — always visible, static recommendation */}
+      {/* Best card per category */}
       {!loading && (
-        <div className="bg-white dark:bg-slate-800 rounded-[2rem] border border-slate-100 dark:border-slate-700 p-5 space-y-3">
+        <div className="rounded-3xl p-5 space-y-3"
+          style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 8%)' }}>
           <div className="flex items-center gap-2">
-            <Award className="w-4 h-4 text-amber-500" />
-            <h3 className="text-xs font-black uppercase tracking-widest text-slate-700 dark:text-slate-200">Best Card per Category</h3>
+            <Award className="w-4 h-4" style={{ color: 'oklch(78% 0.16 75)' }} />
+            <h3 className="text-xs font-black uppercase tracking-widest" style={{ color: 'var(--color-text)' }}>Best Card per Category</h3>
           </div>
-          <div className="divide-y divide-slate-50 dark:divide-slate-700/50">
-            {bestTable.map(({ category, card, label }) => (
-              <div key={category} className="flex items-center justify-between gap-3 py-2">
-                <span className="text-xs font-bold text-slate-600 dark:text-slate-300 flex-shrink-0 w-24">{category}</span>
-                <span className="text-xs text-slate-700 dark:text-slate-200 font-semibold truncate flex-1 text-right">{card}</span>
-                <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap">{label}</span>
+          <div>
+            {bestTable.map(({ category, card, label }, i) => (
+              <div key={category}
+                className="flex items-center justify-between gap-3 py-2"
+                style={i > 0 ? { borderTop: '1px solid oklch(100% 0 0 / 6%)' } : {}}>
+                <span className="text-xs font-bold flex-shrink-0 w-24" style={{ color: 'var(--color-text-muted)' }}>{category}</span>
+                <span className="text-xs font-semibold truncate flex-1 text-right" style={{ color: 'var(--color-text)' }}>{card}</span>
+                <span className="text-[10px] font-black px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap"
+                  style={{ background: 'oklch(70% 0.15 145 / 12%)', color: 'var(--color-success)', border: '1px solid oklch(70% 0.15 145 / 25%)' }}>
+                  {label}
+                </span>
               </div>
             ))}
           </div>
-          <p className="text-[10px] text-slate-400">Points compared at 1.5¢ (CSR) / 1¢ (CFU) to rank against cash-back cards. Note: Amex's 6% groceries excludes warehouse clubs &amp; superstores (Costco, Walmart, Target) — those earn 1%.</p>
+          <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>Points compared at 1.5¢ (CSR) / 1¢ (CFU) to rank against cash-back cards. Note: Amex's 6% groceries excludes warehouse clubs &amp; superstores (Costco, Walmart, Target) — those earn 1%.</p>
         </div>
       )}
     </div>

@@ -38,7 +38,7 @@ export function BudgetRules({ data, loading, currencySymbol = '$' }) {
   if (!data) return null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-enter">
       <div>
         <p className="text-xl font-black" style={{ color: 'var(--color-text)' }}>50 / 30 / 20 Budget Rule</p>
         <p className="text-sm mt-1" style={{ color: 'var(--color-text-muted)' }}>Our spending based on the 50/30/20 budget rule</p>

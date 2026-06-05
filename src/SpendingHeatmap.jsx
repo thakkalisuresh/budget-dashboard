@@ -142,7 +142,7 @@ export function SpendingHeatmap({ sheetId, accessToken, currencySymbol = '$', mo
 
   return (
     <div
-      className="rounded-[1.25rem] p-5 sm:p-6 space-y-4"
+      className="animate-enter rounded-[1.25rem] p-5 sm:p-6 space-y-4"
       style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 8%)' }}
       ref={containerRef}
       onMouseLeave={() => setTooltip(null)}
