@@ -538,12 +538,13 @@ export function ChatAgent({
       <button
         onClick={() => setOpen(o => !o)}
         title="fund-ient"
-        style={{ bottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)', right: '1.5rem' }}
-        className={`hidden sm:flex fixed z-50 w-14 h-14 rounded-full shadow-2xl items-center justify-center transition-all duration-200 ${hideButton ? 'opacity-0 pointer-events-none' : ''} ${
-          open
-            ? 'bg-slate-600 dark:bg-slate-700 scale-95'
-            : 'bg-indigo-600 hover:bg-indigo-700 hover:scale-110 shadow-indigo-300 dark:shadow-indigo-900/50'
-        }`}
+        style={{
+          bottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)',
+          right: '1.5rem',
+          background: open ? 'oklch(30% 0.008 265)' : 'var(--color-accent)',
+          transform: open ? 'scale(0.95)' : undefined,
+        }}
+        className={`hidden sm:flex fixed z-50 w-14 h-14 rounded-full shadow-2xl items-center justify-center transition-all duration-200 ${hideButton ? 'opacity-0 pointer-events-none' : ''} ${!open ? 'hover:scale-110' : ''}`}
       >
         {open
           ? <X className="w-6 h-6 text-white" />
@@ -553,31 +554,35 @@ export function ChatAgent({
       {/* Chat panel */}
       {open && (
         <div
-          className="fixed z-50 w-80 sm:w-96 bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl border border-slate-100 dark:border-slate-700 flex flex-col overflow-hidden"
+          className="fixed z-50 w-80 sm:w-96 glass-heavy rounded-[2rem] shadow-2xl flex flex-col overflow-hidden"
           style={{
+            border: '1px solid var(--sur-10)',
             bottom: 'calc(env(safe-area-inset-bottom) + 5.5rem)',
             right: '1.5rem',
             maxHeight: 'calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 9rem)',
           }}
         >
-          {/* Header — compact single line: logo + name + month pill */}
-          <div className="px-4 py-3 bg-indigo-600 flex items-center gap-2.5 flex-shrink-0">
+          {/* Header */}
+          <div
+            className="px-4 py-3 flex items-center gap-2.5 flex-shrink-0"
+            style={{ background: 'var(--color-accent)' }}
+          >
             <div className="flex-shrink-0">
               <LogoSpark size={28} />
             </div>
             <p className="text-sm font-black text-white tracking-tight">fund-ient</p>
             {monthName && (
-              <span className="text-[10px] font-bold px-2 py-0.5 bg-white/20 text-indigo-100 rounded-full whitespace-nowrap">
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap" style={{ background: 'var(--sur-15)', color: 'oklch(92% 0.04 265)' }}>
                 {monthName}
               </span>
             )}
             <div className="ml-auto flex items-center gap-2 flex-shrink-0">
               {messages.length > 0 && (
-                <button onClick={handleClear} className="text-indigo-200 hover:text-white text-[10px] font-bold transition-colors">
+                <button onClick={handleClear} className="text-[10px] font-bold transition-colors" style={{ color: 'oklch(85% 0.05 265)' }}>
                   Clear
                 </button>
               )}
-              <button onClick={() => setOpen(false)} className="sm:hidden text-indigo-200 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/10">
+              <button onClick={() => setOpen(false)} className="sm:hidden transition-colors p-1 rounded-lg" style={{ color: 'oklch(85% 0.05 265)' }}>
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -591,7 +596,7 @@ export function ChatAgent({
                 {/* Empty state — quick prompts */}
                 {messages.length === 0 && (
                   <div className="space-y-2 pt-1">
-                    <p className="text-xs text-slate-400 text-center mb-10">
+                    <p className="text-xs text-center mb-10" style={{ color: 'var(--color-text-muted)' }}>
                       Ask me anything about your {monthName || 'current'} budget
                     </p>
                     {buildQuickPrompts({ expenses, overallRemaining, rulesData }).map((prompt, i) => (
@@ -599,7 +604,8 @@ export function ChatAgent({
                         key={i}
                         onClick={() => sendMessage(prompt)}
                         disabled={isBusy}
-                        className="w-full text-left text-xs px-3 py-2.5 bg-slate-50 dark:bg-slate-700/60 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 hover:text-indigo-600 dark:hover:text-indigo-400 text-slate-600 dark:text-slate-300 rounded-xl transition-colors font-medium border border-slate-100 dark:border-slate-600 disabled:opacity-50"
+                        className="w-full text-left text-xs px-3 py-2.5 rounded-xl transition-colors font-medium disabled:opacity-50"
+                        style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-8)', color: 'var(--color-text-secondary)' }}
                       >
                         {prompt}
                       </button>
@@ -611,16 +617,20 @@ export function ChatAgent({
                 {messages.map((msg, i) => (
                   <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     {msg.isToolStatus ? (
-                      <div className="max-w-[85%] px-4 py-2.5 rounded-2xl text-xs bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-bold flex items-center gap-2">
+                      <div
+                        className="max-w-[85%] px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2"
+                        style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)' }}
+                      >
                         <Zap className="w-3.5 h-3.5 animate-pulse flex-shrink-0" />
                         {msg.content}
                       </div>
                     ) : (
-                      <div className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
-                        msg.role === 'user'
-                          ? 'bg-indigo-600 text-white rounded-br-sm'
-                          : 'bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-bl-sm'
-                      }`}>
+                      <div
+                        className="max-w-[85%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed"
+                        style={msg.role === 'user'
+                          ? { background: 'var(--color-accent)', color: 'white', borderBottomRightRadius: '0.25rem' }
+                          : { background: 'var(--sur-6)', color: 'var(--color-text)', borderBottomLeftRadius: '0.25rem' }}
+                      >
                         {msg.content
                           ? msg.role === 'user'
                             ? msg.content
@@ -628,9 +638,9 @@ export function ChatAgent({
                           : isBusy && i === messages.length - 1
                             ? (
                               <span className="flex gap-1 items-center py-0.5">
-                                <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                                <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                                <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: 'var(--color-text-muted)', animationDelay: '0ms' }} />
+                                <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: 'var(--color-text-muted)', animationDelay: '150ms' }} />
+                                <span className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: 'var(--color-text-muted)', animationDelay: '300ms' }} />
                               </span>
                             )
                             : null
@@ -642,31 +652,36 @@ export function ChatAgent({
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Confirm add_expense — gated to prevent prompt-injection auto-writes */}
+              {/* Confirm add_expense */}
               {pendingConfirm && (
                 <div className="px-3 pt-3">
-                  <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded-2xl p-3 space-y-2">
-                    <p className="text-xs font-bold text-amber-700 dark:text-amber-300">
+                  <div
+                    className="rounded-2xl p-3 space-y-2"
+                    style={{ background: 'oklch(78% 0.16 75 / 10%)', border: '1px solid oklch(78% 0.16 75 / 25%)' }}
+                  >
+                    <p className="text-xs font-bold" style={{ color: 'var(--color-warning)' }}>
                       Confirm new expense
                     </p>
-                    <div className="text-sm text-slate-700 dark:text-slate-200 space-y-0.5">
-                      <div><span className="text-slate-400">Vendor:</span> <strong>{String(pendingConfirm.vendor).slice(0, 80)}</strong></div>
-                      <div><span className="text-slate-400">Amount:</span> <strong>${Number(pendingConfirm.amount).toFixed(2)}</strong></div>
-                      <div><span className="text-slate-400">Category:</span> <strong>{String(pendingConfirm.category).slice(0, 40)}</strong></div>
+                    <div className="text-sm space-y-0.5" style={{ color: 'var(--color-text)' }}>
+                      <div><span style={{ color: 'var(--color-text-muted)' }}>Vendor:</span> <strong>{String(pendingConfirm.vendor).slice(0, 80)}</strong></div>
+                      <div><span style={{ color: 'var(--color-text-muted)' }}>Amount:</span> <strong>${Number(pendingConfirm.amount).toFixed(2)}</strong></div>
+                      <div><span style={{ color: 'var(--color-text-muted)' }}>Category:</span> <strong>{String(pendingConfirm.category).slice(0, 40)}</strong></div>
                       {pendingConfirm.is_random && (
-                        <div className="text-xs text-amber-700 dark:text-amber-300">One-off / non-monthly</div>
+                        <div className="text-xs" style={{ color: 'var(--color-warning)' }}>One-off / non-monthly</div>
                       )}
                     </div>
                     <div className="flex gap-2 pt-1">
                       <button
                         onClick={() => pendingConfirm.resolve(false)}
-                        className="flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                        className="flex-1 px-3 py-2 rounded-xl text-xs font-bold transition-colors"
+                        style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}
                       >
                         Cancel
                       </button>
                       <button
                         onClick={() => pendingConfirm.resolve(true)}
-                        className="flex-1 px-3 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+                        className="flex-1 px-3 py-2 rounded-xl text-xs font-bold text-white transition-colors"
+                        style={{ background: 'var(--color-accent)' }}
                       >
                         Add expense
                       </button>
@@ -676,7 +691,7 @@ export function ChatAgent({
               )}
 
               {/* Input bar */}
-              <div className="p-3 border-t border-slate-100 dark:border-slate-700 flex gap-2 flex-shrink-0">
+              <div className="p-3 flex gap-2 flex-shrink-0" style={{ borderTop: '1px solid var(--sur-8)' }}>
                 <input
                   ref={inputRef}
                   type="text"
@@ -685,12 +700,14 @@ export function ChatAgent({
                   onKeyDown={handleKeyDown}
                   placeholder={toolRunning ? 'Adding expense…' : 'Ask about your budget…'}
                   disabled={isBusy}
-                  className="flex-1 bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500/40 placeholder:text-slate-400 disabled:opacity-50 min-w-0"
+                  className="flex-1 rounded-xl px-3 py-2 text-sm outline-none disabled:opacity-50 min-w-0"
+                  style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-10)', color: 'var(--color-text)' }}
                 />
                 <button
                   onClick={() => sendMessage(input)}
                   disabled={!input.trim() || isBusy}
-                  className="w-9 h-9 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl flex items-center justify-center transition-colors flex-shrink-0"
+                  className="w-9 h-9 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl flex items-center justify-center transition-colors flex-shrink-0"
+                  style={{ background: 'var(--color-accent)' }}
                 >
                   <Send className="w-4 h-4 text-white" />
                 </button>

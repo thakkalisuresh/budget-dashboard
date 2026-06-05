@@ -1,5 +1,5 @@
 import { apiFetch } from './sheetApi.js';
-import { safeText } from './sheetHelpers.js';
+import { safeText, parseSheetDate } from './sheetHelpers.js';
 
 const _historyReady = new Set();
 
@@ -67,6 +67,36 @@ export async function appendHistoryEntry(sheetId, accessToken, {
   }
 }
 
+/**
+ * Update the Payment Method column (col K, index 10) of the History row
+ * that matches the given UUID. Handles both web rows (uuid at index 8) and
+ * bot rows (uuid at index 6). No-op if the UUID is not found.
+ */
+export async function updateHistoryPaymentMethod(sheetId, accessToken, uuid, newCard) {
+  if (!uuid) return;
+  try {
+    const range = encodeURIComponent("'History'!A:L");
+    const json = await apiFetch(sheetId, `/values/${range}?valueRenderOption=UNFORMATTED_VALUE`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const rows = json.values || [];
+    // i=0 is the header; start from i=1. Check web (col I = index 8) and bot (col G = index 6).
+    const idx = rows.findIndex((row, i) =>
+      i > 0 && ((row[8] || '') === uuid || (row[6] || '') === uuid)
+    );
+    if (idx < 0) return; // UUID not found — no-op
+    const sheetRow = idx + 1; // 1-indexed
+    const cell = encodeURIComponent(`'History'!K${sheetRow}`);
+    await apiFetch(sheetId, `/values/${cell}?valueInputOption=USER_ENTERED`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values: [[safeText(newCard || '')]] }),
+    });
+  } catch (e) {
+    console.warn('updateHistoryPaymentMethod failed (non-fatal):', e);
+  }
+}
+
 export async function fetchHistory(sheetId, accessToken) {
   try {
     const range = encodeURIComponent("'History'!A:L");
@@ -85,7 +115,7 @@ export async function fetchHistory(sheetId, accessToken) {
       details:       row[5] || '',
       user:          row[7] || '',
       uuid:          row[8] || '',
-      txDate:        row[9] || '',
+      txDate:        parseSheetDate(row[9]),
       paymentMethod: row[10] || '',
       bookingMethod: row[11] || '',
     }))

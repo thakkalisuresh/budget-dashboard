@@ -60,6 +60,34 @@ export function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+/**
+ * Google Sheets stores dates as serial numbers when written with USER_ENTERED
+ * value input option. The epoch is December 30, 1899 (accounting for the
+ * spreadsheet bug where 1900 is treated as a leap year).
+ * Converts a Sheets serial number → 'YYYY-MM-DD' ISO string.
+ */
+export function sheetsSerialToISO(serial) {
+  const d = new Date(Date.UTC(1899, 11, 30) + serial * 24 * 60 * 60 * 1000);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Parse a raw cell value from Google Sheets into a 'YYYY-MM-DD' string.
+ * Handles three cases:
+ *   - Already ISO string '2026-06-01' → returned as-is
+ *   - Serial number 46174 (number or numeric string) → converted to ISO
+ *   - Empty / null → ''
+ */
+export function parseSheetDate(raw) {
+  if (!raw && raw !== 0) return '';
+  if (typeof raw === 'number') return sheetsSerialToISO(raw);
+  const s = String(raw).trim();
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;          // already ISO
+  if (/^\d+$/.test(s)) return sheetsSerialToISO(Number(s)); // numeric string serial
+  return s;
+}
+
 // Defensive: only a non-empty string is a valid transaction date; anything else
 // (null, boolean, number) falls back to today. Guards the date cell against
 // callers passing the wrong positional arg.

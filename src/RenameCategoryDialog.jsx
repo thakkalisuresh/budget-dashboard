@@ -27,23 +27,34 @@ export function RenameCategoryDialog({ accessToken, sheetId, category, onClose, 
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/40 dark:bg-black/60 z-40 backdrop-blur-sm" onClick={onClose} />
+      <div
+        className="fixed inset-0 z-40 animate-overlay-in"
+        style={{ background: 'oklch(0% 0 0 / 50%)', backdropFilter: 'blur(4px)' }}
+        onClick={onClose}
+      />
       <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
-        <div className="bg-white dark:bg-slate-800 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl w-full sm:max-w-sm border border-slate-100 dark:border-slate-700 overflow-hidden max-h-[90vh] flex flex-col">
-          <div className="w-10 h-1 bg-slate-200 dark:bg-slate-600 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" />
+        <div
+          className="glass-heavy animate-sheet-up rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm overflow-hidden max-h-[90vh] flex flex-col"
+          style={{ border: '1px solid var(--sur-10)', borderBottom: 'none' }}
+        >
+          <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" style={{ background: 'var(--sur-20)' }} />
 
           {/* Header */}
-          <div className="flex items-center justify-between px-8 pt-8 pb-6 border-b border-slate-100 dark:border-slate-700">
+          <div className="flex items-center justify-between px-8 pt-8 pb-6 flex-shrink-0" style={{ borderBottom: '1px solid var(--sur-8)' }}>
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-slate-100 dark:bg-slate-700 rounded-2xl flex items-center justify-center">
-                <Pencil className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+              <div className="w-10 h-10 rounded-2xl flex items-center justify-center" style={{ background: 'var(--sur-8)' }}>
+                <Pencil className="w-4 h-4" style={{ color: 'var(--color-text-muted)' }} />
               </div>
               <div>
-                <p className="text-base font-black text-slate-800 dark:text-slate-100">Rename Category</p>
-                <p className="text-xs text-slate-400 mt-0.5 truncate max-w-[160px]">{category.name}</p>
+                <p className="text-base font-black" style={{ color: 'var(--color-text)' }}>Rename Category</p>
+                <p className="text-xs mt-0.5 truncate max-w-[160px]" style={{ color: 'var(--color-text-muted)' }}>{category.name}</p>
               </div>
             </div>
-            <button onClick={onClose} className="p-2 rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+            <button
+              onClick={onClose}
+              className="p-2 rounded-xl transition-colors"
+              style={{ color: 'var(--color-text-muted)' }}
+            >
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -51,18 +62,19 @@ export function RenameCategoryDialog({ accessToken, sheetId, category, onClose, 
           {/* Body */}
           <div className="px-8 py-6 space-y-4">
             <div className="space-y-2">
-              <label className="text-xs font-black uppercase tracking-widest text-slate-400">New name</label>
+              <label className="text-xs font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>New name</label>
               <input
                 type="text"
                 value={newName}
                 onChange={e => { setNewName(e.target.value); setError(''); }}
                 onKeyDown={e => e.key === 'Enter' && handleSave()}
                 autoFocus
-                className="w-full bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-400/30 placeholder:text-slate-300"
+                className="w-full rounded-2xl px-4 py-3 text-sm outline-none transition-all"
+                style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}
               />
             </div>
             {error && (
-              <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400 text-xs font-bold">
+              <div className="flex items-center gap-2 text-xs font-bold" style={{ color: 'var(--color-danger)' }}>
                 <AlertCircle className="w-4 h-4 flex-shrink-0" />{error}
               </div>
             )}
@@ -70,13 +82,18 @@ export function RenameCategoryDialog({ accessToken, sheetId, category, onClose, 
 
           {/* Footer */}
           <div className="px-8 pb-8 flex gap-3 flex-shrink-0" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 2rem)' }}>
-            <button onClick={onClose} className="flex-1 py-3 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">
+            <button
+              onClick={onClose}
+              className="flex-1 py-3 rounded-2xl text-sm font-bold transition-colors"
+              style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}
+            >
               Cancel
             </button>
             <button
               onClick={handleSave}
               disabled={saving || !newName.trim()}
-              className="flex-1 py-3 rounded-2xl text-sm font-bold text-white bg-slate-700 dark:bg-slate-600 hover:bg-slate-800 dark:hover:bg-slate-500 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex-1 py-3 rounded-2xl text-sm font-bold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ background: 'var(--color-accent)' }}
             >
               {saving ? 'Saving…' : 'Rename'}
             </button>

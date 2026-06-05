@@ -9,10 +9,10 @@ const METHOD_LABELS = {
   'Added':        'Manual',
 };
 
-const METHOD_STYLES = {
-  'Scan':   'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300',
-  'Import': 'bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300',
-  'Manual': 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300',
+const METHOD_STYLE = {
+  'Scan':   { background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' },
+  'Import': { background: 'oklch(62% 0.20 295 / 15%)', color: 'oklch(72% 0.18 295)', border: '1px solid oklch(62% 0.20 295 / 25%)' },
+  'Manual': { background: 'oklch(70% 0.15 145 / 12%)', color: 'var(--color-success)', border: '1px solid oklch(70% 0.15 145 / 25%)' },
 };
 
 const SORT_OPTIONS = [
@@ -268,13 +268,13 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 animate-fade-in">
 
       {/* Header */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <p className="text-sm font-black uppercase tracking-widest text-slate-800 dark:text-slate-100">Ledger</p>
-          <p className="text-xs text-slate-400 mt-0.5">{displayed.length} transaction{displayed.length !== 1 ? 's' : ''}</p>
+          <p className="text-sm font-black uppercase tracking-widest" style={{ color: 'var(--color-text)' }}>Ledger</p>
+          <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{displayed.length} transaction{displayed.length !== 1 ? 's' : ''}</p>
         </div>
         <div className="flex items-center gap-2">
 
@@ -283,80 +283,56 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
             <button
               onClick={() => { setShowExportMenu(v => !v); setShowSortMenu(false); setShowFilterMenu(false); }}
               disabled={!!allMonthsProgress || pdfLoading}
-              className="flex items-center gap-1.5 px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-bold hover:border-indigo-300 dark:hover:border-indigo-600 transition-colors shadow-sm disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-colors disabled:opacity-50"
+              style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-10)', color: 'var(--color-text)' }}
             >
               <Download className="w-3.5 h-3.5" />
-              {allMonthsProgress
-                ? `Fetching ${allMonthsProgress.done}/${allMonthsProgress.total}…`
-                : pdfLoading
-                ? 'Building PDF…'
-                : 'Export'}
+              {allMonthsProgress ? `Fetching ${allMonthsProgress.done}/${allMonthsProgress.total}…` : pdfLoading ? 'Building PDF…' : 'Export'}
             </button>
             {showExportMenu && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setShowExportMenu(false)} />
-                <div className="absolute right-0 top-full mt-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl overflow-hidden z-20 w-56">
-
-                  {/* This month */}
+                <div className="absolute right-0 top-full mt-1.5 glass-medium rounded-2xl overflow-hidden z-20 w-56 animate-dropdown"
+                  style={{ border: '1px solid var(--sur-10)' }}>
                   <div className="px-4 pt-3 pb-1">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">This month</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>This month</p>
                   </div>
-                  <button onClick={exportLedger}
-                    className="w-full flex items-center justify-between px-4 py-2.5 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <FileText className="w-4 h-4 text-indigo-500" />
-                      <span>Transaction Ledger</span>
-                    </div>
-                    <span className="text-[10px] text-slate-400 font-medium">CSV</span>
-                  </button>
-                  <button onClick={exportLedgerJson}
-                    className="w-full flex items-center justify-between px-4 py-2.5 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <FileText className="w-4 h-4 text-indigo-500" />
-                      <span>Transaction Ledger</span>
-                    </div>
-                    <span className="text-[10px] text-slate-400 font-medium">JSON</span>
-                  </button>
-                  <button onClick={exportSummary}
-                    className="w-full flex items-center justify-between px-4 py-2.5 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <FileText className="w-4 h-4 text-emerald-500" />
-                      <span>Monthly Summary</span>
-                    </div>
-                    <span className="text-[10px] text-slate-400 font-medium">CSV</span>
-                  </button>
-                  <button onClick={exportPdf}
-                    className="w-full flex items-center justify-between px-4 py-2.5 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
-                    <div className="flex items-center gap-3">
-                      <FileText className="w-4 h-4 text-rose-500" />
-                      <span>Monthly Report</span>
-                    </div>
-                    <span className="text-[10px] text-slate-400 font-medium">PDF</span>
-                  </button>
-
-                  {/* All months */}
+                  {[
+                    { fn: exportLedger,     label: 'Transaction Ledger', tag: 'CSV',  icon: 'var(--color-accent-text)' },
+                    { fn: exportLedgerJson, label: 'Transaction Ledger', tag: 'JSON', icon: 'var(--color-accent-text)' },
+                    { fn: exportSummary,    label: 'Monthly Summary',    tag: 'CSV',  icon: 'var(--color-success)' },
+                    { fn: exportPdf,        label: 'Monthly Report',     tag: 'PDF',  icon: 'var(--color-danger)' },
+                  ].map(({ fn, label, tag, icon }) => (
+                    <button key={tag + label} onClick={fn}
+                      className="w-full flex items-center justify-between px-4 py-2.5 text-left text-xs font-bold transition-colors hover:bg-[var(--sur-5)]"
+                      style={{ color: 'var(--color-text)' }}>
+                      <div className="flex items-center gap-3">
+                        <FileText className="w-4 h-4" style={{ color: icon }} />
+                        <span>{label}</span>
+                      </div>
+                      <span className="text-[10px] font-medium" style={{ color: 'var(--color-text-muted)' }}>{tag}</span>
+                    </button>
+                  ))}
                   {months.length > 1 && (
                     <>
-                      <div className="h-px bg-slate-100 dark:bg-slate-700 mx-4 my-1" />
+                      <div className="h-px mx-4 my-1" style={{ background: 'var(--sur-8)' }} />
                       <div className="px-4 pt-2 pb-1">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">All months</p>
+                        <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>All months</p>
                       </div>
-                      <button onClick={() => exportAllMonths('csv')}
-                        className="w-full flex items-center justify-between px-4 py-2.5 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
-                        <div className="flex items-center gap-3">
-                          <FileText className="w-4 h-4 text-violet-500" />
-                          <span>Full Year</span>
-                        </div>
-                        <span className="text-[10px] text-slate-400 font-medium">CSV</span>
-                      </button>
-                      <button onClick={() => exportAllMonths('json')}
-                        className="w-full flex items-center justify-between px-4 py-2.5 pb-3 text-left text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
-                        <div className="flex items-center gap-3">
-                          <FileText className="w-4 h-4 text-violet-500" />
-                          <span>Full Year</span>
-                        </div>
-                        <span className="text-[10px] text-slate-400 font-medium">JSON</span>
-                      </button>
+                      {[
+                        { fn: () => exportAllMonths('csv'),  tag: 'CSV' },
+                        { fn: () => exportAllMonths('json'), tag: 'JSON' },
+                      ].map(({ fn, tag }) => (
+                        <button key={tag} onClick={fn}
+                          className="w-full flex items-center justify-between px-4 py-2.5 last:pb-3 text-left text-xs font-bold transition-colors hover:bg-[var(--sur-5)]"
+                          style={{ color: 'var(--color-text)' }}>
+                          <div className="flex items-center gap-3">
+                            <FileText className="w-4 h-4" style={{ color: 'oklch(62% 0.20 295)' }} />
+                            <span>Full Year</span>
+                          </div>
+                          <span className="text-[10px] font-medium" style={{ color: 'var(--color-text-muted)' }}>{tag}</span>
+                        </button>
+                      ))}
                     </>
                   )}
                 </div>
@@ -367,17 +343,24 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
           {/* Sort button */}
           <div className="relative">
             <button onClick={() => { setShowSortMenu(v => !v); setShowFilterMenu(false); setShowExportMenu(false); }}
-              className="flex items-center gap-1.5 px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-bold hover:border-indigo-300 dark:hover:border-indigo-600 transition-colors shadow-sm">
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-colors"
+              style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-10)', color: 'var(--color-text)' }}>
               <ArrowUpDown className="w-3.5 h-3.5" />
               {SORT_OPTIONS.find(o => o.value === sortBy)?.label}
             </button>
             {showSortMenu && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setShowSortMenu(false)} />
-                <div className="absolute right-0 top-full mt-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl overflow-hidden z-20 w-44">
+                <div className="absolute right-0 top-full mt-1.5 glass-medium rounded-2xl overflow-hidden z-20 w-44 animate-dropdown"
+                  style={{ border: '1px solid var(--sur-10)' }}>
                   {SORT_OPTIONS.map(o => (
                     <button key={o.value} onClick={() => { setSortBy(o.value); setShowSortMenu(false); }}
-                      className={`w-full text-left px-4 py-2.5 text-xs font-bold transition-colors ${sortBy === o.value ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50'}`}>
+                      className="w-full text-left px-4 py-2.5 text-xs font-bold transition-colors"
+                      style={sortBy === o.value
+                        ? { background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)' }
+                        : { color: 'var(--color-text)' }}
+                      onMouseEnter={e => { if (sortBy !== o.value) e.currentTarget.style.background = 'var(--sur-5)'; }}
+                      onMouseLeave={e => { if (sortBy !== o.value) e.currentTarget.style.background = ''; }}>
                       {o.label}
                     </button>
                   ))}
@@ -389,51 +372,44 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
           {/* Filter button */}
           <div className="relative">
             <button onClick={() => { setShowFilterMenu(v => !v); setShowSortMenu(false); setShowExportMenu(false); }}
-              className={`flex items-center gap-1.5 px-3 py-2 border rounded-xl text-xs font-bold transition-colors shadow-sm ${activeFilterCount > 0 ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-indigo-300 dark:hover:border-indigo-600'}`}>
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-colors"
+              style={activeFilterCount > 0
+                ? { background: 'var(--color-accent)', border: '1px solid var(--color-accent)', color: 'white' }
+                : { background: 'var(--color-surface)', border: '1px solid var(--sur-10)', color: 'var(--color-text)' }}>
               <SlidersHorizontal className="w-3.5 h-3.5" />
               Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
             </button>
             {showFilterMenu && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setShowFilterMenu(false)} />
-                <div className="absolute right-0 top-full mt-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-xl overflow-hidden z-20 w-56 max-h-80 overflow-y-auto">
-                  <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
-                    <span className="text-xs font-black text-slate-700 dark:text-slate-200">Filters</span>
-                    {activeFilterCount > 0 && <button onClick={clearFilters} className="text-[10px] font-bold text-rose-500 hover:underline">Clear all</button>}
+                <div className="absolute right-0 top-full mt-1.5 glass-medium rounded-2xl overflow-hidden z-20 w-56 max-h-80 overflow-y-auto animate-dropdown"
+                  style={{ border: '1px solid var(--sur-10)' }}>
+                  <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid var(--sur-8)' }}>
+                    <span className="text-xs font-black" style={{ color: 'var(--color-text)' }}>Filters</span>
+                    {activeFilterCount > 0 && (
+                      <button onClick={clearFilters} className="text-[10px] font-bold hover:underline" style={{ color: 'var(--color-danger)' }}>Clear all</button>
+                    )}
                   </div>
-                  {allCategories.length > 0 && (
-                    <div className="px-4 py-2 border-b border-slate-50 dark:border-slate-700/50">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Category</p>
-                      {allCategories.map(c => (
-                        <button key={c} onClick={() => toggleFilter(setFilterCategories, c)}
-                          className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium transition-colors mb-0.5 ${filterCategories.includes(c) ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-bold' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50'}`}>
-                          {c}
+                  {[
+                    { label: 'Category', items: allCategories, setter: setFilterCategories, active: filterCategories },
+                    { label: 'Method',   items: allMethods,    setter: setFilterMethods,    active: filterMethods },
+                    { label: 'Added by', items: allUsers,      setter: setFilterUsers,      active: filterUsers },
+                  ].filter(g => g.items.length > 0).map((group, gi, arr) => (
+                    <div key={group.label} className="px-4 py-2" style={gi < arr.length - 1 ? { borderBottom: '1px solid var(--sur-6)' } : {}}>
+                      <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: 'var(--color-text-muted)' }}>{group.label}</p>
+                      {group.items.map(item => (
+                        <button key={item} onClick={() => toggleFilter(group.setter, item)}
+                          className="w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium transition-colors mb-0.5"
+                          style={group.active.includes(item)
+                            ? { background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', fontWeight: 700 }
+                            : { color: 'var(--color-text)' }}
+                          onMouseEnter={e => { if (!group.active.includes(item)) e.currentTarget.style.background = 'var(--sur-5)'; }}
+                          onMouseLeave={e => { if (!group.active.includes(item)) e.currentTarget.style.background = ''; }}>
+                          {item}
                         </button>
                       ))}
                     </div>
-                  )}
-                  {allMethods.length > 0 && (
-                    <div className="px-4 py-2 border-b border-slate-50 dark:border-slate-700/50">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Method</p>
-                      {allMethods.map(m => (
-                        <button key={m} onClick={() => toggleFilter(setFilterMethods, m)}
-                          className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium transition-colors mb-0.5 ${filterMethods.includes(m) ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-bold' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50'}`}>
-                          {m}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {allUsers.length > 0 && (
-                    <div className="px-4 py-2">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Added by</p>
-                      {allUsers.map(u => (
-                        <button key={u} onClick={() => toggleFilter(setFilterUsers, u)}
-                          className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-medium transition-colors mb-0.5 ${filterUsers.includes(u) ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-bold' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50'}`}>
-                          {u}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  ))}
                 </div>
               </>
             )}
@@ -441,7 +417,8 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
 
           {/* Refresh */}
           <button onClick={() => load(true)} disabled={refreshing}
-            className="p-2 rounded-xl text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors disabled:opacity-40">
+            className="p-2 rounded-xl transition-colors disabled:opacity-40 hover:bg-[var(--sur-5)]"
+            style={{ color: 'var(--color-text-muted)' }}>
             <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
           </button>
         </div>
@@ -449,16 +426,18 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
 
       {/* Search bar */}
       <div className="relative">
-        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--color-text-muted)' }} />
         <input
           type="text"
           placeholder="Search by vendor, category or amount…"
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
-          className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 rounded-2xl pl-10 pr-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400 transition-all placeholder:text-slate-400"
+          className="w-full rounded-2xl pl-10 pr-4 py-2.5 text-sm outline-none transition-all"
+          style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-10)', color: 'var(--color-text)' }}
         />
         {searchQuery && (
-          <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
+          <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 transition-colors"
+            style={{ color: 'var(--color-text-muted)' }}>
             <X className="w-4 h-4" />
           </button>
         )}
@@ -467,45 +446,43 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
       {/* Active filter chips */}
       {activeFilterCount > 0 && (
         <div className="flex flex-wrap gap-2">
-          {filterCategories.map(c => (
-            <button key={c} onClick={() => toggleFilter(setFilterCategories, c)}
-              className="flex items-center gap-1 px-2.5 py-1 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 rounded-full text-xs font-bold">
-              {c} <X className="w-3 h-3" />
-            </button>
-          ))}
-          {filterMethods.map(m => (
-            <button key={m} onClick={() => toggleFilter(setFilterMethods, m)}
-              className="flex items-center gap-1 px-2.5 py-1 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 rounded-full text-xs font-bold">
-              {m} <X className="w-3 h-3" />
-            </button>
-          ))}
-          {filterUsers.map(u => (
-            <button key={u} onClick={() => toggleFilter(setFilterUsers, u)}
-              className="flex items-center gap-1 px-2.5 py-1 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 rounded-full text-xs font-bold">
-              {u} <X className="w-3 h-3" />
-            </button>
-          ))}
+          {[...filterCategories, ...filterMethods, ...filterUsers].map((val, i) => {
+            const setter = i < filterCategories.length ? setFilterCategories
+              : i < filterCategories.length + filterMethods.length ? setFilterMethods
+              : setFilterUsers;
+            return (
+              <button key={val} onClick={() => toggleFilter(setter, val)}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold"
+                style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
+                {val} <X className="w-3 h-3" />
+              </button>
+            );
+          })}
         </div>
       )}
 
       {/* Loading */}
       {loading && (
         <div className="space-y-3">
-          {[...Array(6)].map((_, i) => <div key={i} className="h-16 bg-slate-100 dark:bg-slate-800 rounded-2xl animate-pulse" />)}
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="h-16 rounded-2xl animate-pulse" style={{ background: 'var(--sur-6)' }} />
+          ))}
         </div>
       )}
 
       {/* Empty state */}
       {!loading && displayed.length === 0 && (
-        <div className="bg-white dark:bg-slate-800 rounded-[2rem] border border-slate-100 dark:border-slate-700 p-16 flex flex-col items-center gap-3">
-          <div className="w-12 h-12 bg-slate-100 dark:bg-slate-700 rounded-2xl flex items-center justify-center">
-            <Inbox className="w-6 h-6 text-slate-400" />
+        <div className="rounded-3xl p-16 flex flex-col items-center gap-3"
+          style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+          <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ background: 'var(--sur-8)' }}>
+            <Inbox className="w-6 h-6" style={{ color: 'var(--color-text-muted)' }} />
           </div>
-          <p className="text-sm font-bold text-slate-500 dark:text-slate-400">
+          <p className="text-sm font-bold" style={{ color: 'var(--color-text-muted)' }}>
             {searchQuery ? `No results for "${searchQuery}"` : 'No transactions found'}
           </p>
           {(activeFilterCount > 0 || searchQuery) && (
-            <button onClick={() => { clearFilters(); setSearchQuery(''); }} className="text-xs font-bold text-indigo-500 hover:underline">
+            <button onClick={() => { clearFilters(); setSearchQuery(''); }}
+              className="text-xs font-bold hover:underline" style={{ color: 'var(--color-accent-text)' }}>
               Clear search & filters
             </button>
           )}
@@ -514,35 +491,47 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
 
       {/* Ledger list */}
       {!loading && displayed.length > 0 && (
-        <div className="bg-white dark:bg-slate-800 rounded-[2rem] border border-slate-100 dark:border-slate-700 overflow-hidden divide-y divide-slate-50 dark:divide-slate-700/50">
+        <div className="rounded-3xl overflow-hidden"
+          style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
           {displayed.map((t, i) => {
             const noteKey = `${sheetId}_${t.category}_${(t.vendor || '').toLowerCase()}_${t.amount.toFixed(2)}`;
             const noteData = transactionNotes[noteKey];
             return (
-              <div key={i} className="flex items-center gap-3 px-5 py-4 hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors">
+              <div key={i} className="flex items-center gap-3 px-5 py-4 transition-colors hover:bg-[var(--sur-5)] animate-enter"
+                style={{ '--enter-delay': `${Math.min(i, 14) * 25}ms`, ...(i > 0 ? { borderTop: '1px solid var(--sur-6)' } : {}) }}>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">{t.vendor}</p>
-                  {t.txDate && <p className="text-[10px] text-slate-400 mt-0.5">{formatTxDate(t.txDate)}</p>}
+                  <p className="text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>{t.vendor}</p>
+                  {t.txDate && <p className="text-[10px] mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{formatTxDate(t.txDate)}</p>}
                   <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                    <span className="text-[10px] font-bold text-slate-400 bg-slate-100 dark:bg-slate-700 px-2 py-0.5 rounded-full">{t.category}</span>
-                    {t.method && <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${METHOD_STYLES[t.method] || ''}`}>{t.method}</span>}
-                    {t.paymentMethod && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 flex-shrink-0">💳 {t.paymentMethod}</span>}
-                    {/* Tags */}
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                      style={{ background: 'var(--sur-8)', color: 'var(--color-text-muted)' }}>{t.category}</span>
+                    {t.method && (
+                      <span className="text-[10px] font-black px-2 py-0.5 rounded-full"
+                        style={METHOD_STYLE[t.method] || {}}>
+                        {t.method}
+                      </span>
+                    )}
+                    {t.paymentMethod && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0"
+                        style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
+                        💳 {t.paymentMethod}
+                      </span>
+                    )}
                     {noteData?.tags?.map(tag => (
-                      <span key={tag} className="text-[10px] font-bold px-2 py-0.5 bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 rounded-full">{tag}</span>
+                      <span key={tag} className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                        style={{ background: 'oklch(62% 0.20 295 / 15%)', color: 'oklch(72% 0.18 295)' }}>{tag}</span>
                     ))}
-                    {/* Note indicator */}
                     {noteData?.note && (
-                      <span title={noteData.note} className="text-slate-400">
+                      <span title={noteData.note} style={{ color: 'var(--color-text-muted)' }}>
                         <MessageSquare className="w-3 h-3" />
                       </span>
                     )}
                   </div>
                 </div>
                 <div className="text-right flex-shrink-0">
-                  <p className="text-sm font-black text-slate-900 dark:text-slate-100 tabular-nums">{currencySymbol}{t.amount.toFixed(2)}</p>
-                  {t.date && <p className="text-[10px] text-slate-400 mt-0.5">{formatDate(t.date)}</p>}
-                  {t.user && <p className="text-[10px] font-bold text-slate-400">{t.user}</p>}
+                  <p className="text-sm font-black tabular-nums" style={{ color: 'var(--color-text)' }}>{currencySymbol}{t.amount.toFixed(2)}</p>
+                  {t.date && <p className="text-[10px] mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{formatDate(t.date)}</p>}
+                  {t.user && <p className="text-[10px] font-bold" style={{ color: 'var(--color-text-muted)' }}>{t.user}</p>}
                 </div>
               </div>
             );

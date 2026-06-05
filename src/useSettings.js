@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
+const DEV_MOCK = import.meta.env.DEV && import.meta.env.VITE_DEV_MOCK === 'true';
+
 const TEMPLATE_ID = import.meta.env.VITE_TEMPLATE_SHEET_ID;
 const SETTINGS_SHEET = 'UserSettings';
 
@@ -64,7 +66,7 @@ export const DEFAULT_SETTINGS = {
   messages:                [],  // [{ id, type, title, body, timestamp, read }]
   pushHour:                20,  // preferred local hour for daily push (18-22)
   reconciledFingerprints:  [],  // ["vendor_amount", ...] — tracks imported reconciliation tx
-  colorScheme:             'amber',
+  colorScheme:             'default',
   hasSeenOnboarding:       false,
   keyboardShortcuts: {
     addExpense:   'alt+n',
@@ -225,10 +227,13 @@ export async function saveUserSettings(userId, settings, accessToken) {
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useSettings(userId, accessToken) {
-  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const [loading, setLoading]   = useState(true);
+  const [settings, setSettings] = useState(() =>
+    DEV_MOCK ? { ...DEFAULT_SETTINGS, hasSeenOnboarding: true } : DEFAULT_SETTINGS
+  );
+  const [loading, setLoading]   = useState(!DEV_MOCK);
 
   useEffect(() => {
+    if (DEV_MOCK) return;
     if (!userId || !accessToken) return;
     loadUserSettings(userId, accessToken).then(s => {
       setSettings(s);
@@ -248,7 +253,7 @@ export function useSettings(userId, accessToken) {
         });
         localStorage.setItem('budget_custom_categories', JSON.stringify(customMap));
       } catch {}
-      saveUserSettings(userId, next, accessToken); // fire-and-forget
+      if (!DEV_MOCK) saveUserSettings(userId, next, accessToken); // fire-and-forget
       return next;
     });
   }, [userId, accessToken]);

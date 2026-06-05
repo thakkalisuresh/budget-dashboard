@@ -1,5 +1,5 @@
 import { apiFetch, fetchRaw } from './sheetApi.js';
-import { getEffectiveSheetMap, parseAmounts, uuidStart, detectV2, fuzzyNamesMatch } from './sheetHelpers.js';
+import { getEffectiveSheetMap, parseAmounts, uuidStart, detectV2, fuzzyNamesMatch, parseSheetDate } from './sheetHelpers.js';
 
 const _detailCache = new Map();
 const DETAIL_CACHE_TTL = 2 * 60 * 1000;
@@ -68,7 +68,7 @@ export async function fetchDetailRows(categoryName, accessToken, sheetId, monthN
       : parseAmounts(rawAmt);
     if (amounts.length === 0) return;
     const uuids         = amounts.map((_, i) => String(row[uuidCol + i] || ''));
-    const date          = isV2 ? String(row[dateCol] || '').trim() : '';
+    const date          = isV2 ? parseSheetDate(row[dateCol]) : '';
     const paymentMethod = pmCol >= 0 ? String(row[pmCol] || '').trim() : '';
     const bookingMethod = bmCol >= 0 ? String(row[bmCol] || '').trim() : '';
     result.push({ rowIndex: j + 2, description: String(desc), amounts, uuids, date, paymentMethod, bookingMethod, _v2: isV2 });

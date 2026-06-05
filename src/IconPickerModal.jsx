@@ -10,15 +10,25 @@ export function IconPickerModal({ categoryName, currentIcon, onPick, onClose }) 
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/40 dark:bg-black/60 z-40 backdrop-blur-sm" onClick={onClose} />
+      <div
+        className="fixed inset-0 z-40 animate-overlay-in"
+        style={{ background: 'oklch(0% 0 0 / 50%)', backdropFilter: 'blur(4px)' }}
+        onClick={onClose}
+      />
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl w-full max-w-sm border border-slate-100 dark:border-slate-700 overflow-hidden flex flex-col max-h-[85vh]">
+        <div
+          className="glass-heavy animate-dialog-enter rounded-3xl w-full max-w-sm overflow-hidden flex flex-col max-h-[85vh]"
+          style={{ border: '1px solid var(--sur-10)' }}
+        >
 
           {/* Header */}
-          <div className="px-6 pt-6 pb-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between flex-shrink-0">
+          <div
+            className="px-6 pt-6 pb-4 flex items-center justify-between flex-shrink-0"
+            style={{ borderBottom: '1px solid var(--sur-8)' }}
+          >
             <div>
-              <p className="text-sm font-black text-slate-800 dark:text-slate-100">Choose an icon</p>
-              <p className="text-xs text-slate-400 mt-0.5">{categoryName}</p>
+              <p className="text-sm font-black" style={{ color: 'var(--color-text)' }}>Choose an icon</p>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{categoryName}</p>
             </div>
             <span className="text-3xl leading-none">{currentIcon}</span>
           </div>
@@ -31,21 +41,27 @@ export function IconPickerModal({ categoryName, currentIcon, onPick, onClose }) 
               onChange={e => setSearch(e.target.value)}
               placeholder="Search  (e.g. food, car, home…)"
               autoFocus
-              className="w-full bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-2xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/60 focus:border-indigo-400 placeholder:text-slate-300 dark:placeholder:text-slate-500"
+              className="w-full rounded-2xl px-4 py-2.5 text-sm outline-none transition-all"
+              style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}
             />
           </div>
 
           {/* Grid */}
           <div className="flex-1 overflow-y-auto p-3">
             {filtered.length === 0 ? (
-              <p className="text-center text-sm text-slate-400 py-8">No results for "{search}"</p>
+              <p className="text-center text-sm py-8" style={{ color: 'var(--color-text-muted)' }}>No results for "{search}"</p>
             ) : (
               <div className="grid grid-cols-8 gap-0.5">
                 {filtered.map(emoji => (
                   <button
                     key={emoji}
                     onClick={() => onPick(emoji)}
-                    className={`text-xl p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors ${currentIcon === emoji ? 'bg-indigo-50 dark:bg-indigo-900/30 ring-2 ring-inset ring-indigo-400' : ''}`}
+                    className="text-xl p-2 rounded-xl transition-colors"
+                    style={currentIcon === emoji ? {
+                      background: 'var(--color-accent-subtle)',
+                      outline: '2px solid var(--color-accent)',
+                      outlineOffset: '-2px',
+                    } : {}}
                   >
                     {emoji}
                   </button>
@@ -56,7 +72,11 @@ export function IconPickerModal({ categoryName, currentIcon, onPick, onClose }) 
 
           {/* Footer */}
           <div className="px-6 pb-6 pt-2 flex-shrink-0">
-            <button onClick={onClose} className="w-full py-2.5 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">
+            <button
+              onClick={onClose}
+              className="w-full py-2.5 rounded-2xl text-sm font-bold transition-colors"
+              style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}
+            >
               Cancel
             </button>
           </div>

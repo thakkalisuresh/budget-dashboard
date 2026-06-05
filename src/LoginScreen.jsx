@@ -7,22 +7,27 @@ export function LoginScreen({ onSuccess, onError, loading, denied }) {
     onSuccess,
     onError,
     flow: 'implicit',
-    // NOTE: drive scope deliberately omitted. The default session only needs
-    // Sheets API. Drive (template copy + sharing) is requested just-in-time
-    // when the user creates a new month — see requestDriveToken() in driveAuth.js.
     scope: 'openid email profile https://www.googleapis.com/auth/spreadsheets',
   });
 
   return (
-    <div className="min-h-screen bg-[#fcfdfe] dark:bg-slate-950 flex items-center justify-center p-6 transition-colors duration-300">
+    <div
+      className="min-h-screen flex items-center justify-center p-6 transition-colors duration-300"
+      style={{ background: 'var(--color-bg)' }}
+    >
       <div className="w-full max-w-sm">
-        {/* Card */}
-        <div className="bg-white dark:bg-slate-800 rounded-[2rem] border border-slate-100 dark:border-slate-700 shadow-[0_8px_40px_rgb(0,0,0,0.06)] dark:shadow-[0_8px_40px_rgb(0,0,0,0.3)] p-10 text-center space-y-8">
+        <div
+          className="glass-heavy rounded-[2rem] p-10 text-center space-y-8"
+          style={{ border: '1px solid var(--sur-10)' }}
+        >
 
           {/* Icon */}
           <div className="flex justify-center">
-            <div className="w-16 h-16 bg-indigo-50 dark:bg-indigo-900/30 rounded-2xl flex items-center justify-center">
-              <svg className="w-8 h-8 text-indigo-600 dark:text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <div
+              className="w-16 h-16 rounded-2xl flex items-center justify-center"
+              style={{ background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}
+            >
+              <svg className="w-8 h-8" style={{ color: 'var(--color-accent-text)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
               </svg>
             </div>
@@ -30,15 +35,18 @@ export function LoginScreen({ onSuccess, onError, loading, denied }) {
 
           {/* Title */}
           <div className="space-y-2">
-            <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">Budget Tracker</h1>
-            <p className="text-sm text-slate-400">Sign in to access the dashboard</p>
+            <h1 className="text-2xl font-black tracking-tight" style={{ color: 'var(--color-text)' }}>Budget Tracker</h1>
+            <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>Sign in to access the dashboard</p>
           </div>
 
           {/* Error state */}
           {denied && (
-            <div className="bg-rose-50 dark:bg-rose-900/20 border border-rose-100 dark:border-rose-800/40 rounded-2xl px-5 py-4">
-              <p className="text-sm font-bold text-rose-600 dark:text-rose-400">Access denied</p>
-              <p className="text-xs text-rose-500/80 dark:text-rose-400/70 mt-1">This Google account is not authorised. Please use your personal account.</p>
+            <div
+              className="rounded-2xl px-5 py-4"
+              style={{ background: 'oklch(62% 0.22 25 / 10%)', border: '1px solid oklch(62% 0.22 25 / 25%)' }}
+            >
+              <p className="text-sm font-bold" style={{ color: 'var(--color-danger)' }}>Access denied</p>
+              <p className="text-xs mt-1" style={{ color: 'oklch(62% 0.22 25 / 70%)' }}>This Google account is not authorised. Please use your personal account.</p>
             </div>
           )}
 
@@ -46,10 +54,11 @@ export function LoginScreen({ onSuccess, onError, loading, denied }) {
           <button
             onClick={() => login()}
             disabled={loading}
-            className="w-full flex items-center justify-center gap-3 px-6 py-3.5 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl text-sm font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-600 hover:border-slate-300 dark:hover:border-slate-500 shadow-sm transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
+            className="w-full flex items-center justify-center gap-3 px-6 py-3.5 rounded-2xl text-sm font-bold transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
+            style={{ background: 'var(--sur-6)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}
           >
             {loading ? (
-              <svg className="w-5 h-5 animate-spin text-slate-400" viewBox="0 0 24 24" fill="none">
+              <svg className="w-5 h-5 animate-spin" style={{ color: 'var(--color-text-muted)' }} viewBox="0 0 24 24" fill="none">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
               </svg>
@@ -64,7 +73,7 @@ export function LoginScreen({ onSuccess, onError, loading, denied }) {
             {loading ? 'Signing in…' : 'Sign in with Google'}
           </button>
 
-          <p className="text-[11px] text-slate-300 dark:text-slate-600">Private — access restricted to authorised users only</p>
+          <p className="text-[11px]" style={{ color: 'var(--sur-20)' }}>Private — access restricted to authorised users only</p>
         </div>
       </div>
     </div>
@@ -72,7 +81,7 @@ export function LoginScreen({ onSuccess, onError, loading, denied }) {
 }
 
 export function OfflineUnlockScreen({ onUnlock, onSignInInstead }) {
-  const [status, setStatus] = useState('idle'); // 'idle' | 'verifying' | 'failed'
+  const [status, setStatus] = useState('idle');
 
   const cached = useMemo(() => {
     try { return JSON.parse(localStorage.getItem('budget_auth_cache') || 'null'); } catch { return null; }
@@ -82,10 +91,8 @@ export function OfflineUnlockScreen({ onUnlock, onSignInInstead }) {
     setStatus('verifying');
     const ok = await onUnlock();
     if (!ok) setStatus('failed');
-    // on success, parent sets user → component unmounts
   }, [onUnlock]);
 
-  // Auto-trigger on mount with a short delay so the screen renders first
   useEffect(() => {
     const t = setTimeout(attempt, 250);
     return () => clearTimeout(t);
@@ -93,37 +100,49 @@ export function OfflineUnlockScreen({ onUnlock, onSignInInstead }) {
   }, []);
 
   return (
-    <div className="min-h-screen bg-[#fcfdfe] dark:bg-slate-950 flex items-center justify-center p-6 transition-colors duration-300">
+    <div
+      className="min-h-screen flex items-center justify-center p-6 transition-colors duration-300"
+      style={{ background: 'var(--color-bg)' }}
+    >
       <div className="w-full max-w-sm">
-        <div className="bg-white dark:bg-slate-800 rounded-[2rem] border border-slate-100 dark:border-slate-700 shadow-[0_8px_40px_rgb(0,0,0,0.06)] dark:shadow-[0_8px_40px_rgb(0,0,0,0.3)] p-10 text-center space-y-6">
+        <div
+          className="glass-heavy rounded-[2rem] p-10 text-center space-y-6"
+          style={{ border: '1px solid var(--sur-10)' }}
+        >
 
           {/* Avatar or fallback icon */}
           <div className="flex justify-center">
             {cached?.picture ? (
               <div className="relative">
                 <img src={cached.picture} alt="" className="w-16 h-16 rounded-2xl object-cover" referrerPolicy="no-referrer" />
-                <div className="absolute -bottom-1.5 -right-1.5 w-6 h-6 bg-slate-100 dark:bg-slate-700 rounded-lg flex items-center justify-center shadow-sm">
-                  <WifiOff className="w-3 h-3 text-slate-400" />
+                <div
+                  className="absolute -bottom-1.5 -right-1.5 w-6 h-6 rounded-lg flex items-center justify-center"
+                  style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-10)' }}
+                >
+                  <WifiOff className="w-3 h-3" style={{ color: 'var(--color-text-muted)' }} />
                 </div>
               </div>
             ) : (
-              <div className="w-16 h-16 bg-slate-100 dark:bg-slate-700 rounded-2xl flex items-center justify-center">
-                <WifiOff className="w-7 h-7 text-slate-400" />
+              <div
+                className="w-16 h-16 rounded-2xl flex items-center justify-center"
+                style={{ background: 'var(--sur-6)' }}
+              >
+                <WifiOff className="w-7 h-7" style={{ color: 'var(--color-text-muted)' }} />
               </div>
             )}
           </div>
 
           {/* Greeting */}
           <div className="space-y-1.5">
-            <h1 className="text-xl font-black text-slate-900 dark:text-white tracking-tight">
+            <h1 className="text-xl font-black tracking-tight" style={{ color: 'var(--color-text)' }}>
               {cached?.name ? `Hi, ${cached.name.split(' ')[0]}` : 'You\'re offline'}
             </h1>
-            <p className="text-sm text-slate-400">Verify to continue with cached data</p>
+            <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>Verify to continue with cached data</p>
           </div>
 
           {/* Status area */}
           {status === 'verifying' && (
-            <div className="flex items-center justify-center gap-2 text-sm text-slate-400 py-1">
+            <div className="flex items-center justify-center gap-2 text-sm py-1" style={{ color: 'var(--color-text-muted)' }}>
               <svg className="w-4 h-4 animate-spin flex-shrink-0" viewBox="0 0 24 24" fill="none">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
@@ -133,30 +152,32 @@ export function OfflineUnlockScreen({ onUnlock, onSignInInstead }) {
           )}
 
           {status === 'idle' && (
-            <p className="text-xs text-slate-300 dark:text-slate-600 py-1">
+            <p className="text-xs py-1" style={{ color: 'var(--sur-20)' }}>
               Use Face ID or fingerprint to continue
             </p>
           )}
 
           {status === 'failed' && (
             <div className="space-y-3">
-              <p className="text-sm text-rose-500">Biometric verification failed</p>
+              <p className="text-sm" style={{ color: 'var(--color-danger)' }}>Biometric verification failed</p>
               <button
                 onClick={attempt}
-                className="w-full py-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl text-sm font-bold active:scale-[0.97] transition-all"
+                className="w-full py-3 rounded-2xl text-sm font-bold text-white active:scale-[0.97] transition-all"
+                style={{ background: 'var(--color-text)' }}
               >
                 Try again
               </button>
               <button
                 onClick={onSignInInstead}
-                className="w-full py-2 text-sm text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                className="w-full py-2 text-sm transition-colors"
+                style={{ color: 'var(--color-text-muted)' }}
               >
                 Sign in with Google instead
               </button>
             </div>
           )}
 
-          <p className="text-[11px] text-slate-300 dark:text-slate-600">
+          <p className="text-[11px]" style={{ color: 'var(--sur-20)' }}>
             Read-only · Edits sync when reconnected
           </p>
         </div>
