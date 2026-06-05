@@ -43,8 +43,8 @@
 
   /* Text hierarchy */
   --color-text:           oklch(94% 0.004 var(--accent-hue));
-  --color-text-secondary: oklch(58% 0.005 var(--accent-hue));
-  --color-text-muted:     oklch(40% 0.004 var(--accent-hue));
+  --color-text-secondary: oklch(68% 0.005 var(--accent-hue));
+  --color-text-muted:     oklch(56% 0.005 var(--accent-hue));
 
   /* Accent */
   --color-accent:        oklch(65% 0.18 var(--accent-hue));
@@ -84,16 +84,16 @@
      In dark mode: white-on-dark (light overlays that read against dark bg).
      Override to dark-on-light in :root:not(.dark) below.                    */
   --sur-2:  oklch(100% 0 0 /  2%);
-  --sur-3:  oklch(100% 0 0 /  3%);
-  --sur-4:  oklch(100% 0 0 /  4%);
-  --sur-5:  oklch(100% 0 0 /  5%);
-  --sur-6:  oklch(100% 0 0 /  6%);
-  --sur-8:  oklch(100% 0 0 /  8%);
-  --sur-10: oklch(100% 0 0 / 10%);
-  --sur-12: oklch(100% 0 0 / 12%);
-  --sur-15: oklch(100% 0 0 / 15%);
-  --sur-20: oklch(100% 0 0 / 20%);
-  --sur-25: oklch(100% 0 0 / 25%);
+  --sur-3:  oklch(100% 0 0 /  4%);
+  --sur-4:  oklch(100% 0 0 /  6%);
+  --sur-5:  oklch(100% 0 0 /  7%);
+  --sur-6:  oklch(100% 0 0 /  8%);
+  --sur-8:  oklch(100% 0 0 / 12%);
+  --sur-10: oklch(100% 0 0 / 15%);
+  --sur-12: oklch(100% 0 0 / 18%);
+  --sur-15: oklch(100% 0 0 / 22%);
+  --sur-20: oklch(100% 0 0 / 28%);
+  --sur-25: oklch(100% 0 0 / 34%);
 }
 
 /* ── Light mode overrides ─────────────────────────────────────────────────── */
