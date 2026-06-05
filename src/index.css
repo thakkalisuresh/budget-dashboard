@@ -2,6 +2,35 @@
 @import "tailwindcss";
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║  Fundient Design System — redesign/v2                                   ║
+ * ║                                                                          ║
+ * ║  THEMING MODEL                                                           ║
+ * ║  • All colors derived from --accent-hue (OKLCH hue, 0–360).             ║
+ * ║  • Dark mode (default): .dark class on <html>.                           ║
+ * ║  • Light mode: absence of .dark — :root:not(.dark) overrides tokens.    ║
+ * ║                                                                          ║
+ * ║  SURFACE OVERLAYS  var(--sur-N)                                          ║
+ * ║  Replace oklch(100% 0 0 / N%) / oklch(0% 0 0 / N%) everywhere.          ║
+ * ║  Dark:  white-on-dark  (subtle white layer reads on dark bg).            ║
+ * ║  Light: dark-on-light  (same opacity, dark layer reads on white bg).     ║
+ * ║  Never use raw oklch(100%…) or oklch(0%…) in component inline styles.   ║
+ * ║                                                                          ║
+ * ║  GLASS SHELLS  .glass-heavy / .glass-medium / .glass-light              ║
+ * ║  Apply to dialogs, panels, header, bottom sheets. The --glass-bg-*      ║
+ * ║  tokens and --glass-specular flip automatically in light mode.           ║
+ * ║                                                                          ║
+ * ║  COMPONENT PATTERNS                                                      ║
+ * ║  • Input bg:   var(--sur-5) / border: 1px solid var(--sur-12)           ║
+ * ║  • Card bg:    var(--color-surface) / border: 1px solid var(--sur-8)    ║
+ * ║  • Hover row:  hover:bg-[var(--sur-5)]                                  ║
+ * ║  • Divider:    borderTop: '1px solid var(--sur-8)'                      ║
+ * ║  • Primary btn: background: var(--color-accent)                         ║
+ * ║  • Cancel btn:  background: var(--sur-8)                                ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ */
+
 /* ── OKLCH Design Tokens — redesign/v2 ────────────────────────────────────── */
 :root {
   /* Single hue knob — 0–360, user-chosen in Settings (Phase 19).

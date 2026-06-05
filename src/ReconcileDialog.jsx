@@ -909,7 +909,7 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
                         <p className="text-sm font-bold truncate" style={{ color: 'var(--color-text-secondary)' }}>{tx.matchedVendor || tx.vendor}</p>
                         <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{tx.matchedCategory} · {formatDate(tx.date)}</p>
                       </div>
-                      <span className="text-sm font-black text-slate-500 tabular-nums">${tx.amount.toFixed(2)}</span>
+                      <span className="text-sm font-black tabular-nums" style={{ color: 'var(--color-text-muted)' }}>${tx.amount.toFixed(2)}</span>
                     </div>
                   ))}
                 </ReviewSection>
