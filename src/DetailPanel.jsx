@@ -81,11 +81,19 @@ function VendorLogo({ name, size = 22, onEditDomain }) {
   const domain = resolveVendorDomain(name);
   const letter = (name || '?')[0].toUpperCase();
 
+  const AVATAR_COLORS = [
+    'oklch(60% 0.19 265)', // indigo
+    'oklch(68% 0.17 162)', // emerald
+    'oklch(76% 0.16 75)',  // amber
+    'oklch(60% 0.22 25)',  // rose
+    'oklch(62% 0.20 295)', // violet
+    'oklch(66% 0.17 220)', // sky
+  ];
   const avatar = (
     <div
       onClick={onEditDomain}
-      className={`rounded-lg flex items-center justify-center text-white font-black flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity ${['bg-indigo-500','bg-emerald-500','bg-amber-500','bg-rose-500','bg-violet-500','bg-sky-500'][letter.charCodeAt(0) % 6]}`}
-      style={{ width: size, height: size, fontSize: size * 0.5 }}
+      className="rounded-lg flex items-center justify-center text-white font-black flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
+      style={{ width: size, height: size, fontSize: size * 0.5, background: AVATAR_COLORS[letter.charCodeAt(0) % 6] }}
       title="Tap to set vendor logo"
     >
       {letter}
@@ -158,7 +166,8 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
     setNoteTagInput('');
   };
 
-  const inputCls = "bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-xl px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/40 w-full";
+  const inputCls = "rounded-xl px-3 py-1.5 text-sm outline-none w-full";
+  const inputStyle = { background: 'var(--sur-5)', border: '1px solid var(--sur-15)', color: 'var(--color-text)' };
 
   const withSave = async (fn) => {
     setSaving(true);
@@ -242,26 +251,29 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/30 dark:bg-black/50 z-[55] backdrop-blur-sm"
+        className="fixed inset-0 z-[55] animate-overlay-in"
+        style={{ background: 'oklch(0% 0 0 / 50%)', backdropFilter: 'blur(4px)' }}
         onClick={onClose}
       />
 
       {/* Panel */}
-      <div className="fixed right-0 top-0 h-full w-full max-w-sm bg-white dark:bg-slate-800 z-[60] shadow-2xl flex flex-col">
+      <div className="fixed right-0 top-0 h-full w-full max-w-sm glass-heavy z-[60] flex flex-col"
+        style={{ borderLeft: '1px solid var(--sur-8)' }}>
 
         {/* Header — padded below notch */}
-        <div className="p-6 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center flex-shrink-0"
-          style={{ paddingTop: 'calc(env(safe-area-inset-top) + 1.5rem)' }}
+        <div className="p-6 flex justify-between items-center flex-shrink-0"
+          style={{ paddingTop: 'calc(env(safe-area-inset-top) + 1.5rem)', borderBottom: '1px solid var(--sur-8)' }}
         >
           <div>
-            <p className="text-lg font-black text-slate-800 dark:text-slate-100">{expense}</p>
-            <p className="text-xs text-slate-400 mt-0.5">Itemised breakdown</p>
+            <p className="text-lg font-black" style={{ color: 'var(--color-text)' }}>{expense}</p>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>Itemised breakdown</p>
           </div>
           <div className="flex items-center gap-2">
             {onAddExpense && (
               <button
                 onClick={onAddExpense}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-colors shadow-sm"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors"
+                style={{ background: 'var(--color-accent)', color: 'white' }}
               >
                 <Plus className="w-3.5 h-3.5" />
                 Add
@@ -269,7 +281,8 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
             )}
             <button
               onClick={onClose}
-              className="p-2 rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+              className="p-2 rounded-xl transition-colors hover:bg-[var(--sur-5)]"
+              style={{ color: 'var(--color-text-muted)' }}
             >
               <X className="w-5 h-5" />
             </button>
@@ -278,8 +291,9 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
 
         {/* Error banner */}
         {error && (
-          <div className="mx-4 mt-3 px-4 py-2.5 bg-rose-50 dark:bg-rose-900/20 border border-rose-100 dark:border-rose-800/40 rounded-2xl">
-            <p className="text-xs text-rose-600 dark:text-rose-400 font-medium">{error}</p>
+          <div className="mx-4 mt-3 px-4 py-2.5 rounded-2xl"
+            style={{ background: 'oklch(62% 0.22 25 / 10%)', border: '1px solid oklch(62% 0.22 25 / 20%)' }}>
+            <p className="text-xs font-medium" style={{ color: 'var(--color-danger)' }}>{error}</p>
           </div>
         )}
 
@@ -289,185 +303,159 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
           {loading && (
             <div className="space-y-3 p-2">
               {[...Array(5)].map((_, i) => (
-                <div key={i} className="h-12 bg-slate-100 dark:bg-slate-700 rounded-2xl animate-pulse" />
+                <div key={i} className="h-12 rounded-2xl animate-pulse" style={{ background: 'var(--sur-6)' }} />
               ))}
             </div>
           )}
 
           {!loading && rows?.length === 0 && (
-            <p className="text-sm text-slate-400 text-center py-12">No transactions found</p>
+            <p className="text-sm text-center py-12" style={{ color: 'var(--color-text-muted)' }}>No transactions found</p>
           )}
 
           {!loading && rows?.map((row) => (
-            <div key={row.rowIndex} className="rounded-2xl bg-slate-50 dark:bg-slate-700/40 overflow-hidden">
+            <div key={row.rowIndex} className="rounded-2xl overflow-hidden"
+              style={{ background: 'var(--sur-4)', border: '1px solid var(--sur-8)' }}>
 
               {/* ── Vendor name row ── */}
               {deletingVendor === row.rowIndex ? (
-                // Layer 2: confirm full delete
-                <div className="flex items-center gap-2 px-4 py-2.5 bg-rose-50 dark:bg-rose-900/30 border-b border-rose-100 dark:border-rose-800/40">
-                  <AlertTriangle className="w-4 h-4 text-rose-500 flex-shrink-0" />
-                  <span className="text-xs font-bold text-rose-700 dark:text-rose-300 flex-1 min-w-0 truncate">
+                <div className="flex items-center gap-2 px-4 py-2.5"
+                  style={{ background: 'oklch(62% 0.22 25 / 12%)', borderBottom: '1px solid oklch(62% 0.22 25 / 20%)' }}>
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-danger)' }} />
+                  <span className="text-xs font-bold flex-1 min-w-0 truncate" style={{ color: 'var(--color-danger)' }}>
                     Delete <span className="font-black">{row.description}</span> + all {row.amounts.length} transaction{row.amounts.length !== 1 ? 's' : ''}?
                   </span>
-                  <button
-                    onClick={() => setDeletingVendor(null)}
-                    disabled={saving}
-                    className="px-2.5 py-1 rounded-lg text-xs font-bold text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors flex-shrink-0"
-                  >
+                  <button onClick={() => setDeletingVendor(null)} disabled={saving}
+                    className="px-2.5 py-1 rounded-lg text-xs font-bold transition-colors flex-shrink-0"
+                    style={{ color: 'var(--color-text-muted)' }}>
                     Cancel
                   </button>
-                  <button
-                    onClick={() => deleteAllAmounts(row)}
-                    disabled={saving}
-                    className="px-2.5 py-1 rounded-lg text-xs font-black text-white bg-rose-500 hover:bg-rose-600 transition-colors flex-shrink-0 disabled:opacity-50"
-                  >
+                  <button onClick={() => deleteAllAmounts(row)} disabled={saving}
+                    className="px-2.5 py-1 rounded-lg text-xs font-black text-white transition-colors flex-shrink-0 disabled:opacity-50"
+                    style={{ background: 'var(--color-danger)' }}>
                     {saving ? '…' : 'Delete All'}
                   </button>
                 </div>
               ) : editingVendor?.rowIndex === row.rowIndex ? (
-                // Editing vendor name (+ date for v2)
-                <div className="flex flex-col border-b border-slate-100 dark:border-slate-700/50">
+                <div className="flex flex-col" style={{ borderBottom: '1px solid var(--sur-8)' }}>
                   <div className="flex items-center gap-2 px-4 py-2.5">
-                    <input
-                      className={inputCls}
+                    <input className={inputCls} style={inputStyle}
                       value={editingVendor.value}
                       onChange={e => setEditingVendor(ev => ({ ...ev, value: e.target.value }))}
                       onKeyDown={e => e.key === 'Enter' && saveVendorName(row)}
-                      autoFocus
-                      disabled={saving}
-                    />
-                    <button
-                      onClick={() => saveVendorName(row)}
-                      disabled={saving}
-                      className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex-shrink-0"
-                    >
+                      autoFocus disabled={saving} />
+                    <button onClick={() => saveVendorName(row)} disabled={saving}
+                      className="p-1.5 rounded-lg transition-colors flex-shrink-0"
+                      style={{ color: 'var(--color-success)' }}>
                       <Check className="w-4 h-4" />
                     </button>
-                    <button
-                      onClick={() => setEditingVendor(null)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex-shrink-0"
-                    >
+                    <button onClick={() => setEditingVendor(null)}
+                      className="p-1.5 rounded-lg transition-colors flex-shrink-0"
+                      style={{ color: 'var(--color-text-muted)' }}>
                       <X className="w-4 h-4" />
                     </button>
                   </div>
-                  {/* Date field — v2 only */}
                   {row._v2 && (
                     <div className="px-4 pb-2.5">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Date</p>
-                      <input
-                        type="date"
-                        value={editingVendor.date ?? row.date ?? ''}
+                      <p className="text-[10px] font-black uppercase tracking-widest mb-1" style={{ color: 'var(--color-text-muted)' }}>Date</p>
+                      <input type="date" value={editingVendor.date ?? row.date ?? ''}
                         onChange={e => setEditingVendor(ev => ({ ...ev, date: e.target.value }))}
-                        className={inputCls}
-                        disabled={saving}
-                      />
+                        className={inputCls} style={inputStyle} disabled={saving} />
                     </div>
                   )}
-                  {/* Non-monthly toggle */}
                   <label className="flex items-center gap-2.5 px-4 pb-3 cursor-pointer group">
-                    <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${editingVendor.isNonMonthly ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700'}`}
+                    <div className="w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors"
+                      style={editingVendor.isNonMonthly
+                        ? { background: 'var(--color-accent)', borderColor: 'var(--color-accent)' }
+                        : { background: 'var(--sur-5)', borderColor: 'var(--sur-20)' }}
                       onClick={() => setEditingVendor(ev => ({ ...ev, isNonMonthly: !ev.isNonMonthly }))}>
                       {editingVendor.isNonMonthly && <svg className="w-2.5 h-2.5 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                     </div>
-                    <span
-                      onClick={() => setEditingVendor(ev => ({ ...ev, isNonMonthly: !ev.isNonMonthly }))}
-                      className="text-xs font-bold text-slate-500 dark:text-slate-400 group-hover:text-indigo-500 dark:group-hover:text-indigo-400 transition-colors select-none">
+                    <span onClick={() => setEditingVendor(ev => ({ ...ev, isNonMonthly: !ev.isNonMonthly }))}
+                      className="text-xs font-bold transition-colors select-none" style={{ color: 'var(--color-text-muted)' }}>
                       One-time / non-monthly expense
                     </span>
                   </label>
                 </div>
               ) : (
-                // Normal vendor row
-                <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-100 dark:border-slate-700/50">
+                <div className="flex items-center gap-2 px-4 py-2.5" style={{ borderBottom: '1px solid var(--sur-6)' }}>
                   <VendorLogo
-                    name={row.description}
-                    size={22}
+                    name={row.description} size={22}
                     onEditDomain={() => setEditingDomain({ vendorName: row.description, draft: resolveVendorDomain(row.description) || '' })}
                   />
                   <div className="flex-1 min-w-0">
-                    <span className="text-sm font-black text-slate-700 dark:text-slate-200 block truncate">
+                    <span className="text-sm font-black block truncate" style={{ color: 'var(--color-text)' }}>
                       {row.description}
                     </span>
                     {row._v2 && (
-                      <span
-                        onClick={() => {
+                      <span onClick={() => {
                           const nm = nonMonthlyVendors.includes(row.description.toLowerCase());
                           setEditingVendor({ rowIndex: row.rowIndex, value: row.description, date: row.date || todayIso(), isNonMonthly: nm, wasNonMonthly: nm });
                         }}
-                        className={`text-[10px] cursor-pointer ${row.date ? 'text-slate-400' : 'text-indigo-400 font-bold'}`}
-                      >
+                        className="text-[10px] cursor-pointer"
+                        style={{ color: row.date ? 'var(--color-text-muted)' : 'var(--color-accent-text)', fontWeight: row.date ? undefined : 'bold' }}>
                         {row.date ? formatTxDate(row.date) : '— tap to add date'}
                       </span>
                     )}
-                    {/* Card badge — editable on V2 rows when cards list is available */}
                     {row._v2 && cards.length > 0 && (
                       editingCardRow?.rowIndex === row.rowIndex ? (
                         <div className="flex items-center gap-1 mt-0.5">
-                          <select
-                            autoFocus
-                            value={cardDraft}
-                            onChange={e => setCardDraft(e.target.value)}
-                            className="text-[10px] font-bold rounded-lg border border-indigo-300 dark:border-indigo-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-                          >
+                          <select autoFocus value={cardDraft} onChange={e => setCardDraft(e.target.value)}
+                            className="text-[10px] font-bold rounded-lg px-1.5 py-0.5 outline-none"
+                            style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-20)', color: 'var(--color-text)' }}>
                             <option value="">— Remove card —</option>
                             {cards.filter(c => !c.toLowerCase().includes('debit') && !c.toLowerCase().includes('bank') && c.toLowerCase() !== 'cash').map(c => (
                               <option key={c} value={c}>{c}</option>
                             ))}
                           </select>
-                          <button
-                            onClick={() => withSave(async () => {
+                          <button onClick={() => withSave(async () => {
                               const uuid = row.uuids?.[0] || '';
                               await updatePaymentMethod(expense, row.rowIndex, cardDraft, accessToken, sheetId);
                               if (uuid) await updateHistoryPaymentMethod(sheetId, accessToken, uuid, cardDraft);
-                              setEditingCardRow(null);
-                              onRefresh?.();
-                            })}
-                            disabled={saving}
-                            className="p-0.5 rounded text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 transition-colors"
-                          >
+                              setEditingCardRow(null); onRefresh?.();
+                            })} disabled={saving}
+                            className="p-0.5 rounded text-white disabled:opacity-40 transition-colors"
+                            style={{ background: 'var(--color-accent)' }}>
                             <Check className="w-3 h-3" />
                           </button>
-                          <button
-                            onClick={() => setEditingCardRow(null)}
-                            className="p-0.5 rounded text-slate-400 hover:text-slate-600 transition-colors"
-                          >
+                          <button onClick={() => setEditingCardRow(null)}
+                            className="p-0.5 rounded transition-colors" style={{ color: 'var(--color-text-muted)' }}>
                             <X className="w-3 h-3" />
                           </button>
                         </div>
                       ) : (
                         <div className="flex items-center gap-1 mt-0.5">
                           {row.paymentMethod ? (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-full">
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                              style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
                               💳 {row.paymentMethod}
                             </span>
                           ) : (
-                            <span className="text-[10px] text-slate-300 dark:text-slate-600 italic">No card</span>
+                            <span className="text-[10px] italic" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>No card</span>
                           )}
-                          <button
-                            onClick={() => { setEditingCardRow({ rowIndex: row.rowIndex, uuid: row.uuids?.[0] || '' }); setCardDraft(row.paymentMethod || ''); }}
-                            className="p-0.5 rounded text-slate-300 dark:text-slate-600 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
-                            title="Edit card"
-                          >
+                          <button onClick={() => { setEditingCardRow({ rowIndex: row.rowIndex, uuid: row.uuids?.[0] || '' }); setCardDraft(row.paymentMethod || ''); }}
+                            className="p-0.5 rounded transition-colors" title="Edit card"
+                            style={{ color: 'var(--color-text-muted)' }}>
                             <CreditCard className="w-3 h-3" />
                           </button>
                         </div>
                       )
                     )}
                     {!row._v2 && row.paymentMethod && (
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-full">
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                        style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
                         💳 {row.paymentMethod}
                       </span>
                     )}
                     {row.bookingMethod === 'direct' && (
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded-full">
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                        style={{ background: 'oklch(78% 0.16 75 / 15%)', color: 'oklch(78% 0.16 75)' }}>
                         ✈️ Direct booking · 4x UR
                       </span>
                     )}
                   </div>
-                  <span className="text-sm font-black text-slate-500 dark:text-slate-400 tabular-nums ml-2 flex-shrink-0">
+                  <span className="text-sm font-black tabular-nums ml-2 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
                     {currencySymbol}{row.amounts.reduce((a, b) => a + b, 0).toFixed(2)}
                   </span>
-                  {/* Non-monthly quick-tap toggle */}
                   <button
                     onClick={() => {
                       const isNm = nonMonthlyVendors.includes(row.description.toLowerCase());
@@ -480,30 +468,21 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                     }}
                     disabled={saving}
                     title={nonMonthlyVendors.includes(row.description.toLowerCase()) ? 'Remove one-time flag' : 'Mark as one-time expense'}
-                    className={`p-1.5 rounded-lg transition-colors flex-shrink-0 ${
-                      nonMonthlyVendors.includes(row.description.toLowerCase())
-                        ? 'text-indigo-500 bg-indigo-50 dark:bg-indigo-900/30'
-                        : 'text-slate-300 dark:text-slate-600 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30'
-                    }`}
+                    className="p-1.5 rounded-lg transition-colors flex-shrink-0"
+                    style={nonMonthlyVendors.includes(row.description.toLowerCase())
+                      ? { color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)' }
+                      : { color: 'var(--color-text-muted)' }}
                   >
                     <Repeat className="w-3.5 h-3.5" />
                   </button>
-                  <button
-                    onClick={() => {
-                      const nm = nonMonthlyVendors.includes(row.description.toLowerCase());
-                      setEditingVendor({ rowIndex: row.rowIndex, value: row.description, isNonMonthly: nm, wasNonMonthly: nm });
-                    }}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors flex-shrink-0"
-                    title="Rename vendor"
-                  >
+                  <button onClick={() => { const nm = nonMonthlyVendors.includes(row.description.toLowerCase()); setEditingVendor({ rowIndex: row.rowIndex, value: row.description, isNonMonthly: nm, wasNonMonthly: nm }); }}
+                    className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Rename vendor"
+                    style={{ color: 'var(--color-text-muted)' }}>
                     <Edit2 className="w-3.5 h-3.5" />
                   </button>
-                  {/* Layer 1: first delete click */}
-                  <button
-                    onClick={() => { setEditingAmount(null); setDeletingVendor(row.rowIndex); }}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors flex-shrink-0"
-                    title="Delete entire vendor"
-                  >
+                  <button onClick={() => { setEditingAmount(null); setDeletingVendor(row.rowIndex); }}
+                    className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Delete entire vendor"
+                    style={{ color: 'var(--color-text-muted)' }}>
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -511,70 +490,57 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
 
               {/* Individual amounts */}
               {deletingVendor !== row.rowIndex && row.amounts.map((amt, amtIndex) => (
-                <div key={amtIndex} className="flex items-center gap-2 px-4 py-2 hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors group">
-
+                <div key={amtIndex} className="flex items-center gap-2 px-4 py-2 transition-colors group hover:bg-[var(--sur-5)]">
                   {editingAmount?.rowIndex === row.rowIndex && editingAmount?.amtIndex === amtIndex ? (
                     <>
-                      <span className="text-slate-400 text-sm">{currencySymbol}</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0.01"
-                        className={`${inputCls} w-28`}
+                      <span className="text-sm" style={{ color: 'var(--color-text-muted)' }}>{currencySymbol}</span>
+                      <input type="number" step="0.01" min="0.01"
+                        className={`${inputCls} w-28`} style={inputStyle}
                         value={editingAmount.value}
                         onChange={e => setEditingAmount(ea => ({ ...ea, value: e.target.value }))}
                         onKeyDown={e => e.key === 'Enter' && saveAmount(row)}
-                        autoFocus
-                        disabled={saving}
-                      />
-                      <button
-                        onClick={() => saveAmount(row)}
-                        disabled={saving}
-                        className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition-colors flex-shrink-0"
-                      >
+                        autoFocus disabled={saving} />
+                      <button onClick={() => saveAmount(row)} disabled={saving}
+                        className="p-1.5 rounded-lg transition-colors flex-shrink-0"
+                        style={{ color: 'var(--color-success)' }}>
                         <Check className="w-4 h-4" />
                       </button>
-                      <button
-                        onClick={() => setEditingAmount(null)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors flex-shrink-0"
-                      >
+                      <button onClick={() => setEditingAmount(null)}
+                        className="p-1.5 rounded-lg transition-colors flex-shrink-0"
+                        style={{ color: 'var(--color-text-muted)' }}>
                         <X className="w-4 h-4" />
                       </button>
                     </>
                   ) : (
                     <>
-                      <span className="text-xs text-slate-400 w-4 text-right flex-shrink-0">
+                      <span className="text-xs w-4 text-right flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
                         {amtIndex + 1}.
                       </span>
-                      <span className="text-sm font-medium text-slate-700 dark:text-slate-300 tabular-nums flex-1">
+                      <span className="text-sm font-medium tabular-nums flex-1" style={{ color: 'var(--color-text)' }}>
                         {currencySymbol}{amt.toFixed(2)}
                       </span>
                       <div className="flex gap-1 items-center opacity-0 group-hover:opacity-100 transition-opacity">
-                        {/* Note icon — always visible if note exists */}
                         {(() => {
                           const key  = txNoteKey(row.description, amt);
                           const data = transactionNotes[key];
                           const has  = data?.note || data?.tags?.length > 0;
                           return (
-                            <button
-                              onClick={() => openNoteDialog(row.description, amt)}
-                              className={`p-1.5 rounded-lg transition-colors ${has ? 'text-violet-500 opacity-100' : 'text-slate-400 hover:text-violet-500 hover:bg-violet-50 dark:hover:bg-violet-900/30'}`}
-                              title={has ? 'View/edit note' : 'Add note / tag'}
-                            >
+                            <button onClick={() => openNoteDialog(row.description, amt)}
+                              className="p-1.5 rounded-lg transition-colors"
+                              style={{ color: has ? 'var(--color-accent-text)' : 'var(--color-text-muted)', opacity: has ? 1 : undefined }}
+                              title={has ? 'View/edit note' : 'Add note / tag'}>
                               <MessageSquare className="w-3.5 h-3.5" />
                             </button>
                           );
                         })()}
-                        <button
-                          onClick={() => setEditingAmount({ rowIndex: row.rowIndex, amtIndex, value: String(amt) })}
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
-                        >
+                        <button onClick={() => setEditingAmount({ rowIndex: row.rowIndex, amtIndex, value: String(amt) })}
+                          className="p-1.5 rounded-lg transition-colors hover:bg-[var(--sur-5)]"
+                          style={{ color: 'var(--color-text-muted)' }}>
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
-                        <button
-                          onClick={() => deleteAmount(row, amtIndex)}
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors"
-                        >
+                        <button onClick={() => deleteAmount(row, amtIndex)}
+                          className="p-1.5 rounded-lg transition-colors hover:bg-[var(--sur-5)]"
+                          style={{ color: 'var(--color-text-muted)' }}>
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
@@ -588,11 +554,11 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
 
         {/* Footer total — padded above home indicator */}
         {!loading && rows && rows.length > 0 && (
-          <div className="p-6 border-t border-slate-100 dark:border-slate-700 flex justify-between items-center flex-shrink-0"
-            style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)' }}
+          <div className="p-6 flex justify-between items-center flex-shrink-0"
+            style={{ borderTop: '1px solid var(--sur-8)', paddingBottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)' }}
           >
-            <span className="text-xs font-black uppercase tracking-widest text-slate-400">Total</span>
-            <span className="text-2xl font-black text-slate-900 dark:text-slate-100 tabular-nums">
+            <span className="text-xs font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>Total</span>
+            <span className="text-2xl font-black tabular-nums" style={{ color: 'var(--color-text)' }}>
               {currencySymbol}{total.toFixed(2)}
             </span>
           </div>
@@ -601,51 +567,59 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
       {/* Transaction note dialog */}
       {noteDialog && (
         <>
-          <div className="fixed inset-0 bg-black/40 z-[60] backdrop-blur-sm" onClick={() => setNoteDialog(null)} />
+          <div className="fixed inset-0 z-[60] animate-overlay-in" style={{ background: 'oklch(0% 0 0 / 50%)', backdropFilter: 'blur(4px)' }} onClick={() => setNoteDialog(null)} />
           <div className="fixed inset-0 z-[61] flex items-end sm:items-center justify-center sm:p-4">
-            <div className="bg-white dark:bg-slate-800 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl w-full sm:max-w-sm border border-slate-100 dark:border-slate-700">
-              <div className="w-10 h-1 bg-slate-200 dark:bg-slate-600 rounded-full mx-auto mt-3 mb-1 sm:hidden" />
-              <div className="px-6 pt-5 pb-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+            <div className="glass-heavy animate-sheet-up rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm"
+              style={{ border: '1px solid var(--sur-10)', borderBottom: 'none' }}>
+              <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-1 sm:hidden" style={{ background: 'var(--sur-20)' }} />
+              <div className="px-6 pt-5 pb-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--sur-8)' }}>
                 <div>
-                  <p className="text-sm font-black text-slate-800 dark:text-slate-100">Note / Tags</p>
-                  <p className="text-xs text-slate-400 mt-0.5">{noteDialog.vendor} · {currencySymbol}{Number(noteDialog.amount).toFixed(2)}</p>
+                  <p className="text-sm font-black" style={{ color: 'var(--color-text)' }}>Note / Tags</p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{noteDialog.vendor} · {currencySymbol}{Number(noteDialog.amount).toFixed(2)}</p>
                 </div>
-                <button onClick={() => setNoteDialog(null)} className="p-1.5 rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
+                <button onClick={() => setNoteDialog(null)} className="p-1.5 rounded-xl transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}>
                   <X className="w-4 h-4" />
                 </button>
               </div>
               <div className="px-6 py-4 space-y-3">
                 <textarea rows={3} placeholder="Add a note…" value={noteDraft.note}
                   onChange={e => setNoteDraft(d => ({ ...d, note: e.target.value }))}
-                  className="w-full bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-2xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/60 resize-none placeholder:text-slate-400" />
+                  className="w-full rounded-2xl px-4 py-2.5 text-sm outline-none resize-none"
+                  style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }} />
                 <div className="flex gap-2">
                   <input type="text" placeholder="Add tag (Enter)"
                     value={noteTagInput} onChange={e => setNoteTagInput(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addNoteTag(); } }}
-                    className="flex-1 bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-2xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500/60 placeholder:text-slate-400" />
-                  <button onClick={addNoteTag} className="px-3 py-2 bg-indigo-600 text-white text-xs font-bold rounded-2xl hover:bg-indigo-700 transition-colors">Add</button>
+                    className="flex-1 rounded-2xl px-4 py-2 text-sm outline-none"
+                    style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }} />
+                  <button onClick={addNoteTag} className="px-3 py-2 text-white text-xs font-bold rounded-2xl transition-colors"
+                    style={{ background: 'var(--color-accent)' }}>Add</button>
                 </div>
                 {noteDraft.tags.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {noteDraft.tags.map(tag => (
                       <span key={tag} onClick={() => setNoteDraft(d => ({ ...d, tags: d.tags.filter(t => t !== tag) }))}
-                        className="flex items-center gap-1 text-xs font-bold px-2.5 py-1 bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 rounded-full cursor-pointer">
+                        className="flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full cursor-pointer"
+                        style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
                         #{tag} ×
                       </span>
                     ))}
                   </div>
                 )}
               </div>
-              <div className="px-6 pb-6 flex gap-2" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)' }}>
+              <div className="px-6 flex gap-2" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)' }}>
                 {(noteDialog.data?.note || noteDialog.data?.tags?.length > 0) && (
-                  <button onClick={deleteNoteDialog} className="px-4 py-3 rounded-2xl text-sm font-bold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-900/20 hover:bg-rose-100 dark:hover:bg-rose-900/30 transition-colors">
+                  <button onClick={deleteNoteDialog} className="px-4 py-3 rounded-2xl text-sm font-bold transition-colors"
+                    style={{ color: 'var(--color-danger)', background: 'oklch(62% 0.22 25 / 10%)' }}>
                     Delete
                   </button>
                 )}
-                <button onClick={() => setNoteDialog(null)} className="flex-1 py-3 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">
+                <button onClick={() => setNoteDialog(null)} className="flex-1 py-3 rounded-2xl text-sm font-bold transition-colors"
+                  style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}>
                   Cancel
                 </button>
-                <button onClick={saveNoteDialog} className="flex-1 py-3 rounded-2xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-all">
+                <button onClick={saveNoteDialog} className="flex-1 py-3 rounded-2xl text-sm font-bold text-white transition-all"
+                  style={{ background: 'var(--color-accent)' }}>
                   Save
                 </button>
               </div>
@@ -657,54 +631,43 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
       {/* Domain edit modal */}
       {editingDomain && (
         <>
-          <div className="fixed inset-0 bg-black/40 z-[60] backdrop-blur-sm" onClick={() => setEditingDomain(null)} />
+          <div className="fixed inset-0 z-[60] animate-overlay-in" style={{ background: 'oklch(0% 0 0 / 50%)', backdropFilter: 'blur(4px)' }} onClick={() => setEditingDomain(null)} />
           <div className="fixed inset-0 z-[61] flex items-end sm:items-center justify-center sm:p-4">
-            <div className="bg-white dark:bg-slate-800 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl w-full sm:max-w-sm border border-slate-100 dark:border-slate-700">
-              <div className="w-10 h-1 bg-slate-200 dark:bg-slate-600 rounded-full mx-auto mt-3 mb-1 sm:hidden" />
-              <div className="px-6 pt-5 pb-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+            <div className="glass-heavy animate-sheet-up rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm"
+              style={{ border: '1px solid var(--sur-10)', borderBottom: 'none' }}>
+              <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-1 sm:hidden" style={{ background: 'var(--sur-20)' }} />
+              <div className="px-6 pt-5 pb-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--sur-8)' }}>
                 <div>
-                  <p className="text-sm font-black text-slate-800 dark:text-slate-100">Vendor Logo</p>
-                  <p className="text-xs text-slate-400 mt-0.5">{editingDomain.vendorName}</p>
+                  <p className="text-sm font-black" style={{ color: 'var(--color-text)' }}>Vendor Logo</p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{editingDomain.vendorName}</p>
                 </div>
-                <button onClick={() => setEditingDomain(null)} className="p-1.5 rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700">
+                <button onClick={() => setEditingDomain(null)} className="p-1.5 rounded-xl transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}>
                   <X className="w-4 h-4" />
                 </button>
               </div>
               <div className="px-6 py-5 space-y-3">
-                <p className="text-xs text-slate-500 dark:text-slate-400">Enter the website domain to use for the logo:</p>
-                <input
-                  type="text"
-                  value={editingDomain.draft}
+                <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Enter the website domain to use for the logo:</p>
+                <input type="text" value={editingDomain.draft}
                   onChange={e => setEditingDomain(d => ({ ...d, draft: e.target.value }))}
-                  placeholder="e.g. walmart.com"
-                  autoFocus
-                  className={inputCls}
-                />
+                  placeholder="e.g. walmart.com" autoFocus
+                  className={inputCls} style={inputStyle} />
                 {editingDomain.draft && (
-                  <div className="flex items-center gap-2 text-xs text-slate-400">
+                  <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
                     <span>Preview:</span>
-                    <img
-                      src={`https://www.google.com/s2/favicons?domain=${editingDomain.draft}&sz=64`}
-                      alt=""
-                      className="w-5 h-5 rounded object-contain"
-                      onError={e => e.target.style.display = 'none'}
-                    />
+                    <img src={`https://www.google.com/s2/favicons?domain=${editingDomain.draft}&sz=64`} alt=""
+                      className="w-5 h-5 rounded object-contain" onError={e => e.target.style.display = 'none'} />
                     <span>{editingDomain.draft}</span>
                   </div>
                 )}
               </div>
-              <div className="px-6 pb-6 flex gap-3" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)' }}>
-                <button onClick={() => setEditingDomain(null)} className="flex-1 py-3 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">
+              <div className="px-6 flex gap-3" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)' }}>
+                <button onClick={() => setEditingDomain(null)} className="flex-1 py-3 rounded-2xl text-sm font-bold transition-colors"
+                  style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}>
                   Cancel
                 </button>
-                <button
-                  onClick={() => {
-                    setCustomVendorDomain(editingDomain.vendorName, editingDomain.draft.trim());
-                    setEditingDomain(null);
-                    forceLogoRefresh(n => n + 1);
-                  }}
-                  className="flex-1 py-3 rounded-2xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-all"
-                >
+                <button onClick={() => { setCustomVendorDomain(editingDomain.vendorName, editingDomain.draft.trim()); setEditingDomain(null); forceLogoRefresh(n => n + 1); }}
+                  className="flex-1 py-3 rounded-2xl text-sm font-bold text-white transition-all"
+                  style={{ background: 'var(--color-accent)' }}>
                   Save
                 </button>
               </div>

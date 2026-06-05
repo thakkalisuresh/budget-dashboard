@@ -1,5 +1,5 @@
 import React from 'react';
-import { Minus, TrendingUp, TrendingDown } from 'lucide-react';
+import { TrendingUp, TrendingDown } from 'lucide-react';
 
 export function InsightCards({
   nonMonthlyItems, nonMonthlyTotal, balanceWithoutNonMonthly,
@@ -10,30 +10,36 @@ export function InsightCards({
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
       {/* Balance without one-time expenses */}
-      <div className="animate-enter bg-slate-900 dark:bg-slate-800 rounded-[1.25rem] p-5 sm:p-7 text-white border border-slate-800 dark:border-slate-700"
-        style={{ '--enter-delay': '60ms' }}
+      <div
+        className="animate-enter rounded-[1.25rem] p-5 sm:p-7"
+        style={{
+          '--enter-delay': '60ms',
+          background: 'var(--color-surface)',
+          border: '1px solid var(--sur-8)',
+        }}
       >
-        <p className="text-[10px] font-semibold text-slate-500 mb-4">
+        <p className="text-[10px] font-semibold mb-4" style={{ color: 'var(--color-text-muted)' }}>
           Balance excl. one-time expenses
         </p>
 
         {nonMonthlyItems.length > 0 ? (
           <>
-            <p className={`text-3xl font-black tabular-nums leading-none mb-4 ${
-              balanceWithoutNonMonthly < 0 ? 'text-rose-400' : 'text-white'
-            }`}>
+            <p
+              className="text-3xl font-black tabular-nums leading-none mb-4"
+              style={{ color: balanceWithoutNonMonthly < 0 ? 'var(--color-danger)' : 'var(--color-text)' }}
+            >
               {balanceWithoutNonMonthly < 0 ? '-' : ''}{currencySymbol}
               {Math.abs(balanceWithoutNonMonthly).toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </p>
-            <p className="text-xs text-slate-500 mb-3">
+            <p className="text-xs mb-3" style={{ color: 'var(--color-text-muted)' }}>
               {nonMonthlyItems.length} one-time purchase{nonMonthlyItems.length > 1 ? 's' : ''} removed
               ({currencySymbol}{nonMonthlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })})
             </p>
-            <div className="space-y-1.5 border-t border-slate-800 dark:border-slate-700 pt-3">
+            <div className="space-y-1.5 pt-3" style={{ borderTop: '1px solid var(--sur-8)' }}>
               {nonMonthlyItems.map((item, i) => (
-                <div key={i} className="flex justify-between text-xs text-slate-500">
+                <div key={i} className="flex justify-between text-xs" style={{ color: 'var(--color-text-muted)' }}>
                   <span className="truncate mr-2">{item.vendor}</span>
-                  <span className="font-semibold text-slate-400 flex-shrink-0 tabular-nums">
+                  <span className="font-semibold flex-shrink-0 tabular-nums" style={{ color: 'var(--color-text-secondary)' }}>
                     {currencySymbol}{item.amount.toFixed(2)}
                   </span>
                 </div>
@@ -42,10 +48,10 @@ export function InsightCards({
           </>
         ) : (
           <>
-            <p className="text-3xl font-black tabular-nums text-slate-500 leading-none mb-4">
+            <p className="text-3xl font-black tabular-nums leading-none mb-4" style={{ color: 'var(--color-text-muted)' }}>
               {currencySymbol}—
             </p>
-            <p className="text-xs text-slate-500 leading-relaxed">
+            <p className="text-xs leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
               No one-time expenses this month. Mark an expense as "one-time" via the pencil icon in the detail panel.
             </p>
           </>
@@ -54,11 +60,12 @@ export function InsightCards({
 
       {/* Budget vs actual difference */}
       <div
-        className="animate-enter rounded-[1.25rem] p-5 sm:p-7 text-white border"
+        className="animate-enter rounded-[1.25rem] p-5 sm:p-7 text-white"
         style={{
           '--enter-delay': '120ms',
           backgroundColor: isSurplus ? 'oklch(55% 0.18 155)' : 'oklch(55% 0.20 20)',
           borderColor: isSurplus ? 'oklch(50% 0.18 155)' : 'oklch(50% 0.20 20)',
+          border: '1px solid',
         }}
       >
         <p className="text-[10px] font-semibold mb-4" style={{ opacity: 0.65 }}>

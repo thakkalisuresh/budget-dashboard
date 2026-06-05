@@ -29,20 +29,30 @@ export function DeleteCategoryDialog({ accessToken, sheetId, category, onClose, 
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/40 dark:bg-black/60 z-40 backdrop-blur-sm" onClick={deleting ? undefined : onClose} />
+      <div
+        className="fixed inset-0 z-40 animate-overlay-in"
+        style={{ background: 'oklch(0% 0 0 / 50%)', backdropFilter: 'blur(4px)' }}
+        onClick={deleting ? undefined : onClose}
+      />
       <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
-        <div className="bg-white dark:bg-slate-800 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl w-full sm:max-w-sm border border-rose-100 dark:border-rose-900/40 overflow-hidden max-h-[90vh] flex flex-col">
-          <div className="w-10 h-1 bg-slate-200 dark:bg-slate-600 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" />
+        <div
+          className="glass-heavy animate-sheet-up rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm overflow-hidden max-h-[90vh] flex flex-col"
+          style={{ border: '1px solid oklch(62% 0.22 25 / 20%)', borderBottom: 'none' }}
+        >
+          <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" style={{ background: 'var(--sur-20)' }} />
 
           {/* Header */}
-          <div className="px-8 pt-8 pb-6 border-b border-slate-100 dark:border-slate-700">
-            <div className="w-12 h-12 bg-rose-50 dark:bg-rose-900/30 rounded-2xl flex items-center justify-center mb-4">
-              <Trash2 className="w-6 h-6 text-rose-500" />
+          <div className="px-8 pt-8 pb-6 flex-shrink-0" style={{ borderBottom: '1px solid var(--sur-8)' }}>
+            <div
+              className="w-12 h-12 rounded-2xl flex items-center justify-center mb-4"
+              style={{ background: 'oklch(62% 0.22 25 / 12%)' }}
+            >
+              <Trash2 className="w-6 h-6" style={{ color: 'var(--color-danger)' }} />
             </div>
-            <p className="text-lg font-black text-slate-800 dark:text-slate-100">
+            <p className="text-lg font-black" style={{ color: 'var(--color-text)' }}>
               Delete "{category.name}"?
             </p>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
               Step {step} of 3 — {step === 1 ? 'Review warning' : step === 2 ? 'Confirm name' : 'Final confirmation'}
             </p>
           </div>
@@ -53,12 +63,15 @@ export function DeleteCategoryDialog({ accessToken, sheetId, category, onClose, 
             {/* ── Step 1: Warnings ── */}
             {step === 1 && (
               <div className="space-y-3">
-                <div className="bg-rose-50 dark:bg-rose-900/20 border border-rose-100 dark:border-rose-800/40 rounded-2xl p-4 space-y-2">
+                <div
+                  className="rounded-2xl p-4 space-y-2"
+                  style={{ background: 'oklch(62% 0.22 25 / 8%)', border: '1px solid oklch(62% 0.22 25 / 20%)' }}
+                >
                   <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 text-rose-500 flex-shrink-0" />
-                    <p className="text-sm font-black text-rose-700 dark:text-rose-300">This cannot be undone</p>
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-danger)' }} />
+                    <p className="text-sm font-black" style={{ color: 'var(--color-danger)' }}>This cannot be undone</p>
                   </div>
-                  <ul className="text-xs text-rose-600/80 dark:text-rose-400/80 space-y-1 ml-6 list-disc">
+                  <ul className="text-xs space-y-1 ml-6 list-disc" style={{ color: 'oklch(62% 0.22 25 / 80%)' }}>
                     <li>The category row will be removed from your Totals sheet</li>
                     {isCustom
                       ? <li>The entire detail sheet and all its expense entries will be permanently deleted</li>
@@ -69,9 +82,12 @@ export function DeleteCategoryDialog({ accessToken, sheetId, category, onClose, 
                 </div>
 
                 {hasSpending && (
-                  <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded-2xl px-4 py-3 flex items-center gap-3">
-                    <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0" />
-                    <p className="text-xs font-bold text-amber-700 dark:text-amber-300">
+                  <div
+                    className="rounded-2xl px-4 py-3 flex items-center gap-3"
+                    style={{ background: 'oklch(78% 0.16 75 / 10%)', border: '1px solid oklch(78% 0.16 75 / 25%)' }}
+                  >
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-warning)' }} />
+                    <p className="text-xs font-bold" style={{ color: 'var(--color-warning)' }}>
                       This category has <span className="font-black">${category.actual.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span> in expenses this month.
                     </p>
                   </div>
@@ -82,8 +98,8 @@ export function DeleteCategoryDialog({ accessToken, sheetId, category, onClose, 
             {/* ── Step 2: Type name ── */}
             {step === 2 && (
               <div className="space-y-3">
-                <p className="text-sm text-slate-600 dark:text-slate-300">
-                  Type <span className="font-black text-rose-500">{category.name}</span> to continue:
+                <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                  Type <span className="font-black" style={{ color: 'var(--color-danger)' }}>{category.name}</span> to continue:
                 </p>
                 <input
                   type="text"
@@ -91,7 +107,8 @@ export function DeleteCategoryDialog({ accessToken, sheetId, category, onClose, 
                   onChange={e => setNameInput(e.target.value)}
                   placeholder={category.name}
                   autoFocus
-                  className="w-full bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-rose-500/30 focus:border-rose-400 placeholder:text-slate-300"
+                  className="w-full rounded-2xl px-4 py-3 text-sm outline-none transition-all"
+                  style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}
                 />
               </div>
             )}
@@ -99,8 +116,11 @@ export function DeleteCategoryDialog({ accessToken, sheetId, category, onClose, 
             {/* ── Step 3: Final checkbox ── */}
             {step === 3 && (
               <div className="space-y-4">
-                <div className="bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800/40 rounded-2xl px-4 py-3">
-                  <p className="text-xs font-bold text-rose-600 dark:text-rose-400">
+                <div
+                  className="rounded-2xl px-4 py-3"
+                  style={{ background: 'oklch(62% 0.22 25 / 8%)', border: '1px solid oklch(62% 0.22 25 / 20%)' }}
+                >
+                  <p className="text-xs font-bold" style={{ color: 'var(--color-danger)' }}>
                     You are about to permanently delete <span className="font-black">{category.name}</span> and all its data.
                   </p>
                 </div>
@@ -112,17 +132,23 @@ export function DeleteCategoryDialog({ accessToken, sheetId, category, onClose, 
                       onChange={e => setConfirmed(e.target.checked)}
                       className="sr-only"
                     />
-                    <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors ${confirmed ? 'bg-rose-500 border-rose-500' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700'}`}>
+                    <div
+                      className="w-5 h-5 rounded-md flex items-center justify-center transition-colors"
+                      style={{
+                        background: confirmed ? 'var(--color-danger)' : 'var(--sur-5)',
+                        border: confirmed ? '2px solid var(--color-danger)' : '2px solid var(--sur-20)',
+                      }}
+                    >
                       {confirmed && <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                     </div>
                   </div>
-                  <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-                    I understand this will <span className="font-black text-rose-500">permanently delete</span> all expense data and cannot be undone.
+                  <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
+                    I understand this will <span className="font-black" style={{ color: 'var(--color-danger)' }}>permanently delete</span> all expense data and cannot be undone.
                   </p>
                 </label>
 
                 {error && (
-                  <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400 text-xs font-bold">
+                  <div className="flex items-center gap-2 text-xs font-bold" style={{ color: 'var(--color-danger)' }}>
                     <AlertCircle className="w-4 h-4 flex-shrink-0" />{error}
                   </div>
                 )}
@@ -135,7 +161,8 @@ export function DeleteCategoryDialog({ accessToken, sheetId, category, onClose, 
             <button
               onClick={onClose}
               disabled={deleting}
-              className="flex-1 py-3 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors disabled:opacity-40"
+              className="flex-1 py-3 rounded-2xl text-sm font-bold transition-colors disabled:opacity-40"
+              style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}
             >
               Cancel
             </button>
@@ -144,7 +171,8 @@ export function DeleteCategoryDialog({ accessToken, sheetId, category, onClose, 
               <button
                 onClick={() => setStep(s => s + 1)}
                 disabled={step === 2 && !nameMatches}
-                className="flex-1 py-3 rounded-2xl text-sm font-bold text-white bg-rose-500 hover:bg-rose-600 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex-1 py-3 rounded-2xl text-sm font-bold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ background: 'var(--color-danger)' }}
               >
                 Continue →
               </button>
@@ -152,7 +180,8 @@ export function DeleteCategoryDialog({ accessToken, sheetId, category, onClose, 
               <button
                 onClick={handleDelete}
                 disabled={!confirmed || deleting}
-                className="flex-1 py-3 rounded-2xl text-sm font-bold text-white bg-rose-600 hover:bg-rose-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex-1 py-3 rounded-2xl text-sm font-bold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ background: 'var(--color-danger)' }}
               >
                 {deleting ? 'Deleting…' : `Delete ${category.name}`}
               </button>

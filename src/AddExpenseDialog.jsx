@@ -136,7 +136,12 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
     }
   };
 
-  const inputCls = "w-full bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-400 transition-all placeholder:text-slate-400";
+  const inputCls = "w-full rounded-2xl px-4 py-3 text-sm outline-none transition-all";
+  const inputStyle = {
+    background: 'var(--sur-5)',
+    border: '1px solid var(--sur-12)',
+    color: 'var(--color-text)',
+  };
 
   // Fetch existing vendors when category changes
   useEffect(() => {
@@ -300,22 +305,26 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/40 dark:bg-black/60 z-40 backdrop-blur-sm"
+        className="fixed inset-0 z-40 animate-overlay-in"
+        style={{ background: 'oklch(0% 0 0 / 50%)', backdropFilter: 'blur(4px)' }}
         onClick={onClose}
       />
 
       {/* Dialog */}
       <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
-        <div className="bg-white dark:bg-slate-800 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl w-full sm:max-w-md border border-slate-100 dark:border-slate-700 overflow-hidden max-h-[90vh] flex flex-col">
-          <div className="w-10 h-1 bg-slate-200 dark:bg-slate-600 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" />
+        <div
+          className="glass-heavy animate-sheet-up rounded-t-3xl sm:rounded-3xl w-full sm:max-w-md overflow-hidden max-h-[90vh] flex flex-col"
+          style={{ border: '1px solid var(--sur-10)', borderBottom: 'none' }}
+        >
+          <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" style={{ background: 'var(--sur-20)' }} />
 
           {/* Header */}
-          <div className="px-8 pt-8 pb-6 flex items-center justify-between border-b border-slate-100 dark:border-slate-700">
+          <div className="px-8 pt-8 pb-6 flex items-center justify-between flex-shrink-0" style={{ borderBottom: '1px solid var(--sur-8)' }}>
             <div>
-              <p className="text-lg font-black text-slate-800 dark:text-slate-100">Add Expense</p>
-              <p className="text-xs text-slate-400 mt-0.5">This will update the Google Sheet automatically</p>
+              <p className="text-lg font-black" style={{ color: 'var(--color-text)' }}>Add Expense</p>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>This will update the Google Sheet automatically</p>
             </div>
-            <button onClick={onClose} className="p-2 rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+            <button onClick={onClose} className="p-2 rounded-xl transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}>
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -334,13 +343,19 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                   onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), parseNlExpense())}
                   placeholder='Quick add — "coffee 4.50 today" then press Enter'
                   disabled={nlLoading}
-                  className="w-full bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 text-slate-900 dark:text-slate-100 rounded-2xl pl-10 pr-12 py-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-400 transition-all placeholder:text-slate-400 disabled:opacity-60"
+                  className="w-full rounded-2xl pl-10 pr-12 py-3 text-sm outline-none transition-all disabled:opacity-60"
+                  style={{
+                    background: 'var(--color-accent-subtle)',
+                    border: '1px solid var(--color-accent-border)',
+                    color: 'var(--color-text)',
+                  }}
                 />
                 {nlLoading
-                  ? <Loader2 className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-indigo-400 animate-spin" />
+                  ? <Loader2 className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin" style={{ color: 'var(--color-accent-text)' }} />
                   : nlText && (
                     <button type="button" onClick={parseNlExpense}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-300 px-1">
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold px-1 transition-colors"
+                      style={{ color: 'var(--color-accent-text)' }}>
                       Parse
                     </button>
                   )
@@ -352,11 +367,11 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
             {/* Category */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+                <label className="text-[11px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>
                   What expense is this?
                 </label>
                 {ruleHint && (
-                  <span className="flex items-center gap-1 text-[10px] font-bold text-indigo-500 dark:text-indigo-400">
+                  <span className="flex items-center gap-1 text-[10px] font-bold text-[var(--color-accent-text)]">
                     <Zap className="w-2.5 h-2.5" /> Auto-filled by rule
                   </span>
                 )}
@@ -377,6 +392,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                 }}
                 disabled={lockCategory}
                 className={`${inputCls} ${lockCategory ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}`}
+                style={inputStyle}
               >
                 <option value="">Select a category…</option>
                 {categoryList.map(c => (
@@ -387,7 +403,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
 
             {/* Vendor name with autocomplete */}
             <div className="space-y-1.5">
-              <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+              <label className="text-[11px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>
                 Vendor / Name
               </label>
               <div className="relative">
@@ -404,6 +420,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                   onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
                   onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
                   className={inputCls}
+                  style={inputStyle}
                   autoComplete="off"
                   disabled={loadingVendors}
                 />
@@ -412,14 +429,16 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                 {showSuggestions && (
                   <div
                     ref={suggestionsRef}
-                    className="absolute top-full left-0 right-0 mt-1.5 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-2xl shadow-lg overflow-hidden z-10"
+                    className="absolute top-full left-0 right-0 mt-1.5 glass-medium rounded-2xl overflow-hidden z-10"
+                    style={{ border: '1px solid var(--sur-10)' }}
                   >
                     {suggestions.map((name, i) => (
                       <button
                         key={i}
                         type="button"
                         onMouseDown={() => pickSuggestion(name)}
-                        className="w-full text-left px-4 py-2.5 text-sm text-slate-700 dark:text-slate-200 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors font-medium"
+                        className="w-full text-left px-4 py-2.5 text-sm font-medium transition-colors hover:bg-[var(--sur-5)]"
+                        style={{ color: 'var(--color-text)' }}
                       >
                         {name}
                       </button>
@@ -431,11 +450,11 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
 
             {/* Amount */}
             <div className="space-y-1.5">
-              <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+              <label className="text-[11px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>
                 Amount
               </label>
               <div className="relative">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">$</span>
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-sm" style={{ color: 'var(--color-text-muted)' }}>$</span>
                 <input
                   id="expense-amount"
                   type="number"
@@ -445,13 +464,14 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                   value={amount}
                   onChange={e => setAmount(e.target.value)}
                   className={`${inputCls} pl-8`}
+                  style={inputStyle}
                 />
               </div>
             </div>
 
             {/* Date */}
             <div className="space-y-1.5">
-              <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+              <label className="text-[11px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>
                 Transaction Date
               </label>
               <input
@@ -459,6 +479,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                 value={txDate}
                 onChange={e => setTxDate(e.target.value || todayIso())}
                 className={inputCls}
+                style={inputStyle}
               />
             </div>
 
@@ -466,11 +487,11 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
             {cards.length > 0 && (
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-black uppercase tracking-widest text-slate-400">
+                  <label className="text-[11px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>
                     Payment Method
                   </label>
                   {cardHint && (
-                    <span className="flex items-center gap-1 text-[10px] font-bold text-indigo-500 dark:text-indigo-400">
+                    <span className="flex items-center gap-1 text-[10px] font-bold" style={{ color: 'var(--color-accent-text)' }}>
                       <Zap className="w-2.5 h-2.5" /> Auto-filled by rule
                     </span>
                   )}
@@ -479,6 +500,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                   value={paymentMethod}
                   onChange={e => { setPaymentMethod(e.target.value); setCardHint(false); setBookingMethod(''); }}
                   className={`${inputCls} cursor-pointer`}
+                  style={inputStyle}
                 >
                   <option value="">— Select card (optional) —</option>
                   {cards.map(c => <option key={c} value={c}>{c}</option>)}
@@ -489,13 +511,14 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
             {/* Booking method override — CSR + travel vendors only */}
             {paymentMethod === CSR && TRAVEL_MCCS.has(resolveMCC(vendor, category)) && (
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-bold text-indigo-500">
+                <span className="text-xs font-bold" style={{ color: 'var(--color-accent-text)' }}>
                   📊 {bookingMethod === 'direct' ? '4x UR — Booked direct' : '8x UR — Chase Travel portal'}
                 </span>
                 <button
                   type="button"
                   onClick={() => setBookingMethod(bm => bm === 'direct' ? '' : 'direct')}
-                  className="text-xs text-slate-400 hover:text-indigo-500 underline transition-colors"
+                  className="text-xs underline transition-colors"
+                  style={{ color: 'var(--color-text-muted)' }}
                 >
                   {bookingMethod === 'direct' ? '← Switch to portal (8x)' : 'Booked direct instead? → 4x'}
                 </button>
@@ -513,15 +536,21 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                     onChange={e => { setIsNonMonthly(e.target.checked); if (e.target.checked) setIsRecurring(false); }}
                     className="sr-only"
                   />
-                  <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors ${isNonMonthly ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700'}`}>
+                  <div
+                    className="w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors"
+                    style={isNonMonthly
+                      ? { background: 'var(--color-accent)', borderColor: 'var(--color-accent)' }
+                      : { background: 'var(--sur-5)', borderColor: 'var(--sur-20)' }
+                    }
+                  >
                     {isNonMonthly && <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                   </div>
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-slate-700 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                  <p className="text-sm font-bold transition-colors" style={{ color: 'var(--color-text)' }}>
                     One-time / non-monthly expense
                   </p>
-                  <p className="text-xs text-slate-400 mt-0.5">Tracks this separately for your balance calculation</p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>Tracks this separately for your balance calculation</p>
                 </div>
               </label>
 
@@ -534,15 +563,21 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                     onChange={e => setIsRecurring(e.target.checked)}
                     className="sr-only"
                   />
-                  <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors ${isRecurring ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700'}`}>
+                  <div
+                    className="w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors"
+                    style={isRecurring
+                      ? { background: 'var(--color-success)', borderColor: 'var(--color-success)' }
+                      : { background: 'var(--sur-5)', borderColor: 'var(--sur-20)' }
+                    }
+                  >
                     {isRecurring && <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                   </div>
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-slate-700 dark:text-slate-200 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
+                  <p className="text-sm font-bold transition-colors" style={{ color: 'var(--color-text)' }}>
                     Repeats monthly
                   </p>
-                  <p className="text-xs text-slate-400 mt-0.5">Auto-added when you create a new month</p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>Auto-added when you create a new month</p>
                 </div>
               </label>
             </div>
@@ -554,11 +589,8 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                   type="button"
                   onClick={() => handleGeoToggle(!geoEnabled)}
                   disabled={geoLoading}
-                  className={`flex items-center gap-2 text-xs font-bold transition-colors ${
-                    geoEnabled
-                      ? 'text-emerald-600 dark:text-emerald-400'
-                      : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
-                  }`}
+                  className="flex items-center gap-2 text-xs font-bold transition-colors"
+                  style={{ color: geoEnabled ? 'var(--color-success)' : 'var(--color-text-muted)' }}
                 >
                   {geoLoading
                     ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -566,7 +598,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                   {geoLoading ? 'Getting location…' : geoEnabled && geoLocation ? '📍 Location tagged' : '📍 Tag location'}
                 </button>
                 {geoError && (
-                  <p className="text-[11px] text-rose-500 font-medium">{geoError}</p>
+                  <p className="text-[11px] font-medium" style={{ color: 'var(--color-danger)' }}>{geoError}</p>
                 )}
               </div>
             )}
@@ -574,27 +606,32 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
             {/* Note / Tag (optional) */}
             <div>
               <button type="button" onClick={() => setShowNote(v => !v)}
-                className="text-xs font-bold text-indigo-500 hover:text-indigo-700 dark:hover:text-indigo-300 transition-colors flex items-center gap-1">
+                className="text-xs font-bold transition-colors flex items-center gap-1"
+                style={{ color: 'var(--color-accent-text)' }}>
                 {showNote ? '− Hide note / tag' : '+ Add note / tag (optional)'}
               </button>
               {showNote && (
                 <div className="mt-3 space-y-2">
                   <textarea rows={2} placeholder="Add a note…" value={txNote}
                     onChange={e => setTxNote(e.target.value)}
-                    className="w-full bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-2xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500/40 resize-none placeholder:text-slate-400" />
+                    className="w-full rounded-2xl px-4 py-2.5 text-sm outline-none resize-none"
+                    style={inputStyle} />
                   <div className="flex gap-2">
                     <input type="text" placeholder="Add tag (press Enter)"
                       value={txTagInput} onChange={e => setTxTagInput(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTxTag(); } }}
-                      className="flex-1 bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-2xl px-4 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500/40 placeholder:text-slate-400" />
+                      className="flex-1 rounded-2xl px-4 py-2 text-sm outline-none"
+                      style={inputStyle} />
                     <button type="button" onClick={addTxTag}
-                      className="px-3 py-2 bg-indigo-600 text-white text-xs font-bold rounded-2xl hover:bg-indigo-700 transition-colors">Add</button>
+                      className="px-3 py-2 text-white text-xs font-bold rounded-2xl transition-colors"
+                      style={{ background: 'var(--color-accent)' }}>Add</button>
                   </div>
                   {txTags.length > 0 && (
                     <div className="flex flex-wrap gap-1.5">
                       {txTags.map(tag => (
                         <span key={tag} onClick={() => setTxTags(prev => prev.filter(t => t !== tag))}
-                          className="flex items-center gap-1 text-xs font-bold px-2.5 py-1 bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 rounded-full cursor-pointer">
+                          className="flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full cursor-pointer"
+                          style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
                           #{tag} ×
                         </span>
                       ))}
@@ -606,9 +643,10 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
 
             {/* Queued offline message */}
             {queued && (
-              <div className="flex items-center gap-3 px-4 py-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded-2xl">
+              <div className="flex items-center gap-3 px-4 py-3 rounded-2xl"
+                style={{ background: 'oklch(78% 0.16 75 / 12%)', border: '1px solid oklch(78% 0.16 75 / 25%)' }}>
                 <span className="text-base">📶</span>
-                <p className="text-xs font-bold text-amber-800 dark:text-amber-300">
+                <p className="text-xs font-bold" style={{ color: 'oklch(78% 0.16 75)' }}>
                   Saved offline — will sync when reconnected
                 </p>
               </div>
@@ -616,16 +654,18 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
 
             {/* Error */}
             {error && (
-              <p className="text-xs text-rose-500 font-medium bg-rose-50 dark:bg-rose-900/20 px-4 py-2.5 rounded-xl">
+              <p className="text-xs font-medium px-4 py-2.5 rounded-xl"
+                style={{ color: 'var(--color-danger)', background: 'oklch(62% 0.22 25 / 10%)' }}>
                 {error}
               </p>
             )}
 
             {/* Duplicate warning */}
             {dupWarning && (
-              <div className="flex items-start gap-3 px-4 py-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded-2xl">
-                <svg className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
-                <p className="text-xs font-medium text-amber-800 dark:text-amber-300 leading-relaxed">
+              <div className="flex items-start gap-3 px-4 py-3 rounded-2xl"
+                style={{ background: 'oklch(78% 0.16 75 / 12%)', border: '1px solid oklch(78% 0.16 75 / 25%)' }}>
+                <svg className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: 'oklch(78% 0.16 75)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                <p className="text-xs font-medium leading-relaxed" style={{ color: 'oklch(78% 0.16 75)' }}>
                   <span className="font-black">{vendor.trim()} ${parseFloat(amount).toFixed(2)}</span> is already logged in <span className="font-black">{category}</span> this month. Add it again?
                 </p>
               </div>
@@ -633,9 +673,10 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
 
             {/* Added toast */}
             {addedToast && (
-              <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700/40 rounded-2xl">
-                <svg className="w-4 h-4 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>
-                <p className="text-xs font-bold text-emerald-700 dark:text-emerald-300">Added ✓ — enter another</p>
+              <div className="flex items-center gap-2 px-4 py-2.5 rounded-2xl"
+                style={{ background: 'oklch(70% 0.15 145 / 12%)', border: '1px solid oklch(70% 0.15 145 / 25%)' }}>
+                <svg className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-success)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7"/></svg>
+                <p className="text-xs font-bold" style={{ color: 'var(--color-success)' }}>Added ✓ — enter another</p>
               </div>
             )}
 
@@ -645,7 +686,8 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                 <button
                   type="button"
                   onClick={dupWarning ? () => setDupWarning(false) : onClose}
-                  className="flex-1 py-3 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                  className="flex-1 py-3 rounded-2xl text-sm font-bold transition-colors"
+                  style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}
                 >
                   {dupWarning ? 'Go Back' : 'Cancel'}
                 </button>
@@ -653,11 +695,8 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                   type={dupWarning ? 'button' : 'submit'}
                   onClick={dupWarning ? doSave : undefined}
                   disabled={saving}
-                  className={`flex-1 py-3 rounded-2xl text-sm font-bold text-white shadow-lg transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${
-                    dupWarning
-                      ? 'bg-amber-500 hover:bg-amber-600 shadow-amber-200 dark:shadow-amber-900/30'
-                      : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-200 dark:shadow-indigo-900/30'
-                  }`}
+                  className="flex-1 py-3 rounded-2xl text-sm font-bold text-white transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  style={{ background: dupWarning ? 'oklch(78% 0.16 75)' : 'var(--color-accent)' }}
                 >
                   {saving ? (
                     <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
@@ -685,7 +724,8 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                     await doSaveAndAnother();
                   }}
                   disabled={saving}
-                  className="w-full py-2.5 rounded-2xl text-sm font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="w-full py-2.5 rounded-2xl text-sm font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}
                 >
                   <Plus className="w-3.5 h-3.5" />
                   Save & Add Another

@@ -34,29 +34,37 @@ export function SpendingMap({ transactionNotes = {}, currencySymbol = '$' }) {
 
   if (!pins.length) {
     return (
-      <div className="bg-white dark:bg-slate-900 rounded-[1.25rem] border border-slate-100 dark:border-slate-800 p-5 sm:p-6">
-        <h3 className="text-sm font-black text-slate-700 dark:text-slate-300 uppercase tracking-wide mb-3">
+      <div
+        className="rounded-[1.25rem] p-5 sm:p-6"
+        style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}
+      >
+        <h3 className="text-sm font-black uppercase tracking-wide mb-3" style={{ color: 'var(--color-text)' }}>
           Spending Map
         </h3>
         <div className="flex flex-col items-center justify-center py-10 text-center gap-2">
           <span className="text-3xl">📍</span>
-          <p className="text-sm font-bold text-slate-400">No tagged locations yet</p>
-          <p className="text-xs text-slate-400">Enable geo-tagging in Settings, then tag expenses when adding them.</p>
+          <p className="text-sm font-bold" style={{ color: 'var(--color-text-muted)' }}>No tagged locations yet</p>
+          <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Enable geo-tagging in Settings, then tag expenses when adding them.</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-[1.25rem] border border-slate-100 dark:border-slate-800 p-5 sm:p-6 space-y-3">
+    <div
+      className="rounded-[1.25rem] p-5 sm:p-6 space-y-3"
+      style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}
+    >
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-black text-slate-700 dark:text-slate-300 uppercase tracking-wide">
+        <h3 className="text-sm font-black uppercase tracking-wide" style={{ color: 'var(--color-text)' }}>
           Spending Map
         </h3>
-        <span className="text-xs font-bold text-slate-400">{pins.length} location{pins.length !== 1 ? 's' : ''}</span>
+        <span className="text-xs font-bold" style={{ color: 'var(--color-text-muted)' }}>
+          {pins.length} location{pins.length !== 1 ? 's' : ''}
+        </span>
       </div>
 
-      <div className="rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700" style={{ height: 300 }}>
+      <div className="rounded-2xl overflow-hidden" style={{ height: 300, border: '1px solid var(--sur-8)' }}>
         <MapContainer
           center={center}
           zoom={pins.length === 1 ? 13 : 11}
@@ -72,7 +80,7 @@ export function SpendingMap({ transactionNotes = {}, currencySymbol = '$' }) {
             <Marker key={i} position={[pin.lat, pin.lng]}>
               <Popup>
                 <div className="text-sm font-bold">{pin.vendor || 'Expense'}</div>
-                {pin.category && <div className="text-xs text-gray-500">{pin.category}</div>}
+                {pin.category && <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{pin.category}</div>}
                 {pin.amount != null && (
                   <div className="text-sm font-black mt-1">{currencySymbol}{Number(pin.amount).toFixed(2)}</div>
                 )}

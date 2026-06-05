@@ -38,7 +38,7 @@ const ReconcileDialog      = lazy(() => import('./ReconcileDialog.jsx').then(m =
 const BulkRecurringDialog  = lazy(() => import('./BulkRecurringDialog.jsx').then(m => ({ default: m.BulkRecurringDialog })));
 const DeleteCategoryDialog = lazy(() => import('./DeleteCategoryDialog.jsx').then(m => ({ default: m.DeleteCategoryDialog })));
 const RenameCategoryDialog = lazy(() => import('./RenameCategoryDialog.jsx').then(m => ({ default: m.RenameCategoryDialog })));
-import { StatCard } from './StatCard.jsx';
+import { StatCard, StatCardCompact } from './StatCard.jsx';
 import { IconPickerModal } from './IconPickerModal.jsx';
 import { CategoryActionSheet } from './CategoryActionSheet.jsx';
 import { EyeOff, WifiOff, CalendarX } from 'lucide-react';
@@ -51,6 +51,8 @@ import { InsightCards } from './InsightCards.jsx';
 import { DeleteMonthDialog } from './DeleteMonthDialog.jsx';
 import { MonthPickerBar } from './MonthPickerBar.jsx';
 import { HeaderBar } from './HeaderBar.jsx';
+import { BottomNav } from './BottomNav.jsx';
+import { CameraFab } from './CameraFab.jsx';
 
 function App() {
   const auth = useAuth();
@@ -299,19 +301,27 @@ function Dashboard({ auth }) {
 
 
   return (
-    <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans p-4 lg:p-8 transition-colors duration-300"
+    <div className="min-h-screen font-sans p-4 lg:p-8"
       style={{
+        background: 'var(--color-bg)',
+        color: 'var(--color-text)',
         paddingTop: 'calc(env(safe-area-inset-top) + 1rem)',
         paddingBottom: 'calc(env(safe-area-inset-bottom) + 1rem)',
         paddingLeft: 'calc(env(safe-area-inset-left) + 1rem)',
         paddingRight: 'calc(env(safe-area-inset-right) + 1rem)',
+        '--header-offset': '4.5rem',
       }}
     >
-      <div className="max-w-7xl mx-auto space-y-6 pb-12">
+      {/* Spacer that pushes content below the fixed glass header on desktop */}
+      <div className="hidden lg:block" style={{ height: 'var(--header-offset)' }} />
+      <div className="max-w-7xl mx-auto space-y-6 pb-24 lg:pb-12">
 
         {/* Read-only banner */}
         {isReadOnly && (
-          <div className="flex items-center gap-3 px-4 py-3 bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-700/40 rounded-2xl text-sm font-bold text-violet-800 dark:text-violet-300">
+          <div
+            className="flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-bold"
+            style={{ background: 'oklch(62% 0.20 295 / 10%)', border: '1px solid oklch(62% 0.20 295 / 25%)', color: 'oklch(62% 0.20 295)' }}
+          >
             <EyeOff className="w-4 h-4 flex-shrink-0" />
             View-only mode — you can browse but not make changes
           </div>
@@ -319,7 +329,10 @@ function Dashboard({ auth }) {
 
         {/* Offline banner */}
         {!isOnline && (
-          <div className="flex items-center gap-3 px-4 py-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded-2xl text-sm font-bold text-amber-800 dark:text-amber-300">
+          <div
+            className="flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-bold"
+            style={{ background: 'oklch(78% 0.16 75 / 10%)', border: '1px solid oklch(78% 0.16 75 / 25%)', color: 'var(--color-warning)' }}
+          >
             <WifiOff className="w-4 h-4 flex-shrink-0" />
             {getQueue().length > 0
               ? `You're offline — ${getQueue().length} expense${getQueue().length === 1 ? '' : 's'} pending sync`
@@ -329,7 +342,10 @@ function Dashboard({ auth }) {
 
         {/* Sync confirmation toast */}
         {syncedCount > 0 && (
-          <div className="flex items-center gap-3 px-4 py-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700/40 rounded-2xl text-sm font-bold text-emerald-800 dark:text-emerald-300">
+          <div
+            className="flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-bold"
+            style={{ background: 'oklch(72% 0.17 145 / 10%)', border: '1px solid oklch(72% 0.17 145 / 25%)', color: 'var(--color-success)' }}
+          >
             <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
             </svg>
@@ -339,11 +355,15 @@ function Dashboard({ auth }) {
 
         {/* Session expired banner */}
         {isOnline && sessionExpired && (
-          <div className="flex items-center justify-between gap-3 px-4 py-3 bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-700/40 rounded-2xl">
-            <span className="text-sm font-bold text-rose-700 dark:text-rose-300">Session expired — sign back in to sync changes</span>
+          <div
+            className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl"
+            style={{ background: 'oklch(62% 0.22 25 / 10%)', border: '1px solid oklch(62% 0.22 25 / 25%)' }}
+          >
+            <span className="text-sm font-bold" style={{ color: 'var(--color-danger)' }}>Session expired — sign back in to sync changes</span>
             <button
               onClick={() => setSessionExpired(false)}
-              className="text-xs font-bold text-rose-500 hover:text-rose-700 dark:hover:text-rose-200 transition-colors"
+              className="text-xs font-bold transition-colors"
+              style={{ color: 'var(--color-danger)' }}
             >
               Dismiss
             </button>
@@ -355,13 +375,13 @@ function Dashboard({ auth }) {
           {lastUpdated && selectedMonth?.name ? `${selectedMonth.name} data loaded` : ''}
         </div>
 
-        {/* Page title */}
-        <div className="text-center">
-          <h1 className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white tracking-tight">
+        {/* Page title — mobile only; desktop has glass header branding */}
+        <div className="text-center lg:hidden">
+          <h1 className="text-2xl sm:text-3xl font-black tracking-tight" style={{ color: 'var(--color-text)' }}>
             {user.name ? `${user.name.split(' ')[0]}'s Budget` : 'My Budget'}
           </h1>
           {selectedMonth?.name && (
-            <p className="text-sm sm:text-base font-semibold text-slate-400 dark:text-slate-500 mt-1 tracking-wide">
+            <p className="text-sm font-semibold mt-1 tracking-wide" style={{ color: 'var(--color-text-secondary)' }}>
               {selectedMonth.name}
             </p>
           )}
@@ -378,50 +398,23 @@ function Dashboard({ auth }) {
           onDeleteMonth={() => { setDeleteConfirm(selectedMonth); setDeleteInput(''); }}
         />
 
-        {/* Tab switcher */}
-        {(() => {
-          const TABS = [['budget', 'Dashboard'], ['ledger', 'Ledger'], ['history', 'History'], ['cards', 'Cards']];
-          const tabIdx = TABS.findIndex(([t]) => t === activeTab);
-          return (
-            <div role="tablist" className="relative flex p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl w-fit border border-slate-200 dark:border-slate-700">
-              {/* Sliding indicator */}
-              <div
-                aria-hidden="true"
-                className="absolute top-1 bottom-1 left-1 rounded-xl bg-white dark:bg-slate-700 shadow-sm pointer-events-none"
-                style={{
-                  width: `calc((100% - 8px) / ${TABS.length})`,
-                  transform: `translateX(calc(${tabIdx} * 100%))`,
-                  transition: `transform 150ms var(--ease-out)`,
-                }}
-              />
-              {TABS.map(([tab, label]) => (
-                <button
-                  key={tab}
-                  role="tab"
-                  aria-selected={activeTab === tab}
-                  onClick={() => setActiveTab(tab)}
-                  className="relative flex-1 px-5 py-2 rounded-xl text-sm font-black transition-colors duration-150 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
-                  style={activeTab === tab ? { color: 'var(--color-accent)' } : undefined}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          );
-        })()}
 
         {/* Missing current month banner */}
         {currentMonthMissing && (
-          <div className="flex items-center justify-between gap-4 px-5 py-3.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded-2xl">
+          <div
+            className="flex items-center justify-between gap-4 px-5 py-3.5 rounded-2xl"
+            style={{ background: 'oklch(78% 0.16 75 / 10%)', border: '1px solid oklch(78% 0.16 75 / 25%)' }}
+          >
             <div className="flex items-center gap-3">
-              <span className="text-amber-500 text-lg">📅</span>
-              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+              <span className="text-lg">📅</span>
+              <p className="text-sm font-medium" style={{ color: 'var(--color-warning)' }}>
                 No sheet for <span className="font-black">{currentMonthLabel}</span> yet — showing the most recent month instead.
               </p>
             </div>
             <button
               onClick={() => setShowNewMonth(true)}
-              className="flex-shrink-0 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-black rounded-xl transition-colors"
+              className="flex-shrink-0 px-4 py-2 text-white text-xs font-black rounded-xl transition-colors"
+              style={{ background: 'var(--color-warning)' }}
             >
               + Create it
             </button>
@@ -453,6 +446,8 @@ function Dashboard({ auth }) {
           setShowReconcile={setShowReconcile}
           isMonthEnded={isMonthEnded}
           selectedMonth={selectedMonth}
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
         />
 
         {/* History tab */}
@@ -495,75 +490,109 @@ function Dashboard({ auth }) {
         {/* Loading skeleton */}
         {activeTab === 'budget' && loading && !lastUpdated && (
           <div className="space-y-4">
-            {/* Hero card skeleton */}
-            <div className="bg-white dark:bg-slate-900 rounded-[1.25rem] border border-slate-100 dark:border-slate-800 p-8 sm:p-10">
-              <div className="skeleton h-3 w-28 mb-8" />
-              <div className="skeleton h-14 w-52" />
-              <div className="skeleton h-6 w-16 rounded-full mt-5" />
-            </div>
-            {/* Stat row skeleton */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              {[...Array(3)].map((_, i) => (
-                <div key={i} className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800 px-5 py-4 flex items-center justify-between">
-                  <div className="skeleton h-2.5 w-20" />
-                  <div className="skeleton h-5 w-16" />
+            {/* Stat grid skeleton — 2×2 mobile / 1×3 desktop */}
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 lg:gap-4">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="rounded-2xl p-4 h-24"
+                  style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+                  <div className="skeleton h-2.5 w-16 mb-3" />
+                  <div className="skeleton h-7 w-24" />
                 </div>
               ))}
             </div>
             {/* Main grid skeleton */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              <div className="lg:col-span-2 skeleton h-64 rounded-[1.25rem]" />
-              <div className="skeleton h-64 rounded-[1.25rem]" />
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2 skeleton h-64 rounded-2xl" />
+              <div className="skeleton h-64 rounded-2xl" />
             </div>
           </div>
         )}
 
         {/* Stat Cards — keyed on selectedSheetId so entering month triggers re-animation */}
         {activeTab === 'budget' && settings.visibility.statCards !== false && (!loading || lastUpdated) && (
-          <div key={`stats-${selectedSheetId}`} className="space-y-4 animate-crossfade-in">
-            <StatCard
-              hero
-              title="Remaining Income"
-              value={salaryReceived - totalActual}
-              subtext={
-                (salaryReceived - totalActual) > 0 ? 'Surplus' :
-                (salaryReceived - totalActual) === 0 ? 'Break Even' :
-                'Deficit'
-              }
-              currencySymbol={currencySymbol}
-              enterDelay={0}
-            />
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <StatCard
+          <div key={`stats-${selectedSheetId}`} className="animate-crossfade-in">
+
+            {/* Mobile: 2×2 compact grid */}
+            <div className="grid grid-cols-2 gap-3 lg:hidden">
+              <StatCardCompact
+                title="Remaining"
+                value={salaryReceived - totalActual}
+                subtext={
+                  (salaryReceived - totalActual) > 0 ? 'Surplus' :
+                  (salaryReceived - totalActual) === 0 ? 'Break Even' :
+                  'Deficit'
+                }
+                currencySymbol={currencySymbol}
+                enterDelay={0}
+              />
+              <StatCardCompact
                 title="Income"
                 value={salaryReceived}
                 onEdit={() => setEditingSalary(true)}
                 currencySymbol={currencySymbol}
-                valueColor="text-slate-900 dark:text-white"
-                enterDelay={60}
+                enterDelay={50}
               />
-              <StatCard
-                title="Actual Expenses"
+              <StatCardCompact
+                title="Expenses"
                 value={totalActual}
-                subtext={`of ${currencySymbol}${totalBudget.toFixed(2)} budget`}
+                subtext={`of ${currencySymbol}${totalBudget.toFixed(2)}`}
                 currencySymbol={currencySymbol}
-                valueColor="text-slate-900 dark:text-white"
-                enterDelay={100}
+                enterDelay={80}
               />
-              <StatCard
-                title="Budget Variance"
+              <StatCardCompact
+                title="Variance"
                 value={overallRemaining}
-                subtext={overallRemaining >= 0 ? 'Under Budget' : 'Over Budget'}
+                subtext={overallRemaining >= 0 ? 'Under' : 'Over'}
                 currencySymbol={currencySymbol}
-                enterDelay={140}
+                enterDelay={110}
               />
             </div>
+
+            {/* Desktop: hero + 3-col strip */}
+            <div className="hidden lg:block space-y-4">
+              <StatCard
+                hero
+                title="Remaining Income"
+                value={salaryReceived - totalActual}
+                subtext={
+                  (salaryReceived - totalActual) > 0 ? 'Surplus' :
+                  (salaryReceived - totalActual) === 0 ? 'Break Even' :
+                  'Deficit'
+                }
+                currencySymbol={currencySymbol}
+                enterDelay={0}
+              />
+              <div className="grid grid-cols-3 gap-4">
+                <StatCard
+                  title="Income"
+                  value={salaryReceived}
+                  onEdit={() => setEditingSalary(true)}
+                  currencySymbol={currencySymbol}
+                  enterDelay={60}
+                />
+                <StatCard
+                  title="Actual Expenses"
+                  value={totalActual}
+                  subtext={`of ${currencySymbol}${totalBudget.toFixed(2)} budget`}
+                  currencySymbol={currencySymbol}
+                  enterDelay={100}
+                />
+                <StatCard
+                  title="Budget Variance"
+                  value={overallRemaining}
+                  subtext={overallRemaining >= 0 ? 'Under Budget' : 'Over Budget'}
+                  currencySymbol={currencySymbol}
+                  enterDelay={140}
+                />
+              </div>
+            </div>
+
           </div>
         )}
 
         {/* Main 2-column grid — keyed so month switch re-animates content */}
         {activeTab === 'budget' && (!loading || lastUpdated) && (
-          <div key={`grid-${selectedSheetId}`} className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start mt-4 animate-crossfade-in">
+          <div key={`grid-${selectedSheetId}`} className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8 items-start animate-crossfade-in">
 
             {/* Left column */}
             <div className="lg:col-span-2 space-y-4">
@@ -656,8 +685,8 @@ function Dashboard({ auth }) {
 
             </div>
 
-            {/* Right column */}
-            <div className="space-y-8 lg:sticky lg:top-8">
+            {/* Right column — sticky on desktop, capped so it never overflows viewport */}
+            <div className="space-y-6 lg:sticky lg:top-[5rem] lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pb-4 lg:pr-0.5">
 
               {/* Donut chart */}
               {settings.visibility.donutChart !== false && (
@@ -941,6 +970,7 @@ function Dashboard({ auth }) {
         /></Suspense>
       )}
 
+      {/* SpeedDial — mobile only (sm:hidden in the component itself) */}
       {!isReadOnly && (
         <SpeedDial
           fabOpen={fabOpen}
@@ -952,6 +982,15 @@ function Dashboard({ auth }) {
           onBulkRecurring={(settings.recurringExpenses || []).length > 0 ? () => setShowBulkRecurring(true) : null}
         />
       )}
+
+      <CameraFab activeTab={activeTab} scanTriggerRef={scanTriggerRef} />
+
+      <BottomNav
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        onAdd={() => setShowAddDialog(true)}
+        isReadOnly={isReadOnly}
+      />
     </div>
   );
 }

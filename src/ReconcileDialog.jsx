@@ -15,15 +15,16 @@ import { applyCardRules } from './smartRules.js';
 import { addOrUpdateExpense } from './useExpense.js';
 
 const BANK_LABELS = { chase: 'Chase', amex: 'American Express', generic: 'Generic' };
-const BANK_COLORS = {
-  chase:   'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300',
-  amex:    'bg-sky-50 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300',
-  generic: 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300',
+// Inline style objects — flip correctly in light and dark mode via OKLCH tokens
+const BANK_STYLES = {
+  chase:   { background: 'oklch(65% 0.16 220 / 12%)', color: 'oklch(50% 0.18 220)' },
+  amex:    { background: 'oklch(65% 0.16 210 / 12%)', color: 'oklch(50% 0.18 210)' },
+  generic: { background: 'var(--sur-8)',               color: 'var(--color-text-secondary)' },
 };
-const TYPE_COLORS = {
-  purchase: 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300',
-  credit:   'bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300',
-  transfer: 'bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300',
+const TYPE_STYLES = {
+  purchase: { background: 'oklch(72% 0.17 145 / 12%)', color: 'oklch(44% 0.18 145)' },
+  credit:   { background: 'oklch(78% 0.16 75 / 12%)',  color: 'oklch(50% 0.18 75)'  },
+  transfer: { background: 'oklch(65% 0.20 285 / 12%)', color: 'oklch(52% 0.20 285)' },
 };
 
 function formatDate(iso) {
@@ -56,21 +57,21 @@ function FileRow({ file, result, onRemove, onRetryWithPassword }) {
   };
 
   return (
-    <div className="bg-slate-50 dark:bg-slate-700/50 rounded-2xl overflow-hidden">
+    <div className="rounded-2xl overflow-hidden" style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-8)' }}>
       <div className="flex items-center gap-3 px-4 py-3">
-        <FileText className="w-4 h-4 text-slate-400 flex-shrink-0" />
+        <FileText className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-bold text-slate-700 dark:text-slate-200 truncate">{file.name}</p>
+          <p className="text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>{file.name}</p>
           {result && !result.error && !needsPassword && (
             <div className="flex items-center gap-2 mt-1 flex-wrap">
-              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${BANK_COLORS[result.bank] || BANK_COLORS.generic}`}>
+              <span className="text-[10px] font-black px-2 py-0.5 rounded-full" style={BANK_STYLES[result.bank] || BANK_STYLES.generic}>
                 {BANK_LABELS[result.bank] || 'Generic'}
               </span>
-              <span className="text-[10px] text-slate-400">{result.transactions.length} transactions</span>
-              {counts.credit > 0   && <span className="text-[10px] text-amber-500">{counts.credit} credit{counts.credit > 1 ? 's' : ''}</span>}
-              {counts.transfer > 0 && <span className="text-[10px] text-violet-500">{counts.transfer} transfer{counts.transfer > 1 ? 's' : ''}</span>}
-              {result.via === 'claude' && <span className="text-[10px] font-bold text-violet-500 bg-violet-50 dark:bg-violet-900/30 px-1.5 py-0.5 rounded-full">✦ Claude AI</span>}
-              {result.via === 'pdfjs'  && <span className="text-[10px] text-slate-400">PDF</span>}
+              <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>{result.transactions.length} transactions</span>
+              {counts.credit > 0   && <span className="text-[10px]" style={{ color: 'var(--color-warning)' }}>{counts.credit} credit{counts.credit > 1 ? 's' : ''}</span>}
+              {counts.transfer > 0 && <span className="text-[10px]" style={{ color: 'oklch(52% 0.20 285)' }}>{counts.transfer} transfer{counts.transfer > 1 ? 's' : ''}</span>}
+              {result.via === 'claude' && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'oklch(65% 0.20 285 / 12%)', color: 'oklch(52% 0.20 285)' }}>✦ Claude AI</span>}
+              {result.via === 'pdfjs'  && <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>PDF</span>}
             </div>
           )}
           {result?.error && (
@@ -79,7 +80,7 @@ function FileRow({ file, result, onRemove, onRetryWithPassword }) {
             </p>
           )}
           {needsPassword && (
-            <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5 font-medium">
+            <p className="text-xs mt-0.5 font-medium" style={{ color: 'var(--color-warning)' }}>
               {result.wrongPassword ? 'Wrong password — try again' : 'Password protected'}
             </p>
           )}
@@ -87,12 +88,12 @@ function FileRow({ file, result, onRemove, onRetryWithPassword }) {
         <div className="flex items-center gap-1 flex-shrink-0">
           {result && !result.error && !needsPassword && (
             <button onClick={() => setExpanded(v => !v)}
-              className="p-1.5 rounded-xl text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">
+              className="p-1.5 rounded-xl transition-colors" style={{ color: 'var(--color-text-muted)' }}>
               {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
             </button>
           )}
           <button onClick={onRemove}
-            className="p-1.5 rounded-xl text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors">
+            className="p-1.5 rounded-xl transition-colors" style={{ color: 'var(--color-text-muted)' }}>
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -100,7 +101,7 @@ function FileRow({ file, result, onRemove, onRetryWithPassword }) {
 
       {/* Password input — shown when PDF needs a password */}
       {needsPassword && (
-        <div className="border-t border-slate-200 dark:border-slate-600 px-4 pb-3 pt-2 flex gap-2">
+        <div className="px-4 pb-3 pt-2 flex gap-2" style={{ borderTop: '1px solid var(--sur-8)' }}>
           <input
             type="password"
             placeholder="Enter PDF password…"
@@ -108,12 +109,14 @@ function FileRow({ file, result, onRemove, onRetryWithPassword }) {
             onChange={e => setPwInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handlePasswordRetry()}
             autoFocus
-            className="flex-1 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-xl px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-indigo-500/30 placeholder:text-slate-400"
+            className="flex-1 rounded-xl px-3 py-1.5 text-xs outline-none"
+            style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}
           />
           <button
             onClick={handlePasswordRetry}
             disabled={!pwInput.trim() || pwRetrying}
-            className="px-3 py-1.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors disabled:opacity-40"
+            className="px-3 py-1.5 rounded-xl text-xs font-bold text-white transition-colors disabled:opacity-40"
+            style={{ background: 'var(--color-accent)' }}
           >
             {pwRetrying ? '…' : 'Unlock'}
           </button>
@@ -123,22 +126,22 @@ function FileRow({ file, result, onRemove, onRetryWithPassword }) {
 
       {/* Expanded transaction preview */}
       {expanded && result && !result.error && (
-        <div className="border-t border-slate-200 dark:border-slate-600 max-h-48 overflow-y-auto">
+        <div className="max-h-48 overflow-y-auto" style={{ borderTop: '1px solid var(--sur-8)' }}>
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-slate-200 dark:border-slate-600 bg-white/50 dark:bg-slate-800/50">
-                <th className="text-left px-4 py-2 font-black text-slate-400 uppercase tracking-wider">Date</th>
-                <th className="text-left px-4 py-2 font-black text-slate-400 uppercase tracking-wider">Vendor</th>
-                <th className="text-right px-4 py-2 font-black text-slate-400 uppercase tracking-wider">Amount</th>
-                <th className="text-left px-4 py-2 font-black text-slate-400 uppercase tracking-wider">Type</th>
+              <tr style={{ borderBottom: '1px solid var(--sur-8)', background: 'var(--sur-3)' }}>
+                <th className="text-left px-4 py-2 font-black uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Date</th>
+                <th className="text-left px-4 py-2 font-black uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Vendor</th>
+                <th className="text-right px-4 py-2 font-black uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Amount</th>
+                <th className="text-left px-4 py-2 font-black uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Type</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-              {result.transactions.map(t => (
-                <tr key={t.id} className="hover:bg-white/70 dark:hover:bg-slate-700/30">
-                  <td className="px-4 py-2 text-slate-500 dark:text-slate-400 whitespace-nowrap">{formatDate(t.date)}</td>
-                  <td className="px-4 py-2 text-slate-700 dark:text-slate-200 max-w-[160px] truncate" title={t.rawVendor}>{t.vendor}</td>
-                  <td className="px-4 py-2 text-right font-bold text-slate-900 dark:text-slate-100 tabular-nums">${t.amount.toFixed(2)}</td>
+            <tbody>
+              {result.transactions.map((t, idx) => (
+                <tr key={t.id} style={idx > 0 ? { borderTop: '1px solid var(--sur-6)' } : {}}>
+                  <td className="px-4 py-2 whitespace-nowrap" style={{ color: 'var(--color-text-muted)' }}>{formatDate(t.date)}</td>
+                  <td className="px-4 py-2 max-w-[160px] truncate" style={{ color: 'var(--color-text)' }} title={t.rawVendor}>{t.vendor}</td>
+                  <td className="px-4 py-2 text-right font-bold tabular-nums" style={{ color: 'var(--color-text)' }}>${t.amount.toFixed(2)}</td>
                   <td className="px-4 py-2">
                     <span className={`text-[10px] font-black px-2 py-0.5 rounded-full capitalize ${TYPE_COLORS[t.type] || ''}`}>
                       {t.type}
@@ -164,33 +167,39 @@ function ReviewSection({ title, count, dot, children, defaultOpen = true, action
   const [open, setOpen] = useState(defaultOpen);
   if (count === 0) return null;
   return (
-    <div className="border border-slate-100 dark:border-slate-700 rounded-2xl overflow-hidden">
+    <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--sur-8)' }}>
       <button
         onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 dark:bg-slate-700/50 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+        className="w-full flex items-center justify-between px-4 py-3 transition-colors"
+        style={{ background: 'var(--sur-5)' }}
       >
         <div className="flex items-center gap-2.5">
           <div className={`w-2 h-2 rounded-full flex-shrink-0 ${dot}`} />
-          <span className="text-sm font-black text-slate-700 dark:text-slate-200">{title}</span>
-          <span className="text-xs font-bold text-slate-400 bg-white dark:bg-slate-800 px-2 py-0.5 rounded-full border border-slate-200 dark:border-slate-600">{count}</span>
+          <span className="text-sm font-black" style={{ color: 'var(--color-text)' }}>{title}</span>
+          <span
+            className="text-xs font-bold px-2 py-0.5 rounded-full"
+            style={{ color: 'var(--color-text-muted)', background: 'var(--sur-8)', border: '1px solid var(--sur-10)' }}
+          >{count}</span>
         </div>
         <div className="flex items-center gap-2">
           {open && onSelectAll && (
             <button onClick={e => { e.stopPropagation(); onSelectAll(); }}
-              className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 hover:underline px-1">
+              className="text-[10px] font-black hover:underline px-1" style={{ color: 'var(--color-success)' }}>
               All in
             </button>
           )}
           {open && onSkipAll && (
             <button onClick={e => { e.stopPropagation(); onSkipAll(); }}
-              className="text-[10px] font-black text-slate-400 hover:text-slate-600 hover:underline px-1">
+              className="text-[10px] font-black hover:underline px-1" style={{ color: 'var(--color-text-muted)' }}>
               Skip all
             </button>
           )}
-          {open ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
+          {open
+            ? <ChevronUp className="w-3.5 h-3.5" style={{ color: 'var(--color-text-muted)' }} />
+            : <ChevronDown className="w-3.5 h-3.5" style={{ color: 'var(--color-text-muted)' }} />}
         </div>
       </button>
-      {open && <div className="divide-y divide-slate-50 dark:divide-slate-700/50">{children}</div>}
+      {open && <div>{children}</div>}
     </div>
   );
 }
@@ -200,7 +209,8 @@ function CategorySelect({ value, onChange, categories }) {
     <select
       value={value}
       onChange={e => onChange(e.target.value)}
-      className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 rounded-xl px-2 py-1.5 text-xs font-bold outline-none focus:ring-2 focus:ring-indigo-500/30 cursor-pointer max-w-[130px]"
+      className="rounded-xl px-2 py-1.5 text-xs font-bold outline-none cursor-pointer max-w-[130px]"
+      style={{ background: 'var(--sur-8)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}
     >
       {categories.map(c => <option key={c} value={c}>{c}</option>)}
     </select>
@@ -209,15 +219,16 @@ function CategorySelect({ value, onChange, categories }) {
 
 function ActionToggle({ action, options, onChange }) {
   return (
-    <div className="flex rounded-xl overflow-hidden border border-slate-200 dark:border-slate-600 flex-shrink-0">
+    <div className="flex rounded-xl overflow-hidden flex-shrink-0" style={{ border: '1px solid var(--sur-12)' }}>
       {options.map(opt => (
-        <button key={opt.value}
+        <button
+          key={opt.value}
           onClick={() => onChange(opt.value)}
-          className={`px-2.5 py-1.5 text-[10px] font-black transition-colors ${
-            action === opt.value
-              ? opt.activeClass
-              : 'bg-white dark:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
-          }`}>
+          className={`px-2.5 py-1.5 text-[10px] font-black transition-colors ${action === opt.value && opt.activeClass ? opt.activeClass : ''}`}
+          style={action !== opt.value
+            ? { background: 'var(--sur-5)', color: 'var(--color-text-muted)' }
+            : (opt.activeStyle || {})}
+        >
           {opt.label}
         </button>
       ))}
@@ -236,21 +247,22 @@ function NewRow({ tx, decision, onChange, categories }) {
             value={decision?.vendor ?? tx.vendor}
             onChange={e => onChange({ vendor: e.target.value })}
             disabled={decision?.action === 'skip'}
-            className="w-full bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-100 rounded-xl px-3 py-1.5 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500/30 disabled:opacity-50"
+            className="w-full rounded-xl px-3 py-1.5 text-sm font-bold outline-none disabled:opacity-50"
+            style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}
           />
           <div className="flex items-center gap-2 flex-wrap">
             <CategorySelect value={decision?.category ?? tx.suggestedCategory ?? 'Misc'} onChange={v => onChange({ category: v })} categories={categories} />
-            <span className="text-xs text-slate-400">{formatDate(tx.date)}</span>
+            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{formatDate(tx.date)}</span>
           </div>
         </div>
         <div className="flex flex-col items-end gap-2 flex-shrink-0">
-          <span className="text-sm font-black text-slate-900 dark:text-slate-100 tabular-nums">${tx.amount.toFixed(2)}</span>
+          <span className="text-sm font-black tabular-nums" style={{ color: 'var(--color-text)' }}>${tx.amount.toFixed(2)}</span>
           <ActionToggle
             action={decision?.action ?? 'import'}
             onChange={v => onChange({ action: v })}
             options={[
               { value: 'import', label: '✓ Import', activeClass: 'bg-emerald-500 text-white' },
-              { value: 'skip',   label: 'Skip',     activeClass: 'bg-slate-200 dark:bg-slate-600 text-slate-600 dark:text-slate-300' },
+              { value: 'skip',   label: 'Skip',     activeStyle: { background: 'var(--sur-10)', color: 'var(--color-text-secondary)' } },
             ]}
           />
         </div>
@@ -264,22 +276,22 @@ function CreditRow({ tx, decision, onChange }) {
   return (
     <div className="px-4 py-3 flex items-center gap-3">
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-bold text-slate-700 dark:text-slate-200 truncate">{tx.vendor}</p>
-        <p className="text-xs text-slate-400 mt-0.5">
+        <p className="text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>{tx.vendor}</p>
+        <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
           {tx.matchedVendor
-            ? <>Matches <span className="font-bold text-slate-600 dark:text-slate-300">{tx.matchedVendor}</span> in {tx.matchedCategory}</>
+            ? <>Matches <span className="font-bold" style={{ color: 'var(--color-text-secondary)' }}>{tx.matchedVendor}</span> in {tx.matchedCategory}</>
             : 'No matching expense found'}
           {' · '}{formatDate(tx.date)}
         </p>
       </div>
       <div className="flex flex-col items-end gap-2 flex-shrink-0">
-        <span className="text-sm font-black text-amber-600 dark:text-amber-400 tabular-nums">+${tx.amount.toFixed(2)}</span>
+        <span className="text-sm font-black tabular-nums" style={{ color: 'var(--color-warning)' }}>+${tx.amount.toFixed(2)}</span>
         <ActionToggle
           action={decision?.action ?? 'ignore'}
           onChange={v => onChange({ action: v })}
           options={[
             { value: 'apply',  label: 'Apply',  activeClass: 'bg-amber-500 text-white', disabled: !tx.matchedVendor },
-            { value: 'ignore', label: 'Ignore', activeClass: 'bg-slate-200 dark:bg-slate-600 text-slate-600 dark:text-slate-300' },
+            { value: 'ignore', label: 'Ignore', activeStyle: { background: 'var(--sur-10)', color: 'var(--color-text-secondary)' } },
           ].filter(o => !o.disabled || o.value !== 'apply' || tx.matchedVendor)}
         />
       </div>
@@ -292,22 +304,22 @@ function TransferRow({ tx, decision, onChange, categories }) {
   return (
     <div className="px-4 py-3 flex items-center gap-3">
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-bold text-slate-700 dark:text-slate-200 truncate">{tx.vendor}</p>
+        <p className="text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>{tx.vendor}</p>
         <div className="flex items-center gap-2 mt-1 flex-wrap">
           {decision?.action === 'import' && (
             <CategorySelect value={decision?.category ?? 'Misc'} onChange={v => onChange({ category: v })} categories={categories} />
           )}
-          <span className="text-xs text-slate-400">{formatDate(tx.date)}</span>
+          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{formatDate(tx.date)}</span>
         </div>
       </div>
       <div className="flex flex-col items-end gap-2 flex-shrink-0">
-        <span className="text-sm font-black text-slate-900 dark:text-slate-100 tabular-nums">${tx.amount.toFixed(2)}</span>
+        <span className="text-sm font-black tabular-nums" style={{ color: 'var(--color-text)' }}>${tx.amount.toFixed(2)}</span>
         <ActionToggle
           action={decision?.action ?? 'skip'}
           onChange={v => onChange({ action: v })}
           options={[
             { value: 'import', label: 'As expense', activeClass: 'bg-violet-500 text-white' },
-            { value: 'skip',   label: 'Skip',        activeClass: 'bg-slate-200 dark:bg-slate-600 text-slate-600 dark:text-slate-300' },
+            { value: 'skip',   label: 'Skip',        activeStyle: { background: 'var(--sur-10)', color: 'var(--color-text-secondary)' } },
           ]}
         />
       </div>
@@ -320,22 +332,22 @@ function CrossMonthRow({ tx, decision, onChange, categories }) {
   return (
     <div className="px-4 py-3 flex items-center gap-3">
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-bold text-slate-700 dark:text-slate-200 truncate">{tx.vendor}</p>
+        <p className="text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>{tx.vendor}</p>
         <div className="flex items-center gap-2 mt-1 flex-wrap">
           {decision?.action === 'import' && (
             <CategorySelect value={decision?.category ?? tx.suggestedCategory ?? 'Misc'} onChange={v => onChange({ category: v })} categories={categories} />
           )}
-          <span className="text-xs text-slate-400">{formatDate(tx.date)}</span>
+          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{formatDate(tx.date)}</span>
         </div>
       </div>
       <div className="flex flex-col items-end gap-2 flex-shrink-0">
-        <span className="text-sm font-black text-slate-900 dark:text-slate-100 tabular-nums">${tx.amount.toFixed(2)}</span>
+        <span className="text-sm font-black tabular-nums" style={{ color: 'var(--color-text)' }}>${tx.amount.toFixed(2)}</span>
         <ActionToggle
           action={decision?.action ?? 'skip'}
           onChange={v => onChange({ action: v })}
           options={[
             { value: 'import', label: 'Import', activeClass: 'bg-blue-500 text-white' },
-            { value: 'skip',   label: 'Skip',   activeClass: 'bg-slate-200 dark:bg-slate-600 text-slate-600 dark:text-slate-300' },
+            { value: 'skip',   label: 'Skip',   activeStyle: { background: 'var(--sur-10)', color: 'var(--color-text-secondary)' } },
           ]}
         />
       </div>
@@ -349,8 +361,8 @@ const CSV_BANKS = [
   {
     id: 'chase',
     name: 'Chase',
-    color: 'text-blue-600 dark:text-blue-400',
-    activeBg: 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800/40',
+    activeStyle: { background: 'oklch(65% 0.16 220 / 12%)', border: '1px solid oklch(65% 0.16 220 / 25%)', color: 'oklch(50% 0.18 220)' },
+    numStyle:    { background: 'oklch(65% 0.16 220 / 12%)', color: 'oklch(50% 0.18 220)' },
     steps: [
       'Sign in at chase.com and select your account',
       'Click the "Download account activity" icon near the top of the transactions list',
@@ -362,8 +374,8 @@ const CSV_BANKS = [
   {
     id: 'amex',
     name: 'Amex',
-    color: 'text-sky-600 dark:text-sky-400',
-    activeBg: 'bg-sky-50 dark:bg-sky-900/30 border-sky-200 dark:border-sky-800/40',
+    activeStyle: { background: 'oklch(65% 0.16 210 / 12%)', border: '1px solid oklch(65% 0.16 210 / 25%)', color: 'oklch(50% 0.18 210)' },
+    numStyle:    { background: 'oklch(65% 0.16 210 / 12%)', color: 'oklch(50% 0.18 210)' },
     steps: [
       'Sign in at americanexpress.com and select your card',
       'Click the "Statements & Activity" tab',
@@ -381,18 +393,19 @@ function CsvHelpAccordion() {
   const bank = CSV_BANKS.find(b => b.id === activeBank);
 
   return (
-    <div className="border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden">
+    <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--sur-8)' }}>
       <button
         onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 dark:bg-slate-700/50 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+        className="w-full flex items-center justify-between px-4 py-3 transition-colors"
+        style={{ background: 'var(--sur-5)' }}
       >
-        <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-          <HelpCircle className="w-4 h-4 text-slate-400" />
+        <div className="flex items-center gap-2" style={{ color: 'var(--color-text-secondary)' }}>
+          <HelpCircle className="w-4 h-4" style={{ color: 'var(--color-text-muted)' }} />
           <span className="text-xs font-bold">How to export your CSV from your bank</span>
         </div>
         {open
-          ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
-          : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
+          ? <ChevronUp className="w-3.5 h-3.5" style={{ color: 'var(--color-text-muted)' }} />
+          : <ChevronDown className="w-3.5 h-3.5" style={{ color: 'var(--color-text-muted)' }} />}
       </button>
 
       {open && (
@@ -403,11 +416,12 @@ function CsvHelpAccordion() {
               <button
                 key={b.id}
                 onClick={() => setActiveBank(b.id)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-black border transition-all ${
-                  activeBank === b.id
-                    ? `${b.activeBg} ${b.color}`
-                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
-                }`}
+                className="px-3 py-1.5 rounded-xl text-xs font-black transition-all"
+                style={activeBank === b.id ? b.activeStyle : {
+                  background: 'var(--sur-5)',
+                  border: '1px solid var(--sur-10)',
+                  color: 'var(--color-text-muted)',
+                }}
               >
                 {b.name}
               </button>
@@ -418,10 +432,13 @@ function CsvHelpAccordion() {
           <ol className="space-y-2">
             {bank.steps.map((step, i) => (
               <li key={i} className="flex items-start gap-3 text-xs">
-                <span className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-black mt-0.5 ${bank.activeBg} ${bank.color}`}>
+                <span
+                  className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-black mt-0.5"
+                  style={bank.numStyle}
+                >
                   {i + 1}
                 </span>
-                <span className="text-slate-600 dark:text-slate-300 leading-relaxed">{step}</span>
+                <span className="leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>{step}</span>
               </li>
             ))}
           </ol>
@@ -432,11 +449,11 @@ function CsvHelpAccordion() {
 }
 
 const STATUS_CONFIG = {
-  new:            { label: 'New',           color: 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300',  dot: 'bg-emerald-500' },
-  already_logged: { label: 'Already logged', color: 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400',           dot: 'bg-slate-400' },
-  credit:         { label: 'Credit',         color: 'bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300',          dot: 'bg-amber-500' },
-  transfer:       { label: 'Transfer',       color: 'bg-violet-50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300',      dot: 'bg-violet-500' },
-  cross_month:    { label: 'Other month',    color: 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300',              dot: 'bg-blue-500' },
+  new:            { label: 'New',           style: { background: 'oklch(72% 0.17 145 / 12%)', color: 'oklch(44% 0.18 145)' },  dot: 'bg-emerald-500' },
+  already_logged: { label: 'Already logged', style: { background: 'var(--sur-8)',               color: 'var(--color-text-muted)' }, dot: 'bg-slate-400' },
+  credit:         { label: 'Credit',         style: { background: 'oklch(78% 0.16 75 / 12%)',  color: 'oklch(50% 0.18 75)' },   dot: 'bg-amber-500' },
+  transfer:       { label: 'Transfer',       style: { background: 'oklch(65% 0.20 285 / 12%)', color: 'oklch(52% 0.20 285)' },  dot: 'bg-violet-500' },
+  cross_month:    { label: 'Other month',    style: { background: 'oklch(65% 0.16 220 / 12%)', color: 'oklch(50% 0.18 220)' },  dot: 'bg-blue-500' },
 };
 
 // ── Credit application helper ─────────────────────────────────────────────────
@@ -665,18 +682,25 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/40 dark:bg-black/60 z-40 backdrop-blur-sm" onClick={onClose} />
+      <div
+        className="fixed inset-0 z-40 animate-overlay-in"
+        style={{ background: 'oklch(0% 0 0 / 50%)', backdropFilter: 'blur(4px)' }}
+        onClick={onClose}
+      />
       <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
-        <div className="bg-white dark:bg-slate-800 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl w-full sm:max-w-lg border border-slate-100 dark:border-slate-700 overflow-hidden max-h-[90vh] flex flex-col">
-          <div className="w-10 h-1 bg-slate-200 dark:bg-slate-600 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" />
+        <div
+          className="glass-heavy animate-sheet-up rounded-t-3xl sm:rounded-3xl w-full sm:max-w-lg overflow-hidden max-h-[90vh] flex flex-col"
+          style={{ border: '1px solid var(--sur-10)', borderBottom: 'none' }}
+        >
+          <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" style={{ background: 'var(--sur-20)' }} />
 
           {/* Header */}
-          <div className="flex items-center justify-between px-6 pt-6 pb-5 border-b border-slate-100 dark:border-slate-700 flex-shrink-0">
+          <div className="flex items-center justify-between px-6 pt-6 pb-5 flex-shrink-0" style={{ borderBottom: '1px solid var(--sur-8)' }}>
             <div>
-              <p className="text-base font-black text-slate-800 dark:text-slate-100">Reconcile {monthName}</p>
-              <p className="text-xs text-slate-400 mt-0.5">Upload bank statements to match against your logged expenses</p>
+              <p className="text-base font-black" style={{ color: 'var(--color-text)' }}>Reconcile {monthName}</p>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>Upload bank statements to match against your logged expenses</p>
             </div>
-            <button onClick={onClose} className="p-2 rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
+            <button onClick={onClose} className="p-2 rounded-xl transition-colors" style={{ color: 'var(--color-text-muted)' }}>
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -687,10 +711,10 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
             {/* ── Step: deduping ── */}
             {step === 'deduping' && (
               <div className="flex flex-col items-center justify-center py-16 gap-5">
-                <RefreshCw className="w-10 h-10 text-indigo-400 animate-spin" />
+                <RefreshCw className="w-10 h-10 animate-spin" style={{ color: 'var(--color-accent-text)' }} />
                 <div className="text-center">
-                  <p className="text-base font-black text-slate-700 dark:text-slate-200">Checking your logged expenses…</p>
-                  <p className="text-xs text-slate-400 mt-1">Comparing {allTransactions.length} bank transactions against your sheets</p>
+                  <p className="text-base font-black" style={{ color: 'var(--color-text)' }}>Checking your logged expenses…</p>
+                  <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>Comparing {allTransactions.length} bank transactions against your sheets</p>
                 </div>
               </div>
             )}
@@ -698,22 +722,22 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
             {/* ── Step: deduped summary ── */}
             {step === 'deduped' && (
               <div className="space-y-3">
-                <p className="text-xs font-black uppercase tracking-widest text-slate-400">Results</p>
+                <p className="text-xs font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>Results</p>
                 {Object.entries(STATUS_CONFIG).map(([status, cfg]) => {
                   const count = dedupCounts[status] || 0;
                   if (count === 0) return null;
                   return (
-                    <div key={status} className="flex items-center justify-between bg-slate-50 dark:bg-slate-700/50 rounded-2xl px-4 py-3.5">
+                    <div key={status} className="flex items-center justify-between rounded-2xl px-4 py-3.5" style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-8)' }}>
                       <div className="flex items-center gap-3">
                         <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
-                        <span className="text-sm font-bold text-slate-700 dark:text-slate-200">{cfg.label}</span>
+                        <span className="text-sm font-bold" style={{ color: 'var(--color-text)' }}>{cfg.label}</span>
                       </div>
                       <span className={`text-xs font-black px-2.5 py-1 rounded-full ${cfg.color}`}>{count}</span>
                     </div>
                   );
                 })}
                 {dedupCounts.already_logged > 0 && (
-                  <p className="text-xs text-slate-400 px-1">
+                  <p className="text-xs px-1" style={{ color: 'var(--color-text-muted)' }}>
                     {dedupCounts.already_logged} transaction{dedupCounts.already_logged !== 1 ? 's' : ''} already in your sheets — will be skipped automatically.
                   </p>
                 )}
@@ -723,16 +747,19 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
             {/* ── Step: importing ── */}
             {step === 'importing' && (
               <div className="flex flex-col items-center justify-center py-16 gap-5">
-                <RefreshCw className="w-10 h-10 text-indigo-400 animate-spin" />
+                <RefreshCw className="w-10 h-10 animate-spin" style={{ color: 'var(--color-accent-text)' }} />
                 <div className="text-center">
-                  <p className="text-base font-black text-slate-700 dark:text-slate-200">Importing…</p>
-                  <p className="text-xs text-slate-400 mt-1">{importProgress.current} of {importProgress.total} done</p>
+                  <p className="text-base font-black" style={{ color: 'var(--color-text)' }}>Importing…</p>
+                  <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>{importProgress.current} of {importProgress.total} done</p>
                 </div>
                 {/* Progress bar */}
-                <div className="w-48 h-1.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                <div className="w-48 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--sur-10)' }}>
                   <div
-                    className="h-full bg-indigo-500 rounded-full transition-all duration-300"
-                    style={{ width: importProgress.total > 0 ? `${(importProgress.current / importProgress.total) * 100}%` : '0%' }}
+                    className="h-full rounded-full transition-all duration-300"
+                    style={{
+                      width: importProgress.total > 0 ? `${(importProgress.current / importProgress.total) * 100}%` : '0%',
+                      background: 'var(--color-accent)',
+                    }}
                   />
                 </div>
               </div>
@@ -741,36 +768,36 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
             {/* ── Step: done ── */}
             {step === 'done' && importSummary && (
               <div className="flex flex-col items-center py-10 gap-6">
-                <div className="w-16 h-16 bg-emerald-100 dark:bg-emerald-900/30 rounded-2xl flex items-center justify-center">
-                  <CheckCircle2 className="w-8 h-8 text-emerald-500" />
+                <div className="w-16 h-16 rounded-2xl flex items-center justify-center" style={{ background: 'oklch(72% 0.17 145 / 15%)' }}>
+                  <CheckCircle2 className="w-8 h-8" style={{ color: 'var(--color-success)' }} />
                 </div>
                 <div className="text-center">
-                  <p className="text-lg font-black text-slate-800 dark:text-slate-100">Reconciliation complete</p>
-                  <p className="text-sm text-slate-400 mt-1">{monthName}</p>
+                  <p className="text-lg font-black" style={{ color: 'var(--color-text)' }}>Reconciliation complete</p>
+                  <p className="text-sm mt-1" style={{ color: 'var(--color-text-muted)' }}>{monthName}</p>
                 </div>
                 <div className="w-full space-y-2">
                   {importSummary.imported > 0 && (
-                    <div className="flex items-center justify-between bg-emerald-50 dark:bg-emerald-900/20 rounded-2xl px-4 py-3">
-                      <span className="text-sm font-bold text-emerald-700 dark:text-emerald-300">Transactions imported</span>
-                      <span className="text-sm font-black text-emerald-700 dark:text-emerald-300">{importSummary.imported}</span>
+                    <div className="flex items-center justify-between rounded-2xl px-4 py-3" style={{ background: 'oklch(72% 0.17 145 / 10%)', border: '1px solid oklch(72% 0.17 145 / 20%)' }}>
+                      <span className="text-sm font-bold" style={{ color: 'var(--color-success)' }}>Transactions imported</span>
+                      <span className="text-sm font-black" style={{ color: 'var(--color-success)' }}>{importSummary.imported}</span>
                     </div>
                   )}
                   {importSummary.creditsApplied > 0 && (
-                    <div className="flex items-center justify-between bg-amber-50 dark:bg-amber-900/20 rounded-2xl px-4 py-3">
-                      <span className="text-sm font-bold text-amber-700 dark:text-amber-300">Credits applied</span>
-                      <span className="text-sm font-black text-amber-700 dark:text-amber-300">{importSummary.creditsApplied}</span>
+                    <div className="flex items-center justify-between rounded-2xl px-4 py-3" style={{ background: 'oklch(78% 0.16 75 / 10%)', border: '1px solid oklch(78% 0.16 75 / 20%)' }}>
+                      <span className="text-sm font-bold" style={{ color: 'var(--color-warning)' }}>Credits applied</span>
+                      <span className="text-sm font-black" style={{ color: 'var(--color-warning)' }}>{importSummary.creditsApplied}</span>
                     </div>
                   )}
                   {importSummary.skipped > 0 && (
-                    <div className="flex items-center justify-between bg-slate-50 dark:bg-slate-700/50 rounded-2xl px-4 py-3">
-                      <span className="text-sm font-bold text-slate-500 dark:text-slate-400">Skipped</span>
-                      <span className="text-sm font-black text-slate-500 dark:text-slate-400">{importSummary.skipped}</span>
+                    <div className="flex items-center justify-between rounded-2xl px-4 py-3" style={{ background: 'var(--sur-8)' }}>
+                      <span className="text-sm font-bold" style={{ color: 'var(--color-text-muted)' }}>Skipped</span>
+                      <span className="text-sm font-black" style={{ color: 'var(--color-text-muted)' }}>{importSummary.skipped}</span>
                     </div>
                   )}
                   {importSummary.failed > 0 && (
-                    <div className="flex items-center justify-between bg-rose-50 dark:bg-rose-900/20 rounded-2xl px-4 py-3">
-                      <span className="text-sm font-bold text-rose-600 dark:text-rose-400">Failed (check console)</span>
-                      <span className="text-sm font-black text-rose-600 dark:text-rose-400">{importSummary.failed}</span>
+                    <div className="flex items-center justify-between rounded-2xl px-4 py-3" style={{ background: 'oklch(62% 0.22 25 / 10%)', border: '1px solid oklch(62% 0.22 25 / 20%)' }}>
+                      <span className="text-sm font-bold" style={{ color: 'var(--color-danger)' }}>Failed (check console)</span>
+                      <span className="text-sm font-black" style={{ color: 'var(--color-danger)' }}>{importSummary.failed}</span>
                     </div>
                   )}
                 </div>
@@ -781,12 +808,12 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
             {step === 'review' && (
               <div className="space-y-3">
                 {/* Summary pill */}
-                <div className="flex items-center justify-between bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40 rounded-2xl px-4 py-2.5">
-                  <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                <div className="flex items-center justify-between rounded-2xl px-4 py-2.5" style={{ background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}>
+                  <span className="text-xs font-bold" style={{ color: 'var(--color-accent-text)' }}>
                     {importCount} transaction{importCount !== 1 ? 's' : ''} will be imported
                   </span>
                   {loggedTxs.length > 0 && (
-                    <span className="text-xs text-slate-400">{loggedTxs.length} already logged — skipped</span>
+                    <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{loggedTxs.length} already logged — skipped</span>
                   )}
                 </div>
 
@@ -816,9 +843,9 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
                       });
                     }}
                   >
-                    <div className="px-4 py-2.5 bg-slate-50 dark:bg-slate-700/30">
-                      <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                        These purchase/refund pairs net to <span className="font-black text-slate-700 dark:text-slate-200">$0</span> with no match in your dashboard. Defaulted to skip — import both if this was a real exchange.
+                    <div className="px-4 py-2.5" style={{ background: 'var(--sur-5)' }}>
+                      <p className="text-xs leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
+                        These purchase/refund pairs net to <span className="font-black" style={{ color: 'var(--color-text)' }}>$0</span> with no match in your dashboard. Defaulted to skip — import both if this was a real exchange.
                       </p>
                     </div>
                     {netZeroPairs.filter(t => t.status === 'new').map(tx => (
@@ -879,10 +906,10 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
                   {loggedTxs.map(tx => (
                     <div key={tx.id} className="px-4 py-3 flex items-center justify-between opacity-50">
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold text-slate-600 dark:text-slate-400 truncate">{tx.matchedVendor || tx.vendor}</p>
-                        <p className="text-xs text-slate-400">{tx.matchedCategory} · {formatDate(tx.date)}</p>
+                        <p className="text-sm font-bold truncate" style={{ color: 'var(--color-text-secondary)' }}>{tx.matchedVendor || tx.vendor}</p>
+                        <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{tx.matchedCategory} · {formatDate(tx.date)}</p>
                       </div>
-                      <span className="text-sm font-black text-slate-500 tabular-nums">${tx.amount.toFixed(2)}</span>
+                      <span className="text-sm font-black tabular-nums" style={{ color: 'var(--color-text-muted)' }}>${tx.amount.toFixed(2)}</span>
                     </div>
                   ))}
                 </ReviewSection>
@@ -893,9 +920,9 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
             {step === 'upload' && (
               <>
                 {/* Privacy notice */}
-                <div className="flex items-start gap-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-800/40 rounded-2xl px-4 py-3">
-                  <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0 mt-0.5" />
-                  <p className="text-xs text-emerald-700 dark:text-emerald-300 font-medium leading-relaxed">
+                <div className="flex items-start gap-3 rounded-2xl px-4 py-3" style={{ background: 'oklch(72% 0.17 145 / 8%)', border: '1px solid oklch(72% 0.17 145 / 20%)' }}>
+                  <ShieldCheck className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: 'var(--color-success)' }} />
+                  <p className="text-xs font-medium leading-relaxed" style={{ color: 'var(--color-success)' }}>
                     Your files are read <strong>locally in your browser</strong> and never uploaded to any server. Nothing leaves your device.
                   </p>
                 </div>
@@ -909,21 +936,24 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
                   onDragLeave={() => setDragging(false)}
                   onDrop={handleDrop}
                   onClick={() => fileInputRef.current?.click()}
-                  className={`relative border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${
-                    dragging
-                      ? 'border-indigo-400 bg-indigo-50 dark:bg-indigo-900/20'
-                      : 'border-slate-200 dark:border-slate-600 hover:border-indigo-300 dark:hover:border-indigo-600 hover:bg-slate-50 dark:hover:bg-slate-700/30'
-                  }`}
+                  className="relative border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all"
+                  style={dragging ? {
+                    borderColor: 'var(--color-accent)',
+                    background: 'var(--color-accent-subtle)',
+                  } : {
+                    borderColor: 'var(--sur-15)',
+                    background: 'var(--sur-3)',
+                  }}
                 >
                   <input ref={fileInputRef} type="file" accept=".csv,text/csv,.pdf,application/pdf,.qif,.ofx,.qfx,.mt940,.sta,.mta" multiple onChange={handleFileInput} className="sr-only" />
-                  <Upload className={`w-8 h-8 mx-auto mb-3 transition-colors ${dragging ? 'text-indigo-500' : 'text-slate-300 dark:text-slate-600'}`} />
-                  <p className="text-sm font-bold text-slate-600 dark:text-slate-300">
-                    Drop CSV or PDF files here, or <span className="text-indigo-500">browse</span>
+                  <Upload className="w-8 h-8 mx-auto mb-3 transition-colors" style={{ color: dragging ? 'var(--color-accent-text)' : 'var(--color-text-muted)' }} />
+                  <p className="text-sm font-bold" style={{ color: 'var(--color-text-secondary)' }}>
+                    Drop CSV or PDF files here, or <span style={{ color: 'var(--color-accent-text)' }}>browse</span>
                   </p>
-                  <p className="text-xs text-slate-400 mt-1.5">Chase · Amex · Any bank CSV or PDF · Multiple files supported</p>
+                  <p className="text-xs mt-1.5" style={{ color: 'var(--color-text-muted)' }}>Chase · Amex · Any bank CSV or PDF · Multiple files supported</p>
                   {parsing && (
-                    <div className="absolute inset-0 bg-white/70 dark:bg-slate-800/70 rounded-2xl flex items-center justify-center">
-                      <p className="text-sm font-bold text-indigo-500 animate-pulse">Parsing…</p>
+                    <div className="absolute inset-0 rounded-2xl flex items-center justify-center" style={{ background: 'oklch(14% 0.010 265 / 70%)' }}>
+                      <p className="text-sm font-bold animate-pulse" style={{ color: 'var(--color-accent-text)' }}>Parsing…</p>
                     </div>
                   )}
                 </div>
@@ -945,23 +975,23 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
 
                 {/* Summary bar */}
                 {hasResults && (
-                  <div className="bg-slate-50 dark:bg-slate-700/50 rounded-2xl px-4 py-3 flex items-center justify-between flex-wrap gap-3">
+                  <div className="rounded-2xl px-4 py-3 flex items-center justify-between flex-wrap gap-3" style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-8)' }}>
                     <div className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                      <span className="text-sm font-black text-slate-700 dark:text-slate-200">
+                      <CheckCircle2 className="w-4 h-4" style={{ color: 'var(--color-success)' }} />
+                      <span className="text-sm font-black" style={{ color: 'var(--color-text)' }}>
                         {allTransactions.length} transactions across {files.filter(f => !f.result?.error).length} file{files.filter(f => !f.result?.error).length !== 1 ? 's' : ''}
                       </span>
                     </div>
                     <div className="flex items-center gap-3 text-xs font-bold">
-                      <span className="text-emerald-600 dark:text-emerald-400">{uploadCounts.purchase} purchases</span>
-                      {uploadCounts.credit > 0   && <span className="text-amber-600 dark:text-amber-400">{uploadCounts.credit} credits</span>}
-                      {uploadCounts.transfer > 0 && <span className="text-violet-600 dark:text-violet-400">{uploadCounts.transfer} transfers</span>}
+                      <span style={{ color: 'var(--color-success)' }}>{uploadCounts.purchase} purchases</span>
+                      {uploadCounts.credit > 0   && <span style={{ color: 'var(--color-warning)' }}>{uploadCounts.credit} credits</span>}
+                      {uploadCounts.transfer > 0 && <span style={{ color: 'oklch(72% 0.16 285)' }}>{uploadCounts.transfer} transfers</span>}
                     </div>
                   </div>
                 )}
 
                 {dedupError && (
-                  <div className="flex items-center gap-2 text-rose-500 text-xs font-bold">
+                  <div className="flex items-center gap-2 text-xs font-bold" style={{ color: 'var(--color-danger)' }}>
                     <AlertCircle className="w-4 h-4 flex-shrink-0" /> {dedupError}
                   </div>
                 )}
@@ -971,27 +1001,37 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
           </div>
 
           {/* Footer */}
-          <div className="px-6 pb-6 flex gap-3 flex-shrink-0 border-t border-slate-100 dark:border-slate-700 pt-4"
-            style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)' }}>
+          <div
+            className="px-6 pb-6 flex gap-3 flex-shrink-0 pt-4"
+            style={{ borderTop: '1px solid var(--sur-8)', paddingBottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)' }}
+          >
             {step === 'importing' ? (
-              <div className="flex-1 py-3 text-center text-xs text-slate-400 font-medium">Please wait…</div>
+              <div className="flex-1 py-3 text-center text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>Please wait…</div>
             ) : step === 'done' ? (
               <button
                 onClick={() => { onComplete?.(); onClose(); }}
-                className="flex-1 py-3 rounded-2xl text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition-all shadow-lg">
+                className="flex-1 py-3 rounded-2xl text-sm font-bold text-white transition-all"
+                style={{ background: 'var(--color-success)' }}
+              >
                 Done — refresh dashboard
               </button>
             ) : step === 'deduping' ? (
-              <div className="flex-1 py-3 text-center text-xs text-slate-400 font-medium">Please wait…</div>
+              <div className="flex-1 py-3 text-center text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>Please wait…</div>
             ) : step === 'deduped' ? (
               <>
-                <button onClick={() => setStep('upload')}
-                  className="flex-1 py-3 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">
+                <button
+                  onClick={() => setStep('upload')}
+                  className="flex-1 py-3 rounded-2xl text-sm font-bold transition-colors"
+                  style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}
+                >
                   ← Back
                 </button>
-                <button onClick={handleReview}
+                <button
+                  onClick={handleReview}
                   disabled={dedupCounts.new === 0 && dedupCounts.credit === 0 && dedupCounts.transfer === 0 && dedupCounts.cross_month === 0}
-                  className="flex-1 py-3 rounded-2xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-lg">
+                  className="flex-1 py-3 rounded-2xl text-sm font-bold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{ background: 'var(--color-accent)' }}
+                >
                   Review → {(dedupCounts.new + dedupCounts.credit + dedupCounts.transfer + dedupCounts.cross_month) > 0
                     ? `(${dedupCounts.new + dedupCounts.credit + dedupCounts.transfer + dedupCounts.cross_month})`
                     : ''}
@@ -999,23 +1039,37 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
               </>
             ) : step === 'review' ? (
               <>
-                <button onClick={() => setStep('deduped')}
-                  className="flex-1 py-3 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">
+                <button
+                  onClick={() => setStep('deduped')}
+                  className="flex-1 py-3 rounded-2xl text-sm font-bold transition-colors"
+                  style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}
+                >
                   ← Back
                 </button>
-                <button onClick={handleConfirmImport} disabled={importCount === 0}
-                  className="flex-1 py-3 rounded-2xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-lg">
+                <button
+                  onClick={handleConfirmImport}
+                  disabled={importCount === 0}
+                  className="flex-1 py-3 rounded-2xl text-sm font-bold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{ background: 'var(--color-accent)' }}
+                >
                   Import {importCount > 0 ? `${importCount} transaction${importCount !== 1 ? 's' : ''}` : ''} →
                 </button>
               </>
             ) : (
               <>
-                <button onClick={onClose}
-                  className="flex-1 py-3 rounded-2xl text-sm font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">
+                <button
+                  onClick={onClose}
+                  className="flex-1 py-3 rounded-2xl text-sm font-bold transition-colors"
+                  style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}
+                >
                   Cancel
                 </button>
-                <button onClick={handleContinue} disabled={!hasResults}
-                  className="flex-1 py-3 rounded-2xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-lg">
+                <button
+                  onClick={handleContinue}
+                  disabled={!hasResults}
+                  className="flex-1 py-3 rounded-2xl text-sm font-bold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{ background: 'var(--color-accent)' }}
+                >
                   Check against sheets → {allTransactions.length > 0 ? `(${allTransactions.length})` : ''}
                 </button>
               </>

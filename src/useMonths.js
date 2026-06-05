@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { SHEET_MAP } from './sheetsApi.js';
 import { requestDriveToken } from './driveAuth.js';
+import { MOCK_MONTHS } from './mockData.js';
+
+const DEV_MOCK = import.meta.env.DEV && import.meta.env.VITE_DEV_MOCK === 'true';
 
 const TEMPLATE_ID = import.meta.env.VITE_TEMPLATE_SHEET_ID;
 
@@ -231,10 +234,11 @@ async function removeMonthEntry(monthName, accessToken) {
 }
 
 export function useMonths(accessToken, allowedEmails = []) {
-  const [months, setMonths]   = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [months, setMonths]   = useState(() => DEV_MOCK ? MOCK_MONTHS : []);
+  const [loading, setLoading] = useState(!DEV_MOCK);
 
   const load = useCallback(async () => {
+    if (DEV_MOCK) return;
     try {
       const list = await fetchMonths(accessToken);
       setMonths(list);
@@ -245,7 +249,7 @@ export function useMonths(accessToken, allowedEmails = []) {
     }
   }, [accessToken]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (!DEV_MOCK) load(); }, [load]);
 
 
   /** Create a new month: copy template → delete Months tab → update month columns → clear stale notes → share → register */

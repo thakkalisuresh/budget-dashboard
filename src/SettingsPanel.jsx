@@ -157,7 +157,7 @@ const FONT_SIZE_OPTIONS = [
 
 function SectionLabel({ children }) {
   return (
-    <h3 className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400 mb-3">
+    <h3 className="text-[10px] font-black uppercase tracking-[0.18em] mb-3" style={{ color: 'var(--color-text-muted)' }}>
       {children}
     </h3>
   );
@@ -167,20 +167,21 @@ function Toggle({ on, onToggle, label, desc }) {
   return (
     <button
       onClick={onToggle}
-      className={`w-full flex items-center justify-between gap-3 px-4 py-3.5 rounded-2xl border transition-all text-left ${
-        on
-          ? 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600'
-          : 'bg-slate-50 dark:bg-slate-800/40 border-slate-100 dark:border-slate-700/50 opacity-55'
-      }`}
+      className="w-full flex items-center justify-between gap-3 px-4 py-3.5 rounded-2xl transition-all text-left"
+      style={on
+        ? { background: 'var(--sur-5)', border: '1px solid var(--sur-12)' }
+        : { background: 'var(--sur-2)', border: '1px solid var(--sur-6)', opacity: 0.55 }
+      }
     >
       <div className="min-w-0">
-        <p className={`text-sm font-bold truncate ${on ? 'text-slate-800 dark:text-slate-100' : 'text-slate-400 dark:text-slate-500'}`}>
+        <p className="text-sm font-bold truncate" style={{ color: on ? 'var(--color-text)' : 'var(--color-text-muted)' }}>
           {label}
         </p>
-        <p className="text-xs text-slate-400 mt-0.5 truncate">{desc}</p>
+        <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--color-text-muted)' }}>{desc}</p>
       </div>
       {/* Pill toggle */}
-      <div className={`flex-shrink-0 w-10 h-6 rounded-full transition-colors duration-200 ${on ? 'bg-indigo-500' : 'bg-slate-200 dark:bg-slate-600'}`}>
+      <div className="flex-shrink-0 w-10 h-6 rounded-full transition-colors duration-200"
+        style={{ background: on ? 'var(--color-accent)' : 'var(--sur-15)' }}>
         <div className={`w-4 h-4 bg-white rounded-full mt-1 shadow-sm transition-transform duration-200 ${on ? 'translate-x-5' : 'translate-x-1'}`} />
       </div>
     </button>
@@ -237,12 +238,13 @@ function ShortcutRow({ actionKey, label, desc, value, onSave, onReset, defaultVa
   return (
     <div className="flex items-center gap-3 px-4 py-3">
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-bold text-slate-700 dark:text-slate-200">{label}</p>
-        <p className="text-xs text-slate-400 mt-0.5">{desc}</p>
+        <p className="text-sm font-bold" style={{ color: 'var(--color-text)' }}>{label}</p>
+        <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{desc}</p>
       </div>
       <div className="flex items-center gap-1.5 flex-shrink-0">
         {listening ? (
-          <span className="text-xs font-bold text-indigo-500 bg-indigo-50 dark:bg-indigo-900/30 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-700/40 animate-pulse">
+          <span className="text-xs font-bold px-3 py-1.5 rounded-xl animate-pulse"
+            style={{ color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}>
             Press keys… Esc to cancel
           </span>
         ) : (
@@ -250,17 +252,16 @@ function ShortcutRow({ actionKey, label, desc, value, onSave, onReset, defaultVa
             <button
               ref={ref}
               onClick={() => setListening(true)}
-              className="text-xs font-black text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 hover:text-indigo-600 dark:hover:text-indigo-400 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-600 transition-colors font-mono tracking-wide"
+              className="text-xs font-black px-3 py-1.5 rounded-xl transition-colors font-mono tracking-wide hover:bg-[var(--sur-5)]"
+              style={{ color: 'var(--color-text)', background: 'var(--sur-8)', border: '1px solid var(--sur-12)' }}
               title="Click to rebind"
             >
               {formatCombo(value)}
             </button>
             {value !== defaultValue && (
-              <button
-                onClick={onReset}
-                title="Reset to default"
-                className="p-1.5 rounded-lg text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 transition-colors"
-              >
+              <button onClick={onReset} title="Reset to default"
+                className="p-1.5 rounded-lg transition-colors hover:bg-[var(--sur-5)]"
+                style={{ color: 'var(--color-text-muted)' }}>
                 <RotateCcw className="w-3 h-3" />
               </button>
             )}
@@ -432,7 +433,8 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
   const deleteCardRule = (id) =>
     updateSettings(prev => ({ ...prev, cardRules: (prev.cardRules || []).filter(r => r.id !== id) }));
 
-  const inputCls = "bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-900 dark:text-slate-100 rounded-xl px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-indigo-500/30 w-full";
+  const inputCls = "rounded-xl px-3 py-1.5 text-xs outline-none w-full";
+  const inputStyle = { background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' };
 
   const toggleVis = (key) =>
     updateSettings(prev => ({
@@ -457,26 +459,24 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/30 dark:bg-black/50 z-40 backdrop-blur-sm"
+        className="fixed inset-0 z-40 animate-overlay-in"
+        style={{ background: 'oklch(0% 0 0 / 50%)', backdropFilter: 'blur(4px)' }}
         onClick={onClose}
       />
 
       {/* Drawer */}
       <div
-        className="fixed right-0 top-0 bottom-0 z-50 w-[85vw] max-w-sm bg-white dark:bg-slate-900 shadow-2xl flex flex-col border-l border-slate-100 dark:border-slate-700"
-        style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
+        className="fixed right-0 top-0 bottom-0 z-50 w-[85vw] max-w-sm glass-heavy flex flex-col"
+        style={{ borderLeft: '1px solid var(--sur-8)', paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
 
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-100 dark:border-slate-700 flex-shrink-0">
+        <div className="flex items-center justify-between px-6 py-5 flex-shrink-0" style={{ borderBottom: '1px solid var(--sur-8)' }}>
           <div>
-            <h2 className="text-base font-black text-slate-800 dark:text-slate-100">Customize Dashboard</h2>
-            <p className="text-xs text-slate-400 mt-0.5">Saved to your account automatically</p>
+            <h2 className="text-base font-black" style={{ color: 'var(--color-text)' }}>Customize Dashboard</h2>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>Saved to your account automatically</p>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
-          >
+          <button onClick={onClose} className="p-2 rounded-xl transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}>
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -487,36 +487,36 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
             {/* ── Currency ────────────────────────────────────────────────── */}
           <div>
             <SectionLabel>Currency</SectionLabel>
-            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl overflow-hidden">
+            <div className="rounded-2xl overflow-hidden" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
               {/* Selected currency display */}
-              <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-700 flex items-center gap-3">
+              <div className="px-4 py-3 flex items-center gap-3" style={{ borderBottom: '1px solid var(--sur-8)' }}>
                 <span className="text-xl">{CURRENCIES.find(c => c.code === (settings.currency || 'USD'))?.flag}</span>
                 <div>
-                  <p className="text-sm font-black text-slate-800 dark:text-slate-100">
+                  <p className="text-sm font-black" style={{ color: 'var(--color-text)' }}>
                     {CURRENCIES.find(c => c.code === (settings.currency || 'USD'))?.label}
                   </p>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
                     {settings.currency || 'USD'} · {CURRENCIES.find(c => c.code === (settings.currency || 'USD'))?.symbol}
                   </p>
                 </div>
               </div>
 
               {/* Search */}
-              <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-700">
+              <div className="px-3 py-2" style={{ borderBottom: '1px solid var(--sur-8)' }}>
                 <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5" style={{ color: 'var(--color-text-muted)' }} />
                   <input
                     type="text"
                     placeholder="Search currency…"
                     value={currencySearch}
                     onChange={e => setCurrencySearch(e.target.value)}
-                    className="w-full bg-slate-50 dark:bg-slate-700/60 rounded-xl pl-8 pr-3 py-2 text-xs outline-none focus:ring-2 focus:ring-indigo-500/30 text-slate-700 dark:text-slate-200 placeholder:text-slate-400"
+                    className="w-full rounded-xl pl-8 pr-3 py-2 text-xs outline-none" style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}
                   />
                 </div>
               </div>
 
               {/* Currency list */}
-              <div className="max-h-48 overflow-y-auto divide-y divide-slate-50 dark:divide-slate-700/40">
+              <div className="max-h-48 overflow-y-auto">
                 {CURRENCIES
                   .filter(c => {
                     const q = currencySearch.toLowerCase();
@@ -528,24 +528,21 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                       <button
                         key={c.code}
                         onClick={() => updateSettings(prev => ({ ...prev, currency: c.code }))}
-                        className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${
-                          selected
-                            ? 'bg-indigo-50 dark:bg-indigo-900/30'
-                            : 'hover:bg-slate-50 dark:hover:bg-slate-700/30'
-                        }`}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-[var(--sur-5)]"
+                        style={selected ? { background: 'var(--color-accent-subtle)' } : {}}
                       >
                         <span className="text-base w-6 flex-shrink-0">{c.flag}</span>
                         <div className="flex-1 min-w-0">
-                          <p className={`text-xs font-bold truncate ${selected ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-700 dark:text-slate-200'}`}>
+                          <p className="text-xs font-bold truncate" style={{ color: selected ? 'var(--color-accent-text)' : 'var(--color-text)' }}>
                             {c.label}
                           </p>
-                          <p className="text-[10px] text-slate-400">{c.code}</p>
+                          <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>{c.code}</p>
                         </div>
-                        <span className={`text-sm font-black flex-shrink-0 ${selected ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'}`}>
+                        <span className="text-sm font-black flex-shrink-0" style={{ color: selected ? 'var(--color-accent-text)' : 'var(--color-text-muted)' }}>
                           {c.symbol}
                         </span>
                         {selected && (
-                          <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 flex-shrink-0" />
+                          <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: 'var(--color-accent)' }} />
                         )}
                       </button>
                     );
@@ -560,8 +557,8 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
             <div className="space-y-4">
 
               {/* Theme */}
-              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl px-4 py-4">
-                <p className="text-sm font-bold text-slate-700 dark:text-slate-200 mb-3">Default theme</p>
+              <div className="rounded-2xl px-4 py-4" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+                <p className="text-sm font-bold mb-3" style={{ color: 'var(--color-text)' }}>Default theme</p>
                 <div className="flex gap-2">
                   {[
                     { value: 'dark',   label: '🌙 Dark'  },
@@ -571,11 +568,10 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                     <button
                       key={value}
                       onClick={() => updateSettings(prev => ({ ...prev, theme: value }))}
-                      className={`flex-1 py-2 rounded-xl text-xs font-black transition-all ${
-                        settings.theme === value
-                          ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200 dark:shadow-indigo-900/30'
-                          : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-600'
-                      }`}
+                      className="flex-1 py-2 rounded-xl text-xs font-black transition-all"
+                      style={settings.theme === value
+                        ? { background: 'var(--color-accent)', color: 'white' }
+                        : { background: 'var(--sur-8)', color: 'var(--color-text-muted)' }}
                     >
                       {label}
                     </button>
@@ -584,17 +580,17 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
               </div>
 
               {/* Color scheme */}
-              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl px-4 py-4">
-                <p className="text-sm font-bold text-slate-700 dark:text-slate-200 mb-3">Accent color</p>
+              <div className="rounded-2xl px-4 py-4" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+                <p className="text-sm font-bold mb-3" style={{ color: 'var(--color-text)' }}>Accent color</p>
                 <div className="flex gap-2 flex-wrap">
                   {COLOR_SCHEMES.map(({ value, label, primary }) => (
                     <button
                       key={value}
                       onClick={() => updateSettings(prev => ({ ...prev, colorScheme: value }))}
                       title={label}
-                      className={`w-8 h-8 rounded-full transition-all ring-offset-2 dark:ring-offset-slate-800 ${
+                      className={`w-8 h-8 rounded-full transition-all ${
                         settings.colorScheme === value
-                          ? 'ring-2 ring-offset-2 scale-110'
+                          ? 'ring-2 ring-offset-1 scale-110'
                           : 'hover:scale-105 opacity-70 hover:opacity-100'
                       }`}
                       style={{
@@ -604,24 +600,23 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                     />
                   ))}
                 </div>
-                <p className="text-xs text-slate-400 mt-2">
+                <p className="text-xs mt-2" style={{ color: 'var(--color-text-muted)' }}>
                   {COLOR_SCHEMES.find(c => c.value === settings.colorScheme)?.label || 'Indigo'} selected
                 </p>
               </div>
 
               {/* Font size */}
-              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl px-4 py-4">
-                <p className="text-sm font-bold text-slate-700 dark:text-slate-200 mb-3">Font size</p>
+              <div className="rounded-2xl px-4 py-4" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+                <p className="text-sm font-bold mb-3" style={{ color: 'var(--color-text)' }}>Font size</p>
                 <div className="flex gap-2">
                   {FONT_SIZE_OPTIONS.map(({ value, label }) => (
                     <button
                       key={value}
                       onClick={() => updateSettings(prev => ({ ...prev, fontSize: value }))}
-                      className={`flex-1 py-2 rounded-xl text-xs font-black transition-all ${
-                        settings.fontSize === value
-                          ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200 dark:shadow-indigo-900/30'
-                          : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-600'
-                      }`}
+                      className="flex-1 py-2 rounded-xl text-xs font-black transition-all"
+                      style={settings.fontSize === value
+                        ? { background: 'var(--color-accent)', color: 'white' }
+                        : { background: 'var(--sur-8)', color: 'var(--color-text-muted)' }}
                     >
                       {label}
                     </button>
@@ -675,18 +670,17 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
             <div className="space-y-4">
 
               {/* Donut legend count */}
-              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl px-4 py-4">
-                <p className="text-sm font-bold text-slate-700 dark:text-slate-200 mb-3">Distribution legend items</p>
+              <div className="rounded-2xl px-4 py-4" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+                <p className="text-sm font-bold mb-3" style={{ color: 'var(--color-text)' }}>Distribution legend items</p>
                 <div className="flex gap-2">
                   {LEGEND_COUNT_OPTIONS.map(n => (
                     <button
                       key={n}
                       onClick={() => updateSettings(prev => ({ ...prev, donutLegendCount: n }))}
-                      className={`flex-1 py-2 rounded-xl text-xs font-black transition-all ${
-                        settings.donutLegendCount === n
-                          ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200 dark:shadow-indigo-900/30'
-                          : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-600'
-                      }`}
+                      className="flex-1 py-2 rounded-xl text-xs font-black transition-all"
+                      style={settings.donutLegendCount === n
+                        ? { background: 'var(--color-accent)', color: 'white' }
+                        : { background: 'var(--sur-8)', color: 'var(--color-text-muted)' }}
                     >
                       {n === 10 ? 'All' : `Top ${n}`}
                     </button>
@@ -695,24 +689,22 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
               </div>
 
               {/* Bar chart sort */}
-              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl px-4 py-4">
-                <p className="text-sm font-bold text-slate-700 dark:text-slate-200 mb-3">Bar chart sort order</p>
+              <div className="rounded-2xl px-4 py-4" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+                <p className="text-sm font-bold mb-3" style={{ color: 'var(--color-text)' }}>Bar chart sort order</p>
                 <div className="space-y-1">
                   {BAR_SORT_OPTIONS.map(({ value, label }) => (
                     <button
                       key={value}
                       onClick={() => updateSettings(prev => ({ ...prev, barSortOrder: value }))}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all text-left ${
-                        settings.barSortOrder === value
-                          ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400'
-                          : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50'
-                      }`}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all text-left"
+                      style={settings.barSortOrder === value
+                        ? { background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)' }
+                        : { color: 'var(--color-text)' }}
                     >
-                      <div className={`w-3.5 h-3.5 rounded-full border-2 flex-shrink-0 transition-colors ${
-                        settings.barSortOrder === value
-                          ? 'border-indigo-500 bg-indigo-500'
-                          : 'border-slate-300 dark:border-slate-500'
-                      }`} />
+                      <div className="w-3.5 h-3.5 rounded-full border-2 flex-shrink-0 transition-colors"
+                      style={settings.barSortOrder === value
+                        ? { borderColor: 'var(--color-accent)', background: 'var(--color-accent)' }
+                        : { borderColor: 'var(--sur-25)', background: 'transparent' }} />
                       {label}
                     </button>
                   ))}
@@ -725,23 +717,23 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
           {chartExpenses.length > 0 && (
             <div>
               <SectionLabel>Category Colors</SectionLabel>
-              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl overflow-hidden divide-y divide-slate-50 dark:divide-slate-700/50">
+              <div className="rounded-2xl overflow-hidden" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
                 {chartExpenses.map((exp, i) => (
                   <label
                     key={exp.name}
-                    className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors group"
+                    className="flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors group hover:bg-[var(--sur-5)]"
                   >
                     <div
                       className="w-5 h-5 rounded-md flex-shrink-0 ring-1 ring-black/10 group-hover:scale-110 transition-transform"
                       style={{ backgroundColor: getCategoryColor(exp.name, i) }}
                     />
-                    <span className="flex-1 text-sm font-bold text-slate-700 dark:text-slate-200 truncate">
+                    <span className="flex-1 text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>
                       {exp.name}
                     </span>
-                    <span className="text-xs text-slate-400 tabular-nums">
+                    <span className="text-xs tabular-nums" style={{ color: 'var(--color-text-muted)' }}>
                       {currencySymbol}{exp.actual.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                     </span>
-                    <span className="text-[10px] text-slate-300 dark:text-slate-600 group-hover:text-slate-400 transition-colors">
+                    <span className="text-[10px] transition-colors" style={{ color: 'var(--color-text-muted)', opacity: 0.4 }}>
                       Edit ›
                     </span>
                     <input
@@ -759,18 +751,18 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
           {/* ── Security ────────────────────────────────────────────────── */}
           <div>
             <SectionLabel>Security</SectionLabel>
-            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl overflow-hidden divide-y divide-slate-50 dark:divide-slate-700/50">
-              <div className="px-4 py-4 flex items-center justify-between">
+            <div className="rounded-2xl overflow-hidden" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+              <div className="px-4 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--sur-6)' }}>
                 <div>
-                  <p className="text-sm font-bold text-slate-800 dark:text-slate-100">App PIN Lock</p>
-                  <p className="text-xs text-slate-400 mt-0.5">{pinHash ? 'PIN is set — app locks when backgrounded' : 'Lock the app with a 4-digit PIN'}</p>
+                  <p className="text-sm font-bold" style={{ color: 'var(--color-text)' }}>App PIN Lock</p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{pinHash ? 'PIN is set — app locks when backgrounded' : 'Lock the app with a 4-digit PIN'}</p>
                 </div>
                 {pinHash ? (
-                  <button onClick={onClearPin} className="px-3 py-1.5 rounded-xl text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-900/20 hover:bg-rose-100 dark:hover:bg-rose-900/30 transition-colors">
+                  <button onClick={onClearPin} className="px-3 py-1.5 rounded-xl text-xs font-bold transition-colors" style={{ color: 'var(--color-danger)', background: 'oklch(62% 0.22 25 / 10%)' }}>
                     Remove PIN
                   </button>
                 ) : (
-                  <button onClick={onSetPin} className="px-3 py-1.5 rounded-xl text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors">
+                  <button onClick={onSetPin} className="px-3 py-1.5 rounded-xl text-xs font-bold transition-colors" style={{ color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}>
                     Set PIN
                   </button>
                 )}
@@ -778,13 +770,13 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
               {pinHash && (
                 <div className="px-4 py-3 flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-bold text-slate-700 dark:text-slate-200">Lock timeout</p>
-                    <p className="text-xs text-slate-400 mt-0.5">How long before the app re-locks</p>
+                    <p className="text-sm font-bold" style={{ color: 'var(--color-text)' }}>Lock timeout</p>
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>How long before the app re-locks</p>
                   </div>
                   <select
                     value={localStorage.getItem('budget_pin_timeout') || String(10 * 60 * 1000)}
                     onChange={e => localStorage.setItem('budget_pin_timeout', e.target.value)}
-                    className="bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 rounded-xl px-3 py-1.5 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500/30 cursor-pointer"
+                    className="rounded-xl px-3 py-1.5 text-sm font-bold outline-none cursor-pointer" style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}
                   >
                     <option value={String(2  * 60 * 1000)}>2 minutes</option>
                     <option value={String(5  * 60 * 1000)}>5 minutes</option>
@@ -801,12 +793,12 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
           {pushHook?.supported && (
             <div>
               <SectionLabel>Push Notifications</SectionLabel>
-              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl overflow-hidden divide-y divide-slate-50 dark:divide-slate-700/50">
+              <div className="rounded-2xl overflow-hidden" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
                 {/* Toggle */}
-                <div className="px-4 py-4 flex items-center justify-between">
+                <div className="px-4 py-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--sur-6)' }}>
                   <div>
-                    <p className="text-sm font-bold text-slate-800 dark:text-slate-100">Daily digest</p>
-                    <p className="text-xs text-slate-400 mt-0.5">
+                    <p className="text-sm font-bold" style={{ color: 'var(--color-text)' }}>Daily digest</p>
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
                       {pushHook.permission === 'denied'
                         ? 'Blocked in browser — enable in site settings'
                         : pushHook.subscribed
@@ -817,9 +809,8 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                   <button
                     onClick={() => pushHook.subscribed ? pushHook.unsubscribe() : pushHook.subscribe()}
                     disabled={pushHook.loading || pushHook.permission === 'denied'}
-                    className={`relative w-11 h-6 rounded-full transition-colors ${
-                      pushHook.subscribed ? 'bg-indigo-600' : 'bg-slate-200 dark:bg-slate-600'
-                    } disabled:opacity-40 flex-shrink-0`}
+                    className="relative w-11 h-6 rounded-full transition-colors disabled:opacity-40 flex-shrink-0"
+                    style={{ background: pushHook.subscribed ? 'var(--color-accent)' : 'var(--sur-15)' }}
                   >
                     <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${pushHook.subscribed ? 'translate-x-5' : 'translate-x-0.5'}`} />
                   </button>
@@ -829,8 +820,8 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                 {pushHook.subscribed && (
                   <div className="px-4 py-3 flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-bold text-slate-700 dark:text-slate-200">Notification time</p>
-                      <p className="text-xs text-slate-400 mt-0.5">What time to send the daily digest</p>
+                      <p className="text-sm font-bold" style={{ color: 'var(--color-text)' }}>Notification time</p>
+                      <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>What time to send the daily digest</p>
                     </div>
                     <select
                       value={settings.pushHour ?? 20}
@@ -839,7 +830,7 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                         updateSettings(prev => ({ ...prev, pushHour: h }));
                         pushHook.updatePreferredHour(h);
                       }}
-                      className="bg-slate-50 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 rounded-xl px-3 py-1.5 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500/30 cursor-pointer"
+                      className="rounded-xl px-3 py-1.5 text-sm font-bold outline-none cursor-pointer" style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}
                     >
                       {[18,19,20,21,22].map(h => {
                         const ampm  = h >= 12 ? 'PM' : 'AM';
@@ -857,12 +848,12 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
           <div>
             <SectionLabel>Recurring Expenses</SectionLabel>
             {recurringExpenses.length === 0 ? (
-              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl px-4 py-6 text-center">
-                <p className="text-xs text-slate-400">No recurring expenses set.</p>
-                <p className="text-xs text-slate-400 mt-1">Add them via the Add Expense dialog.</p>
+              <div className="rounded-2xl px-4 py-6 text-center" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+                <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>No recurring expenses set.</p>
+                <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>Add them via the Add Expense dialog.</p>
               </div>
             ) : (
-              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl overflow-hidden divide-y divide-slate-50 dark:divide-slate-700/50">
+              <div className="rounded-2xl overflow-hidden" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
                 {recurringExpenses.map((r, i) => (
                   <div key={i} className="px-4 py-3">
                     {editingRecIdx === i ? (
@@ -894,13 +885,13 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                         <div className="flex gap-2 pt-1">
                           <button
                             onClick={() => setEditingRecIdx(null)}
-                            className="flex-1 py-1.5 rounded-xl text-xs font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                            className="flex-1 py-1.5 rounded-xl text-xs font-bold transition-colors" style={{ color: 'var(--color-text-muted)', background: 'var(--sur-8)' }}
                           >
                             Cancel
                           </button>
                           <button
                             onClick={saveEditRec}
-                            className="flex-1 py-1.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors flex items-center justify-center gap-1"
+                            className="flex-1 py-1.5 rounded-xl text-xs font-bold text-white transition-colors flex items-center justify-center gap-1" style={{ background: 'var(--color-accent)' }}
                           >
                             <Check className="w-3 h-3" /> Save
                           </button>
@@ -910,18 +901,18 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                       /* View mode */
                       <div className="flex items-center gap-3">
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">{r.vendor}</p>
-                          <p className="text-xs text-slate-400 mt-0.5">{r.category} · {currencySymbol}{r.amount.toFixed(2)}/mo</p>
+                          <p className="text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>{r.vendor}</p>
+                          <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{r.category} · {currencySymbol}{r.amount.toFixed(2)}/mo</p>
                         </div>
                         <button
                           onClick={() => startEditRec(i)}
-                          className="p-1.5 rounded-lg text-slate-300 dark:text-slate-600 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
+                          className="p-1.5 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}
                         >
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => deleteRec(i)}
-                          className="p-1.5 rounded-lg text-slate-300 dark:text-slate-600 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors"
+                          className="p-1.5 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -939,18 +930,18 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
               <SectionLabel>Smart Rules</SectionLabel>
               <button
                 onClick={() => { setAddingRule(true); setNewRuleDraft({ pattern: '', category: allCategories[0] || '' }); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors" style={{ color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}
               >
                 <Plus className="w-3 h-3" /> Add rule
               </button>
             </div>
-            <p className="text-xs text-slate-400 mb-3 -mt-2">Auto-fill category when vendor name matches. Most specific rule wins.</p>
+            <p className="text-xs mb-3 -mt-2" style={{ color: 'var(--color-text-muted)' }}>Auto-fill category when vendor name matches. Most specific rule wins.</p>
 
             {/* Add new rule form */}
             {addingRule && (
-              <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/40 rounded-2xl p-4 mb-3 space-y-3">
+              <div className="rounded-2xl p-4 mb-3 space-y-3" style={{ background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">If vendor name contains</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>If vendor name contains</label>
                   <input
                     autoFocus
                     type="text"
@@ -962,7 +953,7 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Then use category</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>Then use category</label>
                   <select
                     value={newRuleDraft.category}
                     onChange={e => setNewRuleDraft(d => ({ ...d, category: e.target.value }))}
@@ -973,11 +964,11 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                 </div>
                 <div className="flex gap-2">
                   <button onClick={saveNewRule} disabled={!newRuleDraft.pattern.trim() || !newRuleDraft.category}
-                    className="flex-1 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors disabled:opacity-40">
+                    className="flex-1 py-2 rounded-xl text-xs font-bold text-white transition-colors disabled:opacity-40" style={{ background: 'var(--color-accent)' }}>
                     Save rule
                   </button>
                   <button onClick={() => setAddingRule(false)}
-                    className="flex-1 py-2 rounded-xl text-xs font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+                    className="flex-1 py-2 rounded-xl text-xs font-bold transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)', background: 'var(--sur-8)', border: '1px solid var(--sur-12)' }}>
                     Cancel
                   </button>
                 </div>
@@ -985,13 +976,13 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
             )}
 
             {smartRules.length === 0 && !addingRule ? (
-              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl px-4 py-6 text-center">
-                <Zap className="w-5 h-5 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
-                <p className="text-xs text-slate-400">No rules yet.</p>
-                <p className="text-xs text-slate-400 mt-0.5">Rules auto-fill the category when adding or importing expenses.</p>
+              <div className="rounded-2xl px-4 py-6 text-center" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+                <Zap className="w-5 h-5 mx-auto mb-2" style={{ color: 'var(--color-text-muted)', opacity: 0.4 }} />
+                <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>No rules yet.</p>
+                <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>Rules auto-fill the category when adding or importing expenses.</p>
               </div>
             ) : smartRules.length > 0 && (
-              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl overflow-hidden divide-y divide-slate-50 dark:divide-slate-700/50">
+              <div className="rounded-2xl overflow-hidden" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
                 {smartRules.map(rule => (
                   <div key={rule.id} className="px-4 py-3">
                     {editingRuleId === rule.id ? (
@@ -1007,30 +998,30 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                         </select>
                         <div className="flex gap-2">
                           <button onClick={saveEditRule}
-                            className="flex-1 py-1.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors">
+                            className="flex-1 py-1.5 rounded-xl text-xs font-bold text-white transition-colors" style={{ background: 'var(--color-accent)' }}>
                             Save
                           </button>
                           <button onClick={() => setEditingRuleId(null)}
-                            className="flex-1 py-1.5 rounded-xl text-xs font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 transition-colors">
+                            className="flex-1 py-1.5 rounded-xl text-xs font-bold transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)', background: 'var(--sur-8)' }}>
                             Cancel
                           </button>
                         </div>
                       </div>
                     ) : (
                       <div className="flex items-center gap-3">
-                        <Zap className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
+                        <Zap className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-accent-text)' }} />
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs text-slate-500 dark:text-slate-400">
-                            contains <span className="font-black text-slate-700 dark:text-slate-200">"{rule.pattern}"</span>
+                          <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                            contains <span className="font-black" style={{ color: 'var(--color-text)' }}>"{rule.pattern}"</span>
                           </p>
-                          <p className="text-xs text-slate-400">→ <span className="font-bold text-indigo-500">{rule.category}</span></p>
+                          <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>→ <span className="font-bold" style={{ color: 'var(--color-accent-text)' }}>{rule.category}</span></p>
                         </div>
                         <button onClick={() => { setRuleDraft({ pattern: rule.pattern, category: rule.category }); setEditingRuleId(rule.id); }}
-                          className="p-1.5 rounded-lg text-slate-300 dark:text-slate-600 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">
+                          className="p-1.5 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}>
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
                         <button onClick={() => deleteRule(rule.id)}
-                          className="p-1.5 rounded-lg text-slate-300 dark:text-slate-600 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors">
+                          className="p-1.5 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}>
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
@@ -1048,14 +1039,14 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
               <SectionLabel>Cards &amp; Payment Methods</SectionLabel>
               <button
                 onClick={() => { setAddingCard(true); setNewCardName(''); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors" style={{ color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}
               >
                 <Plus className="w-3 h-3" /> Add card
               </button>
             </div>
-            <p className="text-xs text-slate-400 mb-3 -mt-2">Cards available for auto-fill and reward tracking.</p>
+            <p className="text-xs mb-3 -mt-2" style={{ color: 'var(--color-text-muted)' }}>Cards available for auto-fill and reward tracking.</p>
 
-            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl overflow-hidden divide-y divide-slate-50 dark:divide-slate-700/50 mb-4">
+            <div className="rounded-2xl overflow-hidden mb-4" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
               {cards.map((card, idx) => (
                 <div key={idx} className="px-4 py-3">
                   {editingCardIdx === idx ? (
@@ -1068,26 +1059,26 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                         onKeyDown={e => { if (e.key === 'Enter') saveEditCard(); if (e.key === 'Escape') setEditingCardIdx(null); }}
                         className={inputCls}
                       />
-                      <button onClick={saveEditCard} className="px-3 py-1.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors flex-shrink-0">
+                      <button onClick={saveEditCard} className="px-3 py-1.5 rounded-xl text-xs font-bold text-white transition-colors flex-shrink-0" style={{ background: 'var(--color-accent)' }}>
                         <Check className="w-3.5 h-3.5" />
                       </button>
-                      <button onClick={() => setEditingCardIdx(null)} className="px-3 py-1.5 rounded-xl text-xs font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 transition-colors flex-shrink-0">
+                      <button onClick={() => setEditingCardIdx(null)} className="px-3 py-1.5 rounded-xl text-xs font-bold transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)', background: 'var(--sur-8)' }}>
                         ✕
                       </button>
                     </div>
                   ) : (
                     <div className="flex items-center gap-3">
-                      <CreditCard className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
-                      <p className="flex-1 text-sm font-bold text-slate-700 dark:text-slate-200 truncate">{card}</p>
+                      <CreditCard className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-accent-text)' }} />
+                      <p className="flex-1 text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>{card}</p>
                       <button
                         onClick={() => { setCardNameDraft(card); setEditingCardIdx(idx); }}
-                        className="p-1.5 rounded-lg text-slate-300 dark:text-slate-600 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
+                        className="p-1.5 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}
                       >
                         <Pencil className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => deleteCard(idx)}
-                        className="p-1.5 rounded-lg text-slate-300 dark:text-slate-600 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors"
+                        className="p-1.5 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -1098,7 +1089,7 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
 
               {/* Add card inline form */}
               {addingCard && (
-                <div className="px-4 py-3 flex gap-2 bg-indigo-50/50 dark:bg-indigo-900/10">
+                <div className="px-4 py-3 flex gap-2" style={{ background: 'var(--color-accent-subtle)' }}>
                   <input
                     autoFocus
                     type="text"
@@ -1108,10 +1099,10 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                     onKeyDown={e => { if (e.key === 'Enter') saveNewCard(); if (e.key === 'Escape') setAddingCard(false); }}
                     className={inputCls}
                   />
-                  <button onClick={saveNewCard} disabled={!newCardName.trim()} className="px-3 py-1.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 transition-colors flex-shrink-0">
+                  <button onClick={saveNewCard} disabled={!newCardName.trim()} className="px-3 py-1.5 rounded-xl text-xs font-bold text-white disabled:opacity-40 transition-colors flex-shrink-0" style={{ background: 'var(--color-accent)' }}>
                     <Check className="w-3.5 h-3.5" />
                   </button>
-                  <button onClick={() => setAddingCard(false)} className="px-3 py-1.5 rounded-xl text-xs font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 transition-colors flex-shrink-0">
+                  <button onClick={() => setAddingCard(false)} className="px-3 py-1.5 rounded-xl text-xs font-bold transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)', background: 'var(--sur-8)' }}>
                     ✕
                   </button>
                 </div>
@@ -1123,17 +1114,17 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
               <SectionLabel>Card Rules</SectionLabel>
               <button
                 onClick={() => { setAddingCardRule(true); setNewCardRuleDraft({ vendorPattern: '', category: '', card: cards[0] || '' }); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors" style={{ color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}
               >
                 <Plus className="w-3 h-3" /> Add rule
               </button>
             </div>
-            <p className="text-xs text-slate-400 mb-3 -mt-2">Auto-assign a card when vendor and/or category match. Category-specific rules win over vendor-only.</p>
+            <p className="text-xs mb-3 -mt-2" style={{ color: 'var(--color-text-muted)' }}>Auto-assign a card when vendor and/or category match. Category-specific rules win over vendor-only.</p>
 
             {addingCardRule && (
-              <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800/40 rounded-2xl p-4 mb-3 space-y-3">
+              <div className="rounded-2xl p-4 mb-3 space-y-3" style={{ background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">If vendor name contains</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>If vendor name contains</label>
                   <input
                     autoFocus
                     type="text"
@@ -1145,7 +1136,7 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Category (optional)</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>Category (optional)</label>
                   <select
                     value={newCardRuleDraft.category}
                     onChange={e => setNewCardRuleDraft(d => ({ ...d, category: e.target.value }))}
@@ -1156,7 +1147,7 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                   </select>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Use card</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>Use card</label>
                   <select
                     value={newCardRuleDraft.card}
                     onChange={e => setNewCardRuleDraft(d => ({ ...d, card: e.target.value }))}
@@ -1168,11 +1159,11 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                 </div>
                 <div className="flex gap-2">
                   <button onClick={saveNewCardRule} disabled={!newCardRuleDraft.vendorPattern.trim() || !newCardRuleDraft.card}
-                    className="flex-1 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors disabled:opacity-40">
+                    className="flex-1 py-2 rounded-xl text-xs font-bold text-white transition-colors disabled:opacity-40" style={{ background: 'var(--color-accent)' }}>
                     Save rule
                   </button>
                   <button onClick={() => setAddingCardRule(false)}
-                    className="flex-1 py-2 rounded-xl text-xs font-bold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+                    className="flex-1 py-2 rounded-xl text-xs font-bold transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)', background: 'var(--sur-8)', border: '1px solid var(--sur-12)' }}>
                     Cancel
                   </button>
                 </div>
@@ -1180,13 +1171,13 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
             )}
 
             {cardRules.length === 0 && !addingCardRule ? (
-              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl px-4 py-6 text-center">
-                <CreditCard className="w-5 h-5 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
-                <p className="text-xs text-slate-400">No card rules yet.</p>
-                <p className="text-xs text-slate-400 mt-0.5">Rules auto-assign a card when adding or scanning expenses.</p>
+              <div className="rounded-2xl px-4 py-6 text-center" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+                <CreditCard className="w-5 h-5 mx-auto mb-2" style={{ color: 'var(--color-text-muted)', opacity: 0.4 }} />
+                <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>No card rules yet.</p>
+                <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>Rules auto-assign a card when adding or scanning expenses.</p>
               </div>
             ) : cardRules.length > 0 && (
-              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl overflow-hidden divide-y divide-slate-50 dark:divide-slate-700/50">
+              <div className="rounded-2xl overflow-hidden" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
                 {cardRules.map(rule => (
                   <div key={rule.id} className="px-4 py-3">
                     {editingCardRuleId === rule.id ? (
@@ -1209,31 +1200,31 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                         </select>
                         <div className="flex gap-2">
                           <button onClick={saveEditCardRule}
-                            className="flex-1 py-1.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors">
+                            className="flex-1 py-1.5 rounded-xl text-xs font-bold text-white transition-colors" style={{ background: 'var(--color-accent)' }}>
                             Save
                           </button>
                           <button onClick={() => setEditingCardRuleId(null)}
-                            className="flex-1 py-1.5 rounded-xl text-xs font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 transition-colors">
+                            className="flex-1 py-1.5 rounded-xl text-xs font-bold transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)', background: 'var(--sur-8)' }}>
                             Cancel
                           </button>
                         </div>
                       </div>
                     ) : (
                       <div className="flex items-center gap-3">
-                        <CreditCard className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
+                        <CreditCard className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-accent-text)' }} />
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs text-slate-500 dark:text-slate-400">
-                            contains <span className="font-black text-slate-700 dark:text-slate-200">"{rule.vendorPattern}"</span>
-                            {rule.category && <span className="text-slate-400"> · {rule.category}</span>}
+                          <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                            contains <span className="font-black" style={{ color: 'var(--color-text)' }}>"{rule.vendorPattern}"</span>
+                            {rule.category && <span style={{ color: 'var(--color-text-muted)' }}> · {rule.category}</span>}
                           </p>
-                          <p className="text-xs text-slate-400">→ <span className="font-bold text-indigo-500">{rule.card}</span></p>
+                          <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>→ <span className="font-bold" style={{ color: 'var(--color-accent-text)' }}>{rule.card}</span></p>
                         </div>
                         <button onClick={() => { setCardRuleDraft({ vendorPattern: rule.vendorPattern, category: rule.category || '', card: rule.card }); setEditingCardRuleId(rule.id); }}
-                          className="p-1.5 rounded-lg text-slate-300 dark:text-slate-600 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors">
+                          className="p-1.5 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}>
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
                         <button onClick={() => deleteCardRule(rule.id)}
-                          className="p-1.5 rounded-lg text-slate-300 dark:text-slate-600 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/30 transition-colors">
+                          className="p-1.5 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}>
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
@@ -1247,9 +1238,9 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
           {/* ── Reward Rates ────────────────────────────────────────────── */}
           <div>
             <SectionLabel>Reward Rates</SectionLabel>
-            <p className="text-xs text-slate-400 mb-3 -mt-2">
+            <p className="text-xs mb-3 -mt-2" style={{ color: 'var(--color-text-muted)' }}>
               Override earn rates for your reward cards. Changes apply to future calculations.
-              {settings.cardRewardRates && <span className="text-indigo-500 font-bold ml-1">Customised</span>}
+              {settings.cardRewardRates && <span className="font-bold ml-1" style={{ color: 'var(--color-accent-text)' }}>Customised</span>}
             </p>
             <div className="space-y-2">
               {Object.keys(CARD_REWARDS).map(card => {
@@ -1281,31 +1272,31 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                 };
 
                 return (
-                  <div key={card} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl overflow-hidden">
+                  <div key={card} className="rounded-2xl overflow-hidden" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
                     <button
                       onClick={() => { setOpenRateCard(isOpen ? null : card); setEditingRateRow(null); }}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                      className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--sur-5)]"
                     >
-                      <CreditCard className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
-                      <span className="flex-1 text-sm font-bold text-slate-700 dark:text-slate-200 truncate">{card}</span>
+                      <CreditCard className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-accent-text)' }} />
+                      <span className="flex-1 text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>{card}</span>
                       {isCustomised && (
-                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-500 bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 rounded-full">
+                        <span className="text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full" style={{ color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)' }}>
                           Custom
                         </span>
                       )}
-                      {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400" />}
+                      {isOpen ? <ChevronDown className="w-3.5 h-3.5" style={{ color: 'var(--color-text-muted)' }} /> : <ChevronRight className="w-3.5 h-3.5" style={{ color: 'var(--color-text-muted)' }} />}
                     </button>
 
                     {isOpen && (
-                      <div className="border-t border-slate-100 dark:border-slate-700 divide-y divide-slate-50 dark:divide-slate-700/50">
+                      <div className="" style={{ borderTop: '1px solid var(--sur-8)' }}>
                         {rows.map((def, idx) => {
                           const currentVal = def.readFn(cfg);
                           const isEditing = editingRateRow?.card === card && editingRateRow?.idx === idx;
                           return (
                             <div key={idx} className="px-4 py-2.5 flex items-center gap-3">
                               <div className="flex-1 min-w-0">
-                                <p className="text-xs font-bold text-slate-700 dark:text-slate-200">{def.label}</p>
-                                {def.hint && <p className="text-[10px] text-slate-400">{def.hint}</p>}
+                                <p className="text-xs font-bold" style={{ color: 'var(--color-text)' }}>{def.label}</p>
+                                {def.hint && <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>{def.hint}</p>}
                               </div>
                               {isEditing ? (
                                 <div className="flex items-center gap-1.5 flex-shrink-0">
@@ -1317,22 +1308,22 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                                     value={rateInputDraft}
                                     onChange={e => setRateInputDraft(e.target.value)}
                                     onKeyDown={e => { if (e.key === 'Enter') saveRateRow(); if (e.key === 'Escape') setEditingRateRow(null); }}
-                                    className="w-20 px-2 py-1 text-xs font-bold rounded-lg border border-indigo-300 dark:border-indigo-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                                    className="w-20 px-2 py-1 text-xs font-bold rounded-lg outline-none" style={{ background: 'var(--sur-5)', border: '1px solid var(--color-accent-border)', color: 'var(--color-text)' }}
                                   />
-                                  <span className="text-[10px] text-slate-400 whitespace-nowrap">{def.unit}</span>
-                                  <button onClick={saveRateRow} className="p-1 rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 transition-colors">
+                                  <span className="text-[10px] whitespace-nowrap" style={{ color: 'var(--color-text-muted)' }}>{def.unit}</span>
+                                  <button onClick={saveRateRow} className="p-1 rounded-lg text-white transition-colors" style={{ background: 'var(--color-accent)' }}>
                                     <Check className="w-3 h-3" />
                                   </button>
-                                  <button onClick={() => setEditingRateRow(null)} className="p-1 rounded-lg text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 transition-colors">
+                                  <button onClick={() => setEditingRateRow(null)} className="p-1 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)', background: 'var(--sur-8)' }}>
                                     <X className="w-3 h-3" />
                                   </button>
                                 </div>
                               ) : (
                                 <div className="flex items-center gap-1.5 flex-shrink-0">
-                                  <span className="text-xs font-black text-slate-700 dark:text-slate-200 tabular-nums">{currentVal}{def.unit}</span>
+                                  <span className="text-xs font-black tabular-nums" style={{ color: 'var(--color-text)' }}>{currentVal}{def.unit}</span>
                                   <button
                                     onClick={() => { setEditingRateRow({ card, idx }); setRateInputDraft(String(currentVal)); }}
-                                    className="p-1 rounded-lg text-slate-300 dark:text-slate-600 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
+                                    className="p-1 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}
                                   >
                                     <Pencil className="w-3 h-3" />
                                   </button>
@@ -1345,7 +1336,7 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                           <div className="px-4 py-2.5">
                             <button
                               onClick={resetCard}
-                              className="flex items-center gap-1.5 text-xs font-bold text-slate-400 hover:text-rose-500 transition-colors"
+                              className="flex items-center gap-1.5 text-xs font-bold transition-colors" style={{ color: 'var(--color-text-muted)' }}
                             >
                               <RotateCcw className="w-3 h-3" /> Reset to defaults
                             </button>
@@ -1362,7 +1353,7 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
           {/* ── Keyboard Shortcuts ──────────────────────────────────────── */}
           <div>
             <SectionLabel>Keyboard Shortcuts</SectionLabel>
-            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl overflow-hidden divide-y divide-slate-50 dark:divide-slate-700/50">
+            <div className="rounded-2xl overflow-hidden" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
               {SHORTCUT_ACTIONS.map(({ key, label, desc }) => {
                 const current = (settings.keyboardShortcuts || {})[key] || DEFAULT_SETTINGS.keyboardShortcuts[key];
                 const defaultVal = DEFAULT_SETTINGS.keyboardShortcuts[key];
@@ -1386,27 +1377,27 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                 );
               })}
             </div>
-            <p className="text-xs text-slate-400 mt-2 px-1">Click a binding to rebind. Must include at least one modifier key (Ctrl, Alt, Shift).</p>
+            <p className="text-xs mt-2 px-1" style={{ color: 'var(--color-text-muted)' }}>Click a binding to rebind. Must include at least one modifier key (Ctrl, Alt, Shift).</p>
           </div>
 
           {/* ── MCP Connector (Claude Desktop) ──────────────────────────── */}
           <div>
             <SectionLabel>Claude / MCP Connector</SectionLabel>
-            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-2xl px-4 py-4 space-y-3">
-              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+            <div className="rounded-2xl px-4 py-4 space-y-3" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+              <p className="text-xs leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
                 Connect Claude (Desktop or Web) to query and log expenses by natural language.
-                Set a secret <code className="font-mono text-[11px] bg-slate-100 dark:bg-slate-700 px-1 py-0.5 rounded">MCP_API_KEY</code> environment
+                Set a secret <code className="font-mono text-[11px] px-1 py-0.5 rounded" style={{ background: 'var(--sur-8)' }}>MCP_API_KEY</code> environment
                 variable in Netlify, then add this to your MCP client config (replace the placeholder with that key):
               </p>
-              <pre className="text-[10px] leading-relaxed font-mono bg-slate-900 dark:bg-slate-950 text-slate-100 rounded-xl p-3 overflow-x-auto whitespace-pre">{mcpConfig}</pre>
+              <pre className="text-[10px] leading-relaxed font-mono rounded-xl p-3 overflow-x-auto whitespace-pre" style={{ background: 'oklch(8% 0.005 var(--accent-hue))', color: 'oklch(90% 0.005 0)' }}>{mcpConfig}</pre>
               <button
                 onClick={copyMcpConfig}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors"
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-colors" style={{ color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}
               >
                 {mcpCopied ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
                 {mcpCopied ? 'Copied!' : 'Copy config'}
               </button>
-              <p className="text-[11px] text-slate-400 leading-relaxed">
+              <p className="text-[11px] leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
                 Exposes tools: <span className="font-mono">get_monthly_summary</span>, <span className="font-mono">get_transactions</span>, <span className="font-mono">get_categories</span>, <span className="font-mono">add_transaction</span>, <span className="font-mono">delete_transaction</span>.
               </p>
             </div>
@@ -1415,10 +1406,10 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
         </div>
 
         {/* Footer */}
-        <div className="flex-shrink-0 px-6 py-4 border-t border-slate-100 dark:border-slate-700 space-y-2">
+        <div className="flex-shrink-0 px-6 py-4 space-y-2" style={{ borderTop: '1px solid var(--sur-8)' }}>
           <button
             onClick={() => updateSettings({ ...DEFAULT_SETTINGS })}
-            className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-sm font-bold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+            className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-sm font-bold transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)', background: 'var(--sur-8)' }}
           >
             <RotateCcw className="w-3.5 h-3.5" />
             Reset to defaults
@@ -1433,12 +1424,12 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
               } catch { /* ignore if SW not supported */ }
               window.location.reload(true);
             }}
-            className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-sm font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-colors"
+            className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-sm font-bold transition-colors" style={{ color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}
           >
             <RefreshCw className="w-3.5 h-3.5" />
             Clear Cache & Refresh
           </button>
-          <p className="text-center text-[10px] text-slate-300 dark:text-slate-600 font-mono mt-2">
+          <p className="text-center text-[10px] font-mono mt-2" style={{ color: 'var(--color-text-muted)', opacity: 0.4 }}>
             v{__APP_VERSION__} · {new Date(__BUILD_TIME__).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).replace(',', '')}
           </p>
         </div>
