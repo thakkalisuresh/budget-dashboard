@@ -351,12 +351,21 @@ export function PinLockScreen({ locked, setting, pinHash, onUnlock, onBiometricU
   const dots = Array.from({ length: expectedLen }, (_, i) => i);
 
   return (
-    <div className="fixed inset-0 z-[100] bg-slate-950 flex flex-col items-center justify-center p-6"
-      style={{ paddingTop: 'calc(env(safe-area-inset-top) + 1.5rem)', paddingBottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)' }}>
+    <div
+      className="fixed inset-0 z-[100] flex flex-col items-center justify-center p-6"
+      style={{
+        background: 'oklch(8% 0.006 265)',
+        paddingTop: 'calc(env(safe-area-inset-top) + 1.5rem)',
+        paddingBottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)',
+      }}
+    >
 
       {setting && (
-        <button onClick={onCancel} className="absolute top-6 right-6 p-2 text-slate-400 hover:text-white transition-colors"
-          style={{ top: 'calc(env(safe-area-inset-top) + 1rem)' }}>
+        <button
+          onClick={onCancel}
+          className="absolute right-6 p-2 transition-colors"
+          style={{ top: 'calc(env(safe-area-inset-top) + 1rem)', color: 'oklch(60% 0 0)' }}
+        >
           <X className="w-5 h-5" />
         </button>
       )}
@@ -365,25 +374,32 @@ export function PinLockScreen({ locked, setting, pinHash, onUnlock, onBiometricU
 
         {/* Icon + title */}
         <div className="flex flex-col items-center gap-3">
-          <div className="w-14 h-14 bg-indigo-900/40 rounded-2xl flex items-center justify-center">
-            <Lock className="w-7 h-7 text-indigo-400" />
+          <div
+            className="w-14 h-14 rounded-2xl flex items-center justify-center"
+            style={{ background: 'var(--color-accent-subtle)' }}
+          >
+            <Lock className="w-7 h-7" style={{ color: 'var(--color-accent-text)' }} />
           </div>
           <div className="text-center">
             <p className="text-lg font-black text-white">{title}</p>
-            <p className="text-sm text-slate-400 mt-1">{subtitle}</p>
+            <p className="text-sm mt-1" style={{ color: 'oklch(60% 0.003 265)' }}>{subtitle}</p>
           </div>
         </div>
 
         {/* PIN dots */}
         <div className="flex gap-3">
           {dots.map(i => (
-            <div key={i} className={`w-3.5 h-3.5 rounded-full border-2 transition-all duration-150 ${
-              i < digits.length ? 'bg-indigo-500 border-indigo-500 scale-110' : 'bg-transparent border-slate-600'
-            }`} />
+            <div
+              key={i}
+              className="w-3.5 h-3.5 rounded-full border-2 transition-all duration-150"
+              style={i < digits.length
+                ? { background: 'var(--color-accent)', borderColor: 'var(--color-accent)', transform: 'scale(1.1)' }
+                : { background: 'transparent', borderColor: 'oklch(35% 0.005 265)' }}
+            />
           ))}
         </div>
 
-        {error && <p className="text-xs text-rose-400 font-medium text-center -mt-4">{error}</p>}
+        {error && <p className="text-xs font-medium text-center -mt-4" style={{ color: 'var(--color-danger)' }}>{error}</p>}
 
         {/* Hidden input for keyboard on mobile */}
         <input ref={inputRef} type="tel" inputMode="numeric" maxLength={expectedLen} value={digits}
@@ -398,31 +414,46 @@ export function PinLockScreen({ locked, setting, pinHash, onUnlock, onBiometricU
         {/* Number pad */}
         <div className="grid grid-cols-3 gap-3 w-full">
           {KEYS.map((k, i) => k === '⌫' ? (
-            <button key={i} onClick={handleDelete}
-              className="h-16 rounded-2xl bg-slate-800 text-white text-xl font-bold flex items-center justify-center active:scale-95 transition-transform hover:bg-slate-700">
+            <button
+              key={i}
+              onClick={handleDelete}
+              className="h-16 rounded-2xl text-white text-xl font-bold flex items-center justify-center active:scale-95 transition-transform"
+              style={{ background: 'oklch(18% 0.008 265)' }}
+            >
               ⌫
             </button>
           ) : k === '' ? (
             <div key={i} />
           ) : (
-            <button key={i} onClick={() => handleDigit(k)}
-              className="h-16 rounded-2xl bg-slate-800 text-white text-xl font-black flex items-center justify-center active:scale-95 transition-transform hover:bg-slate-700">
+            <button
+              key={i}
+              onClick={() => handleDigit(k)}
+              className="h-16 rounded-2xl text-white text-xl font-black flex items-center justify-center active:scale-95 transition-transform"
+              style={{ background: 'oklch(18% 0.008 265)' }}
+            >
               {k}
             </button>
           ))}
         </div>
 
-        {/* Biometric button — shown on lock screen if credential registered */}
+        {/* Biometric button */}
         {locked && !setting && hasBiometric && (
-          <button onClick={triggerBiometric}
-            className="flex items-center gap-2 px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-2xl text-sm font-bold transition-all active:scale-95">
-            <Fingerprint className="w-5 h-5 text-indigo-400" />
+          <button
+            onClick={triggerBiometric}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-bold transition-all active:scale-95"
+            style={{ background: 'oklch(18% 0.008 265)', color: 'oklch(70% 0.003 265)' }}
+          >
+            <Fingerprint className="w-5 h-5" style={{ color: 'var(--color-accent-text)' }} />
             Use Face ID / Touch ID
           </button>
         )}
 
         {locked && !setting && (
-          <button onClick={onSignOut} className="text-xs text-slate-500 hover:text-slate-300 transition-colors">
+          <button
+            onClick={onSignOut}
+            className="text-xs transition-colors"
+            style={{ color: 'oklch(40% 0.003 265)' }}
+          >
             Sign out instead
           </button>
         )}

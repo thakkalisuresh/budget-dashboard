@@ -381,14 +381,24 @@ export function OnboardingWizard({ onDone }) {
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/60 dark:bg-black/75 z-[70] backdrop-blur-sm" />
+      <div
+        className="fixed inset-0 z-[70] animate-overlay-in"
+        style={{ background: 'oklch(0% 0 0 / 65%)', backdropFilter: 'blur(4px)' }}
+      />
       <div className="fixed inset-0 z-[71] flex items-end sm:items-center justify-center sm:p-4">
-        <div className="bg-white dark:bg-slate-800 rounded-t-[2rem] sm:rounded-[2rem] shadow-2xl w-full sm:max-w-md border border-slate-100 dark:border-slate-700 overflow-hidden">
-          <div className="w-10 h-1 bg-slate-200 dark:bg-slate-600 rounded-full mx-auto mt-3 sm:hidden" />
+        <div
+          className="glass-heavy animate-sheet-up rounded-t-3xl sm:rounded-3xl w-full sm:max-w-md overflow-hidden"
+          style={{ border: '1px solid oklch(100% 0 0 / 10%)', borderBottom: 'none' }}
+        >
+          <div className="w-10 h-1 rounded-full mx-auto mt-3 sm:hidden" style={{ background: 'oklch(100% 0 0 / 20%)' }} />
 
           {/* Skip */}
           <div className="flex justify-end px-6 pt-4">
-            <button onClick={onDone} className="text-xs font-bold text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors flex items-center gap-1">
+            <button
+              onClick={onDone}
+              className="text-xs font-bold transition-colors flex items-center gap-1"
+              style={{ color: 'var(--color-text-muted)' }}
+            >
               Skip <X className="w-3 h-3" />
             </button>
           </div>
@@ -400,8 +410,8 @@ export function OnboardingWizard({ onDone }) {
 
           {/* Text */}
           <div className="px-8 pb-4 text-center space-y-2">
-            <p className="text-lg font-black text-slate-800 dark:text-slate-100 leading-snug">{current.title}</p>
-            <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">{current.body}</p>
+            <p className="text-lg font-black leading-snug" style={{ color: 'var(--color-text)' }}>{current.title}</p>
+            <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>{current.body}</p>
 
             {/* Step dots */}
             <div className="flex justify-center gap-1.5 pt-2">
@@ -409,7 +419,10 @@ export function OnboardingWizard({ onDone }) {
                 <button
                   key={i}
                   onClick={() => setStep(i)}
-                  className={`h-1.5 rounded-full transition-all duration-300 ${i === step ? 'w-6 bg-indigo-500' : 'w-1.5 bg-slate-200 dark:bg-slate-600 hover:bg-slate-300'}`}
+                  className="h-1.5 rounded-full transition-all duration-300"
+                  style={i === step
+                    ? { width: '1.5rem', background: 'var(--color-accent)' }
+                    : { width: '0.375rem', background: 'oklch(100% 0 0 / 15%)' }}
                 />
               ))}
             </div>
@@ -419,7 +432,8 @@ export function OnboardingWizard({ onDone }) {
           <div className="px-8 pb-8" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 2rem)' }}>
             <button
               onClick={() => isLast ? onDone() : setStep(s => s + 1)}
-              className="w-full py-3.5 rounded-2xl text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 dark:shadow-indigo-900/30 flex items-center justify-center gap-2"
+              className="w-full py-3.5 rounded-2xl text-sm font-bold text-white transition-all flex items-center justify-center gap-2"
+              style={{ background: 'var(--color-accent)' }}
             >
               {current.cta}
               {!isLast && <ChevronRight className="w-4 h-4" />}

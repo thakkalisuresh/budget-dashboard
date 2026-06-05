@@ -22,8 +22,8 @@ export function DashboardGrid({ layout, editLayout, onLayoutChange, tiles }) {
     <div ref={containerRef}>
       {editLayout && (
         <div className="mb-3 flex items-center gap-2 px-1">
-          <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse flex-shrink-0" />
-          <p className="text-xs font-bold text-indigo-500 dark:text-indigo-400">
+          <span className="w-2 h-2 rounded-full animate-pulse flex-shrink-0" style={{ background: 'var(--color-accent)' }} />
+          <p className="text-xs font-bold" style={{ color: 'var(--color-accent-text)' }}>
             Layout editing — drag tiles to move, pull the corner handle to resize
           </p>
         </div>
@@ -46,29 +46,28 @@ export function DashboardGrid({ layout, editLayout, onLayoutChange, tiles }) {
         {layout.map(item => (
           <div
             key={item.i}
-            className={`flex flex-col overflow-hidden rounded-[2rem] transition-all ${
-              editLayout
-                ? 'ring-2 ring-indigo-400/60 dark:ring-indigo-500/50 shadow-xl shadow-indigo-100/60 dark:shadow-indigo-900/20'
-                : ''
-            }`}
+            className="flex flex-col overflow-hidden rounded-[2rem] transition-all"
+            style={editLayout ? {
+              outline: '2px solid var(--color-accent-border)',
+              boxShadow: '0 8px 32px var(--color-accent-subtle)',
+            } : {}}
           >
             {/* Drag handle — only in edit mode */}
             {editLayout && (
-              <div className="tile-handle flex-shrink-0 flex items-center gap-2 px-4 py-2.5 bg-indigo-600 text-white text-xs font-bold cursor-grab active:cursor-grabbing select-none rounded-t-[2rem]">
+              <div
+                className="tile-handle flex-shrink-0 flex items-center gap-2 px-4 py-2.5 text-white text-xs font-bold cursor-grab active:cursor-grabbing select-none rounded-t-[2rem]"
+                style={{ background: 'var(--color-accent)' }}
+              >
                 <Move className="w-3.5 h-3.5 flex-shrink-0" />
                 <span className="truncate">{TILE_LABELS[item.i] || item.i}</span>
-                <span className="ml-auto text-indigo-300/80 text-[10px] hidden sm:block whitespace-nowrap">
+                <span className="ml-auto text-[10px] hidden sm:block whitespace-nowrap" style={{ opacity: 0.7 }}>
                   drag · resize ↘
                 </span>
               </div>
             )}
 
             {/* Content */}
-            <div
-              className={`flex-1 min-h-0 overflow-auto ${
-                editLayout ? 'pointer-events-none opacity-70' : ''
-              }`}
-            >
+            <div className={`flex-1 min-h-0 overflow-auto ${editLayout ? 'pointer-events-none opacity-70' : ''}`}>
               {tiles[item.i]}
             </div>
           </div>

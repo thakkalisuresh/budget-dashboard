@@ -142,30 +142,33 @@ export function SpendingHeatmap({ sheetId, accessToken, currencySymbol = '$', mo
 
   return (
     <div
-      className="bg-white dark:bg-slate-900 rounded-[1.25rem] border border-slate-100 dark:border-slate-800 p-5 sm:p-6 space-y-4"
+      className="rounded-[1.25rem] p-5 sm:p-6 space-y-4"
+      style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 8%)' }}
       ref={containerRef}
       onMouseLeave={() => setTooltip(null)}
     >
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-black text-slate-700 dark:text-slate-300 uppercase tracking-wide">
+        <h3 className="text-sm font-black uppercase tracking-wide" style={{ color: 'var(--color-text)' }}>
           Spending Calendar
         </h3>
         <div className="flex items-center gap-1">
           <button
             onClick={() => setOffset(o => o - 1)}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-lg transition-colors"
+            style={{ color: 'var(--color-text-muted)' }}
             aria-label="Previous month"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
-          <span className="text-xs font-bold text-slate-500 dark:text-slate-400 min-w-[96px] text-center">
+          <span className="text-xs font-bold min-w-[96px] text-center" style={{ color: 'var(--color-text-secondary)' }}>
             {labelMonth}
           </span>
           <button
             onClick={() => setOffset(o => o + 1)}
             disabled={offset >= 0}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            className="p-1.5 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            style={{ color: 'var(--color-text-muted)' }}
             aria-label="Next month"
           >
             <ChevronRight className="w-4 h-4" />
@@ -179,15 +182,15 @@ export function SpendingHeatmap({ sheetId, accessToken, currencySymbol = '$', mo
         style={{ gridTemplateColumns: `repeat(7, ${CELL}px)`, gap: GAP }}
       >
         {DAY_LABELS.map(d => (
-          <div key={d} className="text-[10px] font-bold text-slate-400 dark:text-slate-600">{d}</div>
+          <div key={d} className="text-[10px] font-bold" style={{ color: 'var(--color-text-muted)' }}>{d}</div>
         ))}
       </div>
 
       {/* Grid */}
       <div className="relative">
         {loading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white/60 dark:bg-slate-900/60 rounded-xl z-10">
-            <div className="w-5 h-5 border-2 border-slate-300 dark:border-slate-600 border-t-emerald-500 rounded-full animate-spin" />
+          <div className="absolute inset-0 flex items-center justify-center rounded-xl z-10" style={{ background: 'oklch(14% 0.010 265 / 60%)' }}>
+            <div className="w-5 h-5 border-2 rounded-full animate-spin" style={{ borderColor: 'oklch(100% 0 0 / 15%)', borderTopColor: 'var(--color-success)' }} />
           </div>
         )}
         <div
@@ -205,7 +208,7 @@ export function SpendingHeatmap({ sheetId, accessToken, currencySymbol = '$', mo
                   width: CELL,
                   height: CELL,
                   backgroundColor: color,
-                  outline: isToday ? '2px solid #10b981' : undefined,
+                  outline: isToday ? '2px solid var(--color-success)' : undefined,
                   outlineOffset: isToday ? '-2px' : undefined,
                 }}
                 className={`rounded-md transition-opacity ${dateKey ? 'cursor-pointer hover:opacity-75' : ''}`}
@@ -221,7 +224,10 @@ export function SpendingHeatmap({ sheetId, accessToken, currencySymbol = '$', mo
             className="absolute z-20 pointer-events-none -translate-x-1/2 -translate-y-full"
             style={{ left: tooltip.x, top: tooltip.y }}
           >
-            <div className="bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-xs font-bold px-2.5 py-1.5 rounded-lg shadow-lg whitespace-nowrap">
+            <div
+              className="text-xs font-bold px-2.5 py-1.5 rounded-lg shadow-lg whitespace-nowrap"
+              style={{ background: 'var(--color-text)', color: 'var(--color-bg)' }}
+            >
               {tooltipDate}
               {tooltipAmount > 0
                 ? ` · ${currencySymbol}${tooltipAmount.toFixed(2)}`
@@ -233,7 +239,7 @@ export function SpendingHeatmap({ sheetId, accessToken, currencySymbol = '$', mo
 
       {/* Legend */}
       <div className="flex items-center gap-2 pt-1">
-        <span className="text-[10px] text-slate-400 dark:text-slate-600 font-semibold">Less</span>
+        <span className="text-[10px] font-semibold" style={{ color: 'var(--color-text-muted)' }}>Less</span>
         {[0, 0.2, 0.5, 0.75, 1].map((t, i) => (
           <div
             key={i}
@@ -241,7 +247,7 @@ export function SpendingHeatmap({ sheetId, accessToken, currencySymbol = '$', mo
             style={{ backgroundColor: cellColor(t === 0 ? 0 : t * maxAmount, maxAmount, isDark) }}
           />
         ))}
-        <span className="text-[10px] text-slate-400 dark:text-slate-600 font-semibold">More</span>
+        <span className="text-[10px] font-semibold" style={{ color: 'var(--color-text-muted)' }}>More</span>
       </div>
     </div>
   );
