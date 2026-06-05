@@ -28,10 +28,10 @@ export function useTheme(settings, updateSettings) {
   // Also sets --accent-hue for the redesign/v2 OKLCH token system.
   useEffect(() => {
     const HUE_MAP = {
-      default: 270, rose: 10, emerald: 145, amber: 55, sky: 210, violet: 285,
+      default: 265, rose: 10, emerald: 145, amber: 55, sky: 210, violet: 285,
     };
     document.documentElement.style.setProperty(
-      '--accent-hue', String(HUE_MAP[settings.colorScheme] ?? 55)
+      '--accent-hue', String(HUE_MAP[settings.colorScheme] ?? 265)
     );
 
     const SCHEMES = {

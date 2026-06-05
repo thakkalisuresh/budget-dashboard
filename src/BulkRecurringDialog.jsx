@@ -43,14 +43,14 @@ export function BulkRecurringDialog({ recurringExpenses = [], accessToken, sheet
       <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
         <div
           className="glass-heavy animate-sheet-up rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm p-8 text-center"
-          style={{ border: '1px solid oklch(100% 0 0 / 10%)', borderBottom: 'none' }}
+          style={{ border: '1px solid var(--sur-10)', borderBottom: 'none' }}
         >
           <p className="text-sm font-bold" style={{ color: 'var(--color-text-secondary)' }}>No recurring expenses saved yet.</p>
           <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>Mark expenses as "Repeats monthly" when adding them.</p>
           <button
             onClick={onClose}
             className="mt-5 px-6 py-2.5 rounded-2xl text-sm font-bold transition-colors"
-            style={{ background: 'oklch(100% 0 0 / 8%)', color: 'var(--color-text)' }}
+            style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}
           >
             Close
           </button>
@@ -65,11 +65,11 @@ export function BulkRecurringDialog({ recurringExpenses = [], accessToken, sheet
       <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
         <div
           className="glass-heavy animate-sheet-up rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm overflow-hidden max-h-[85vh] flex flex-col"
-          style={{ border: '1px solid oklch(100% 0 0 / 10%)', borderBottom: 'none' }}
+          style={{ border: '1px solid var(--sur-10)', borderBottom: 'none' }}
         >
-          <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" style={{ background: 'oklch(100% 0 0 / 20%)' }} />
+          <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" style={{ background: 'var(--sur-20)' }} />
 
-          <div className="flex items-center justify-between px-6 pt-6 pb-5 flex-shrink-0" style={{ borderBottom: '1px solid oklch(100% 0 0 / 8%)' }}>
+          <div className="flex items-center justify-between px-6 pt-6 pb-5 flex-shrink-0" style={{ borderBottom: '1px solid var(--sur-8)' }}>
             <div>
               <p className="text-base font-black" style={{ color: 'var(--color-text)' }}>Add Recurring Expenses</p>
               <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{monthName}</p>
@@ -101,7 +101,7 @@ export function BulkRecurringDialog({ recurringExpenses = [], accessToken, sheet
                 <p className="text-sm font-bold" style={{ color: 'var(--color-text-secondary)' }}>
                   Adding {progress.current} of {progress.total}…
                 </p>
-                <div className="w-48 h-1.5 rounded-full overflow-hidden" style={{ background: 'oklch(100% 0 0 / 10%)' }}>
+                <div className="w-48 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--sur-10)' }}>
                   <div
                     className="h-full rounded-full transition-all duration-300"
                     style={{
@@ -120,13 +120,13 @@ export function BulkRecurringDialog({ recurringExpenses = [], accessToken, sheet
                     <label
                       key={i}
                       className="flex items-center gap-3 px-4 py-3 rounded-2xl cursor-pointer transition-colors"
-                      style={{ border: '1px solid oklch(100% 0 0 / 8%)', background: 'oklch(100% 0 0 / 3%)' }}
+                      style={{ border: '1px solid var(--sur-8)', background: 'var(--sur-3)' }}
                     >
                       <div
                         className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 transition-colors"
                         style={{
-                          background: checked ? 'var(--color-success)' : 'oklch(100% 0 0 / 5%)',
-                          border: checked ? '2px solid var(--color-success)' : '2px solid oklch(100% 0 0 / 20%)',
+                          background: checked ? 'var(--color-success)' : 'var(--sur-5)',
+                          border: checked ? '2px solid var(--color-success)' : '2px solid var(--sur-20)',
                         }}
                         onClick={() => toggle(i)}
                       >
@@ -149,7 +149,7 @@ export function BulkRecurringDialog({ recurringExpenses = [], accessToken, sheet
           <div
             className="px-6 pb-6 pt-4 flex-shrink-0"
             style={{
-              borderTop: '1px solid oklch(100% 0 0 / 8%)',
+              borderTop: '1px solid var(--sur-8)',
               paddingBottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)',
             }}
           >

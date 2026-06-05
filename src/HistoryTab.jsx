@@ -9,7 +9,7 @@ const ACTION_STYLE = {
   'Edited':           { background: 'oklch(78% 0.16 75 / 12%)',  color: 'oklch(78% 0.16 75)',         border: '1px solid oklch(78% 0.16 75 / 25%)'  },
   'Deleted':          { background: 'oklch(62% 0.22 25 / 12%)',  color: 'var(--color-danger)',         border: '1px solid oklch(62% 0.22 25 / 25%)'  },
   'Renamed':          { background: 'oklch(62% 0.20 295 / 12%)', color: 'oklch(72% 0.18 295)',        border: '1px solid oklch(62% 0.20 295 / 25%)' },
-  'Undo':             { background: 'oklch(100% 0 0 / 8%)',      color: 'var(--color-text-muted)',     border: '1px solid oklch(100% 0 0 / 12%)'     },
+  'Undo':             { background: 'var(--sur-8)',      color: 'var(--color-text-muted)',     border: '1px solid var(--sur-12)'     },
   'Category Added':   { background: 'oklch(68% 0.15 175 / 12%)', color: 'oklch(72% 0.13 175)',        border: '1px solid oklch(68% 0.15 175 / 25%)' },
   'Category Deleted': { background: 'oklch(62% 0.22 25 / 12%)',  color: 'var(--color-danger)',         border: '1px solid oklch(62% 0.22 25 / 25%)'  },
   'Category Renamed': { background: 'oklch(62% 0.20 295 / 12%)', color: 'oklch(72% 0.18 295)',        border: '1px solid oklch(62% 0.20 295 / 25%)' },
@@ -103,7 +103,7 @@ export function HistoryTab({ sheetId, accessToken, onRefresh, currencySymbol = '
             value={sortBy}
             onChange={e => setSortBy(e.target.value)}
             className="rounded-xl px-3 py-1.5 text-xs font-bold outline-none cursor-pointer"
-            style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 10%)', color: 'var(--color-text)' }}
+            style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-10)', color: 'var(--color-text)' }}
           >
             {SORT_OPTIONS.map(o => (
               <option key={o.value} value={o.value}>{o.label}</option>
@@ -112,7 +112,7 @@ export function HistoryTab({ sheetId, accessToken, onRefresh, currencySymbol = '
           <button
             onClick={() => load(true)}
             disabled={refreshing}
-            className="p-2 rounded-xl transition-colors disabled:opacity-40 hover:bg-white/5"
+            className="p-2 rounded-xl transition-colors disabled:opacity-40 hover:bg-[var(--sur-5)]"
             style={{ color: 'var(--color-text-muted)' }}
           >
             <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
@@ -124,7 +124,7 @@ export function HistoryTab({ sheetId, accessToken, onRefresh, currencySymbol = '
       {loading && (
         <div className="space-y-3">
           {[...Array(6)].map((_, i) => (
-            <div key={i} className="h-16 rounded-2xl animate-pulse" style={{ background: 'oklch(100% 0 0 / 6%)' }} />
+            <div key={i} className="h-16 rounded-2xl animate-pulse" style={{ background: 'var(--sur-6)' }} />
           ))}
         </div>
       )}
@@ -132,8 +132,8 @@ export function HistoryTab({ sheetId, accessToken, onRefresh, currencySymbol = '
       {/* Empty state */}
       {!loading && entries.length === 0 && (
         <div className="rounded-3xl p-16 flex flex-col items-center gap-3"
-          style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 8%)' }}>
-          <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ background: 'oklch(100% 0 0 / 8%)' }}>
+          style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+          <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ background: 'var(--sur-8)' }}>
             <Inbox className="w-6 h-6" style={{ color: 'var(--color-text-muted)' }} />
           </div>
           <p className="text-sm font-bold" style={{ color: 'var(--color-text-muted)' }}>No history yet</p>
@@ -146,7 +146,7 @@ export function HistoryTab({ sheetId, accessToken, onRefresh, currencySymbol = '
       {/* Entries */}
       {!loading && entries.length > 0 && (
         <div className="rounded-3xl overflow-hidden"
-          style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 8%)' }}>
+          style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
           {sortEntries(entries, sortBy).map((entry, i) => {
             const badgeStyle = ACTION_STYLE[entry.action] ?? ACTION_STYLE['Edited'];
             const isUndoing = undoing === entry.id;
@@ -155,8 +155,8 @@ export function HistoryTab({ sheetId, accessToken, onRefresh, currencySymbol = '
 
             return (
               <div key={entry.id}
-                className="flex items-center gap-3 px-5 py-4 transition-colors group hover:bg-white/5 animate-enter"
-                style={{ '--enter-delay': `${Math.min(i, 14) * 25}ms`, ...(i > 0 ? { borderTop: '1px solid oklch(100% 0 0 / 6%)' } : {}) }}>
+                className="flex items-center gap-3 px-5 py-4 transition-colors group hover:bg-[var(--sur-5)] animate-enter"
+                style={{ '--enter-delay': `${Math.min(i, 14) * 25}ms`, ...(i > 0 ? { borderTop: '1px solid var(--sur-6)' } : {}) }}>
 
                 {/* Action badge */}
                 <span className="flex-shrink-0 text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full whitespace-nowrap"
@@ -172,7 +172,7 @@ export function HistoryTab({ sheetId, accessToken, onRefresh, currencySymbol = '
                     </span>
                     {entry.category && (
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0"
-                        style={{ background: 'oklch(100% 0 0 / 8%)', color: 'var(--color-text-muted)' }}>
+                        style={{ background: 'var(--sur-8)', color: 'var(--color-text-muted)' }}>
                         {entry.category}
                       </span>
                     )}
@@ -214,7 +214,7 @@ export function HistoryTab({ sheetId, accessToken, onRefresh, currencySymbol = '
                     onClick={() => handleUndo(entry)}
                     disabled={isUndoing || undoing !== null}
                     title="Undo this action"
-                    className="flex-shrink-0 p-1.5 rounded-lg transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-white/5"
+                    className="flex-shrink-0 p-1.5 rounded-lg transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-[var(--sur-5)]"
                     style={{ color: 'var(--color-text-muted)' }}
                   >
                     {isUndoing

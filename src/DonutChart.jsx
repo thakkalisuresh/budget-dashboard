@@ -118,8 +118,14 @@ export function DonutChart({ expenses, totalActual, currencySymbol, isDark, cate
   }, [dataKey]);
 
   return (
-    <div className="animate-enter bg-white dark:bg-slate-800 rounded-[1.25rem] shadow-[0_4px_20px_rgb(0,0,0,0.04)] dark:shadow-[0_4px_20px_rgb(0,0,0,0.2)] border border-slate-100 dark:border-slate-700 p-5 sm:p-8">
-      <h2 className="text-sm font-bold text-slate-500 dark:text-slate-400 mb-5 sm:mb-8">
+    <div
+      className="animate-enter rounded-2xl p-5 sm:p-8"
+      style={{
+        background: 'var(--color-surface)',
+        border: '1px solid var(--sur-8)',
+      }}
+    >
+      <h2 className="text-sm font-bold mb-5 sm:mb-8" style={{ color: 'var(--color-text-muted)' }}>
         Spending distribution
       </h2>
 
@@ -137,9 +143,9 @@ export function DonutChart({ expenses, totalActual, currencySymbol, isDark, cate
                   }}
                   key={d.data.name}
                   fill={getCategoryColor(d.data.name, i)}
-                  stroke={isDark ? '#1e293b' : '#fff'}
                   strokeWidth="2"
                   style={{
+                    stroke: 'var(--color-surface)',
                     opacity: isDimmed ? 0.4 : 1,
                     transform: isHovered ? 'scale(1.04)' : 'scale(1)',
                     transformOrigin: 'center',
@@ -159,16 +165,16 @@ export function DonutChart({ expenses, totalActual, currencySymbol, isDark, cate
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
           {hoveredSlice ? (
             <div className="animate-fade-in text-center">
-              <span className="text-[10px] font-semibold text-slate-400 block truncate max-w-[80px]">{hoveredSlice.name}</span>
-              <span className="text-base font-black text-slate-800 dark:text-slate-100 mt-0.5 block tabular-nums">
+              <span className="text-[10px] font-semibold block truncate max-w-[80px]" style={{ color: 'var(--color-text-muted)' }}>{hoveredSlice.name}</span>
+              <span className="text-base font-black mt-0.5 block tabular-nums" style={{ color: 'var(--color-text)' }}>
                 {currencySymbol}{hoveredSlice.actual.toLocaleString(undefined, { maximumFractionDigits: 0 })}
               </span>
-              <span className="text-[10px] font-semibold text-slate-400 block">{pct}%</span>
+              <span className="text-[10px] font-semibold block" style={{ color: 'var(--color-text-muted)' }}>{pct}%</span>
             </div>
           ) : (
             <div className="text-center">
-              <span className="text-[10px] font-semibold text-slate-400 block">Total</span>
-              <span className="text-lg font-black text-slate-800 dark:text-slate-100 block tabular-nums">
+              <span className="text-[10px] font-semibold block" style={{ color: 'var(--color-text-muted)' }}>Total</span>
+              <span className="text-lg font-black block tabular-nums" style={{ color: 'var(--color-text)' }}>
                 {currencySymbol}{totalActual.toLocaleString(undefined, { maximumFractionDigits: 0 })}
               </span>
             </div>
@@ -177,7 +183,7 @@ export function DonutChart({ expenses, totalActual, currencySymbol, isDark, cate
       </div>
 
       <div className="mt-6 space-y-2.5">
-        <p className="text-[10px] font-semibold text-slate-400 mb-3">
+        <p className="text-[10px] font-semibold mb-3" style={{ color: 'var(--color-text-muted)' }}>
           Top categories
         </p>
         {chartExpenses.slice(0, donutLegendCount).map((d, i) => (
@@ -196,9 +202,9 @@ export function DonutChart({ expenses, totalActual, currencySymbol, isDark, cate
                 className="w-2.5 h-2.5 rounded-sm flex-shrink-0"
                 style={{ backgroundColor: getCategoryColor(d.name, i) }}
               />
-              <span className="font-medium text-slate-700 dark:text-slate-300 truncate max-w-[130px]">{d.name}</span>
+              <span className="font-medium truncate max-w-[130px]" style={{ color: 'var(--color-text)' }}>{d.name}</span>
             </div>
-            <span className="font-bold text-slate-900 dark:text-slate-100 ml-2 tabular-nums">
+            <span className="font-bold ml-2 tabular-nums" style={{ color: 'var(--color-text)' }}>
               {currencySymbol}{d.actual.toLocaleString(undefined, { maximumFractionDigits: 0 })}
             </span>
           </div>

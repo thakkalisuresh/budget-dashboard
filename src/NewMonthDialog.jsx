@@ -44,7 +44,7 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
   const [error, setError]   = useState('');
 
   const fieldCls   = "w-full rounded-2xl px-4 py-3 text-sm outline-none transition-all";
-  const fieldStyle = { background: 'oklch(100% 0 0 / 5%)', border: '1px solid oklch(100% 0 0 / 12%)', color: 'var(--color-text)' };
+  const fieldStyle = { background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' };
   const selectCls  = fieldCls + " cursor-pointer";
   const inputCls   = fieldCls;
 
@@ -160,12 +160,12 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
       <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
         <div
           className="glass-heavy animate-sheet-up rounded-t-3xl sm:rounded-3xl w-full sm:max-w-md overflow-hidden max-h-[90vh] flex flex-col"
-          style={{ border: '1px solid oklch(100% 0 0 / 10%)', borderBottom: 'none' }}
+          style={{ border: '1px solid var(--sur-10)', borderBottom: 'none' }}
         >
-          <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" style={{ background: 'oklch(100% 0 0 / 20%)' }} />
+          <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" style={{ background: 'var(--sur-20)' }} />
 
           {/* Header */}
-          <div className="px-8 pt-8 pb-6 flex items-center justify-between flex-shrink-0" style={{ borderBottom: '1px solid oklch(100% 0 0 / 8%)' }}>
+          <div className="px-8 pt-8 pb-6 flex items-center justify-between flex-shrink-0" style={{ borderBottom: '1px solid var(--sur-8)' }}>
             <div>
               <p className="text-lg font-black" style={{ color: 'var(--color-text)' }}>New Month</p>
               <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
@@ -181,7 +181,7 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
                   <div
                     key={i}
                     className="w-2 h-2 rounded-full transition-colors"
-                    style={{ background: step === i + 1 ? 'var(--color-accent)' : 'oklch(100% 0 0 / 15%)' }}
+                    style={{ background: step === i + 1 ? 'var(--color-accent)' : 'var(--sur-15)' }}
                   />
                 ))}
               </div>
@@ -253,12 +253,12 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
                 </div>
 
                 {/* Budget review — collapsible */}
-                <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid oklch(100% 0 0 / 10%)' }}>
+                <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--sur-10)' }}>
                   <button
                     type="button"
                     onClick={() => setBudgetsOpen(o => !o)}
                     className="w-full flex items-center justify-between px-4 py-3 text-sm font-black transition-colors"
-                    style={{ background: 'oklch(100% 0 0 / 5%)', color: 'var(--color-text)' }}
+                    style={{ background: 'var(--sur-5)', color: 'var(--color-text)' }}
                   >
                     <span>Edit budget amounts</span>
                     <div className="flex items-center gap-2">
@@ -288,7 +288,7 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
                             <div
                               key={r.isCustom ? `custom-${r.name}` : r.rowNum}
                               className="flex items-center gap-3 px-4 py-2.5"
-                              style={idx > 0 ? { borderTop: '1px solid oklch(100% 0 0 / 6%)' } : {}}
+                              style={idx > 0 ? { borderTop: '1px solid var(--sur-6)' } : {}}
                             >
                               <span className="flex-1 flex items-center gap-1.5 min-w-0">
                                 <span className="text-sm font-medium truncate" style={{ color: 'var(--color-text)' }}>{r.name}</span>
@@ -311,7 +311,7 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
                                   value={r.amount}
                                   onChange={e => updateBudgetRow(r.rowNum, r.name, e.target.value)}
                                   className="w-full rounded-xl pl-6 pr-2 py-1.5 text-sm outline-none tabular-nums"
-                                  style={{ background: 'oklch(100% 0 0 / 5%)', border: '1px solid oklch(100% 0 0 / 12%)', color: 'var(--color-text)' }}
+                                  style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}
                                 />
                               </div>
                             </div>
@@ -330,14 +330,14 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
                 <p className="text-xs leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
                   These will be written into {month} {year} automatically. Uncheck anything you want to skip this month.
                 </p>
-                <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid oklch(100% 0 0 / 10%)' }}>
+                <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid var(--sur-10)' }}>
                   {recurringExpenses.map((exp, i) => {
                     const checked = selectedRecurring.has(i);
                     return (
                       <label
                         key={i}
                         className="flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors"
-                        style={i > 0 ? { borderTop: '1px solid oklch(100% 0 0 / 6%)' } : {}}
+                        style={i > 0 ? { borderTop: '1px solid var(--sur-6)' } : {}}
                       >
                         <div className="relative flex-shrink-0">
                           <input
@@ -355,8 +355,8 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
                           <div
                             className="w-5 h-5 rounded-md flex items-center justify-center transition-colors"
                             style={{
-                              background: checked ? 'var(--color-success)' : 'oklch(100% 0 0 / 5%)',
-                              border: checked ? '2px solid var(--color-success)' : '2px solid oklch(100% 0 0 / 20%)',
+                              background: checked ? 'var(--color-success)' : 'var(--sur-5)',
+                              border: checked ? '2px solid var(--color-success)' : '2px solid var(--sur-20)',
                             }}
                           >
                             {checked && <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
@@ -401,7 +401,7 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
                 onClick={() => { setStep(1); setError(''); }}
                 disabled={saving}
                 className="flex items-center gap-1 px-4 py-3 rounded-2xl text-sm font-bold transition-colors disabled:opacity-50"
-                style={{ background: 'oklch(100% 0 0 / 8%)', color: 'var(--color-text)' }}
+                style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}
               >
                 <ChevronLeft className="w-4 h-4" /> Back
               </button>
@@ -412,7 +412,7 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
                 onClick={() => setStep(2)}
                 disabled={saving}
                 className="flex items-center gap-1 px-4 py-3 rounded-2xl text-sm font-bold transition-colors disabled:opacity-50"
-                style={{ background: 'oklch(100% 0 0 / 8%)', color: 'var(--color-text)' }}
+                style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}
               >
                 <ChevronLeft className="w-4 h-4" /> Back
               </button>
@@ -424,7 +424,7 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
                 type="button"
                 onClick={onClose}
                 className="flex-1 py-3 rounded-2xl text-sm font-bold transition-colors"
-                style={{ background: 'oklch(100% 0 0 / 8%)', color: 'var(--color-text)' }}
+                style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}
               >
                 Cancel
               </button>

@@ -34,14 +34,14 @@ function TabSwitcher({ activeTab, setActiveTab }) {
     <div
       role="tablist"
       className="relative flex p-1 rounded-xl"
-      style={{ background: 'oklch(100% 0 0 / 6%)' }}
+      style={{ background: 'var(--sur-6)' }}
     >
       {/* Sliding pill */}
       <div
         aria-hidden="true"
         className="absolute top-1 bottom-1 left-1 rounded-lg pointer-events-none"
         style={{
-          background: 'oklch(100% 0 0 / 10%)',
+          background: 'var(--sur-10)',
           width: `calc((100% - 8px) / ${TABS.length})`,
           transform: `translateX(calc(${tabIdx} * 100%))`,
           transition: 'transform 150ms var(--ease-out)',
@@ -73,7 +73,7 @@ function UserMenu({ user, signOut, setShowSettings, setShowReconcile, setShowUse
       <button
         onClick={() => setShowUserMenu(v => !v)}
         className="flex items-center gap-2 px-3 py-1.5 rounded-xl transition-colors duration-150 active:scale-[0.98]"
-        style={{ background: 'oklch(100% 0 0 / 8%)' }}
+        style={{ background: 'var(--sur-8)' }}
       >
         {user.picture ? (
           <img src={user.picture} alt={user.name} className="w-5 h-5 rounded-full flex-shrink-0" referrerPolicy="no-referrer" />
@@ -94,16 +94,16 @@ function UserMenu({ user, signOut, setShowSettings, setShowReconcile, setShowUse
 
       {showUserMenu && (
         <div className="absolute right-0 top-full mt-2 w-48 glass-medium rounded-xl overflow-hidden z-30 animate-dropdown"
-          style={{ border: '1px solid oklch(100% 0 0 / 10%)' }}>
+          style={{ border: '1px solid var(--sur-10)' }}>
           <button
             onClick={() => { setShowUserMenu(false); setShowSettings(true); }}
-            className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold transition-colors duration-150 hover:bg-white/5"
+            className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold transition-colors duration-150 hover:bg-[var(--sur-5)]"
             style={{ color: 'var(--color-text)' }}
           >
             <SettingsIcon className="w-4 h-4" style={{ color: 'var(--color-text-muted)' }} />
             Settings
           </button>
-          <div className="h-px" style={{ background: 'oklch(100% 0 0 / 8%)' }} />
+          <div className="h-px" style={{ background: 'var(--sur-8)' }} />
           <button
             onClick={async () => {
               setShowUserMenu(false);
@@ -115,7 +115,7 @@ function UserMenu({ user, signOut, setShowSettings, setShowReconcile, setShowUse
               } catch { /* ignore if SW not supported */ }
               window.location.reload(true);
             }}
-            className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold transition-colors duration-150 hover:bg-white/5"
+            className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold transition-colors duration-150 hover:bg-[var(--sur-5)]"
             style={{ color: 'var(--color-accent-text)' }}
           >
             <RefreshCw className="w-4 h-4" />
@@ -123,10 +123,10 @@ function UserMenu({ user, signOut, setShowSettings, setShowReconcile, setShowUse
           </button>
           {isMonthEnded && (
             <>
-              <div className="h-px" style={{ background: 'oklch(100% 0 0 / 8%)' }} />
+              <div className="h-px" style={{ background: 'var(--sur-8)' }} />
               <button
                 onClick={() => { setShowUserMenu(false); setShowReconcile(true); }}
-                className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold transition-colors duration-150 hover:bg-white/5"
+                className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold transition-colors duration-150 hover:bg-[var(--sur-5)]"
                 style={{ color: 'var(--color-text)' }}
               >
                 <RefreshCw className="w-4 h-4" style={{ color: 'var(--color-text-muted)' }} />
@@ -134,16 +134,16 @@ function UserMenu({ user, signOut, setShowSettings, setShowReconcile, setShowUse
               </button>
             </>
           )}
-          <div className="h-px" style={{ background: 'oklch(100% 0 0 / 8%)' }} />
+          <div className="h-px" style={{ background: 'var(--sur-8)' }} />
           <button
             onClick={() => { setShowUserMenu(false); signOut(); }}
-            className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold transition-colors duration-150 hover:bg-white/5"
+            className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold transition-colors duration-150 hover:bg-[var(--sur-5)]"
             style={{ color: 'var(--color-danger)' }}
           >
             <LogOut className="w-4 h-4" />
             Sign out
           </button>
-          <div className="px-4 py-2 text-[10px] font-mono border-t" style={{ color: 'var(--color-text-muted)', borderColor: 'oklch(100% 0 0 / 8%)' }}>
+          <div className="px-4 py-2 text-[10px] font-mono border-t" style={{ color: 'var(--color-text-muted)', borderColor: 'var(--sur-8)' }}>
             v{__APP_VERSION__} · {new Date(__BUILD_TIME__).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).replace(',', '')}
           </div>
         </div>
@@ -168,7 +168,7 @@ export function HeaderBar({
     <>
       {/* ── Desktop glass header (lg+) ────────────────────────────────────────── */}
       <header className="hidden lg:flex fixed top-0 inset-x-0 z-50 h-16 glass-heavy items-center px-6 gap-4"
-        style={{ borderBottom: '1px solid oklch(100% 0 0 / 8%)' }}>
+        style={{ borderBottom: '1px solid var(--sur-8)' }}>
 
         {/* Left: logo + status */}
         <div className="flex items-center gap-3 flex-shrink-0 min-w-0 w-52">
@@ -208,7 +208,7 @@ export function HeaderBar({
             onClick={() => setIsDark(d => !d)}
             aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
             className="p-2 rounded-xl transition-colors duration-150"
-            style={{ background: 'oklch(100% 0 0 / 8%)', color: 'var(--color-text-muted)' }}
+            style={{ background: 'var(--sur-8)', color: 'var(--color-text-muted)' }}
           >
             {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
@@ -267,7 +267,7 @@ export function HeaderBar({
             className="p-3 rounded-xl border shadow-sm transition-colors duration-150"
             style={{
               background: 'var(--color-surface)',
-              borderColor: 'oklch(100% 0 0 / 10%)',
+              borderColor: 'var(--sur-10)',
               color: 'var(--color-text-muted)',
             }}
           >

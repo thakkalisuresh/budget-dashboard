@@ -5,8 +5,8 @@
 /* ── OKLCH Design Tokens — redesign/v2 ────────────────────────────────────── */
 :root {
   /* Single hue knob — 0–360, user-chosen in Settings (Phase 19).
-     Set by useTheme.js on every colorScheme change; CSS default is amber. */
-  --accent-hue: 55;
+     Set by useTheme.js on every colorScheme change; CSS default is indigo. */
+  --accent-hue: 265;
 
   /* Page & surface (dark-primary) */
   --color-bg:      oklch(10% 0.008 var(--accent-hue));
@@ -50,6 +50,66 @@
 
   /* enter-delay is set inline per element for staggering */
   --enter-delay: 0ms;
+
+  /* ── Themed surface overlays ───────────────────────────────────────────────
+     In dark mode: white-on-dark (light overlays that read against dark bg).
+     Override to dark-on-light in :root:not(.dark) below.                    */
+  --sur-2:  oklch(100% 0 0 /  2%);
+  --sur-3:  oklch(100% 0 0 /  3%);
+  --sur-4:  oklch(100% 0 0 /  4%);
+  --sur-5:  oklch(100% 0 0 /  5%);
+  --sur-6:  oklch(100% 0 0 /  6%);
+  --sur-8:  oklch(100% 0 0 /  8%);
+  --sur-10: oklch(100% 0 0 / 10%);
+  --sur-12: oklch(100% 0 0 / 12%);
+  --sur-15: oklch(100% 0 0 / 15%);
+  --sur-20: oklch(100% 0 0 / 20%);
+  --sur-25: oklch(100% 0 0 / 25%);
+}
+
+/* ── Light mode overrides ─────────────────────────────────────────────────── */
+:root:not(.dark) {
+  color-scheme: light;
+
+  /* Page & surface */
+  --color-bg:      oklch(97% 0.003 var(--accent-hue));
+  --color-surface: oklch(100% 0 0);
+
+  /* Text hierarchy */
+  --color-text:           oklch(12% 0.008 var(--accent-hue));
+  --color-text-secondary: oklch(35% 0.006 var(--accent-hue));
+  --color-text-muted:     oklch(52% 0.005 var(--accent-hue));
+
+  /* Accent — slightly darker for WCAG contrast on white */
+  --color-accent:        oklch(50% 0.22 var(--accent-hue));
+  --color-accent-subtle: oklch(50% 0.22 var(--accent-hue) /  8%);
+  --color-accent-border: oklch(46% 0.18 var(--accent-hue) / 30%);
+  --color-accent-text:   oklch(44% 0.22 var(--accent-hue));
+
+  /* Semantic — fixed hues, darkened for contrast on white */
+  --color-success: oklch(44% 0.18 145);
+  --color-danger:  oklch(50% 0.24  25);
+  --color-warning: oklch(50% 0.18  75);
+
+  /* Glass — white translucent sheets */
+  --glass-bg-heavy:  oklch(100% 0 0 / 88%);
+  --glass-bg-medium: oklch(100% 0 0 / 78%);
+  --glass-bg-light:  oklch(100% 0 0 / 68%);
+  /* Subtle bottom shadow instead of top specular on white glass */
+  --glass-specular:  0 1px 0 0 oklch(0% 0 0 / 6%);
+
+  /* Surface overlays — dark-on-light equivalents of the white overlays */
+  --sur-2:  oklch(0% 0 0 /  2%);
+  --sur-3:  oklch(0% 0 0 /  3%);
+  --sur-4:  oklch(0% 0 0 /  4%);
+  --sur-5:  oklch(0% 0 0 /  5%);
+  --sur-6:  oklch(0% 0 0 /  5%);
+  --sur-8:  oklch(0% 0 0 /  8%);
+  --sur-10: oklch(0% 0 0 /  9%);
+  --sur-12: oklch(0% 0 0 / 12%);
+  --sur-15: oklch(0% 0 0 / 12%);
+  --sur-20: oklch(0% 0 0 / 15%);
+  --sur-25: oklch(0% 0 0 / 20%);
 }
 
 /* ── Keyframes ─────────────────────────────────────────────────────────────── */

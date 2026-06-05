@@ -13,11 +13,11 @@ export function DeleteMonthDialog({ deleteConfirm, setDeleteConfirm, deleteInput
       <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
         <div
           className="glass-heavy animate-sheet-up rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm overflow-hidden max-h-[90vh] flex flex-col"
-          style={{ border: '1px solid oklch(100% 0 0 / 10%)', borderBottom: 'none' }}
+          style={{ border: '1px solid var(--sur-10)', borderBottom: 'none' }}
         >
-          <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" style={{ background: 'oklch(100% 0 0 / 20%)' }} />
+          <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" style={{ background: 'var(--sur-20)' }} />
 
-          <div className="px-8 pt-8 pb-6 flex-shrink-0" style={{ borderBottom: '1px solid oklch(100% 0 0 / 8%)' }}>
+          <div className="px-8 pt-8 pb-6 flex-shrink-0" style={{ borderBottom: '1px solid var(--sur-8)' }}>
             <div
               className="w-12 h-12 rounded-2xl flex items-center justify-center mb-4"
               style={{ background: 'oklch(62% 0.22 25 / 12%)' }}
@@ -40,7 +40,7 @@ export function DeleteMonthDialog({ deleteConfirm, setDeleteConfirm, deleteInput
               onChange={e => setDeleteInput(e.target.value)}
               placeholder={deleteConfirm.name}
               className="w-full rounded-2xl px-4 py-3 text-sm outline-none transition-all"
-              style={{ background: 'oklch(100% 0 0 / 5%)', border: '1px solid oklch(100% 0 0 / 12%)', color: 'var(--color-text)' }}
+              style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}
               autoFocus
             />
           </div>
@@ -49,7 +49,7 @@ export function DeleteMonthDialog({ deleteConfirm, setDeleteConfirm, deleteInput
             <button
               onClick={() => setDeleteConfirm(null)}
               className="flex-1 py-3 rounded-2xl text-sm font-bold transition-colors"
-              style={{ background: 'oklch(100% 0 0 / 8%)', color: 'var(--color-text)' }}
+              style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}
             >
               Cancel
             </button>

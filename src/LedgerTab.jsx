@@ -284,7 +284,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
               onClick={() => { setShowExportMenu(v => !v); setShowSortMenu(false); setShowFilterMenu(false); }}
               disabled={!!allMonthsProgress || pdfLoading}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-colors disabled:opacity-50"
-              style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 10%)', color: 'var(--color-text)' }}
+              style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-10)', color: 'var(--color-text)' }}
             >
               <Download className="w-3.5 h-3.5" />
               {allMonthsProgress ? `Fetching ${allMonthsProgress.done}/${allMonthsProgress.total}…` : pdfLoading ? 'Building PDF…' : 'Export'}
@@ -293,7 +293,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setShowExportMenu(false)} />
                 <div className="absolute right-0 top-full mt-1.5 glass-medium rounded-2xl overflow-hidden z-20 w-56 animate-dropdown"
-                  style={{ border: '1px solid oklch(100% 0 0 / 10%)' }}>
+                  style={{ border: '1px solid var(--sur-10)' }}>
                   <div className="px-4 pt-3 pb-1">
                     <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>This month</p>
                   </div>
@@ -304,7 +304,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
                     { fn: exportPdf,        label: 'Monthly Report',     tag: 'PDF',  icon: 'var(--color-danger)' },
                   ].map(({ fn, label, tag, icon }) => (
                     <button key={tag + label} onClick={fn}
-                      className="w-full flex items-center justify-between px-4 py-2.5 text-left text-xs font-bold transition-colors hover:bg-white/5"
+                      className="w-full flex items-center justify-between px-4 py-2.5 text-left text-xs font-bold transition-colors hover:bg-[var(--sur-5)]"
                       style={{ color: 'var(--color-text)' }}>
                       <div className="flex items-center gap-3">
                         <FileText className="w-4 h-4" style={{ color: icon }} />
@@ -315,7 +315,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
                   ))}
                   {months.length > 1 && (
                     <>
-                      <div className="h-px mx-4 my-1" style={{ background: 'oklch(100% 0 0 / 8%)' }} />
+                      <div className="h-px mx-4 my-1" style={{ background: 'var(--sur-8)' }} />
                       <div className="px-4 pt-2 pb-1">
                         <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>All months</p>
                       </div>
@@ -324,7 +324,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
                         { fn: () => exportAllMonths('json'), tag: 'JSON' },
                       ].map(({ fn, tag }) => (
                         <button key={tag} onClick={fn}
-                          className="w-full flex items-center justify-between px-4 py-2.5 last:pb-3 text-left text-xs font-bold transition-colors hover:bg-white/5"
+                          className="w-full flex items-center justify-between px-4 py-2.5 last:pb-3 text-left text-xs font-bold transition-colors hover:bg-[var(--sur-5)]"
                           style={{ color: 'var(--color-text)' }}>
                           <div className="flex items-center gap-3">
                             <FileText className="w-4 h-4" style={{ color: 'oklch(62% 0.20 295)' }} />
@@ -344,7 +344,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
           <div className="relative">
             <button onClick={() => { setShowSortMenu(v => !v); setShowFilterMenu(false); setShowExportMenu(false); }}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-colors"
-              style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 10%)', color: 'var(--color-text)' }}>
+              style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-10)', color: 'var(--color-text)' }}>
               <ArrowUpDown className="w-3.5 h-3.5" />
               {SORT_OPTIONS.find(o => o.value === sortBy)?.label}
             </button>
@@ -352,14 +352,14 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setShowSortMenu(false)} />
                 <div className="absolute right-0 top-full mt-1.5 glass-medium rounded-2xl overflow-hidden z-20 w-44 animate-dropdown"
-                  style={{ border: '1px solid oklch(100% 0 0 / 10%)' }}>
+                  style={{ border: '1px solid var(--sur-10)' }}>
                   {SORT_OPTIONS.map(o => (
                     <button key={o.value} onClick={() => { setSortBy(o.value); setShowSortMenu(false); }}
                       className="w-full text-left px-4 py-2.5 text-xs font-bold transition-colors"
                       style={sortBy === o.value
                         ? { background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)' }
                         : { color: 'var(--color-text)' }}
-                      onMouseEnter={e => { if (sortBy !== o.value) e.currentTarget.style.background = 'oklch(100% 0 0 / 5%)'; }}
+                      onMouseEnter={e => { if (sortBy !== o.value) e.currentTarget.style.background = 'var(--sur-5)'; }}
                       onMouseLeave={e => { if (sortBy !== o.value) e.currentTarget.style.background = ''; }}>
                       {o.label}
                     </button>
@@ -375,7 +375,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-colors"
               style={activeFilterCount > 0
                 ? { background: 'var(--color-accent)', border: '1px solid var(--color-accent)', color: 'white' }
-                : { background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 10%)', color: 'var(--color-text)' }}>
+                : { background: 'var(--color-surface)', border: '1px solid var(--sur-10)', color: 'var(--color-text)' }}>
               <SlidersHorizontal className="w-3.5 h-3.5" />
               Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
             </button>
@@ -383,8 +383,8 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setShowFilterMenu(false)} />
                 <div className="absolute right-0 top-full mt-1.5 glass-medium rounded-2xl overflow-hidden z-20 w-56 max-h-80 overflow-y-auto animate-dropdown"
-                  style={{ border: '1px solid oklch(100% 0 0 / 10%)' }}>
-                  <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid oklch(100% 0 0 / 8%)' }}>
+                  style={{ border: '1px solid var(--sur-10)' }}>
+                  <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid var(--sur-8)' }}>
                     <span className="text-xs font-black" style={{ color: 'var(--color-text)' }}>Filters</span>
                     {activeFilterCount > 0 && (
                       <button onClick={clearFilters} className="text-[10px] font-bold hover:underline" style={{ color: 'var(--color-danger)' }}>Clear all</button>
@@ -395,7 +395,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
                     { label: 'Method',   items: allMethods,    setter: setFilterMethods,    active: filterMethods },
                     { label: 'Added by', items: allUsers,      setter: setFilterUsers,      active: filterUsers },
                   ].filter(g => g.items.length > 0).map((group, gi, arr) => (
-                    <div key={group.label} className="px-4 py-2" style={gi < arr.length - 1 ? { borderBottom: '1px solid oklch(100% 0 0 / 6%)' } : {}}>
+                    <div key={group.label} className="px-4 py-2" style={gi < arr.length - 1 ? { borderBottom: '1px solid var(--sur-6)' } : {}}>
                       <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: 'var(--color-text-muted)' }}>{group.label}</p>
                       {group.items.map(item => (
                         <button key={item} onClick={() => toggleFilter(group.setter, item)}
@@ -403,7 +403,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
                           style={group.active.includes(item)
                             ? { background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', fontWeight: 700 }
                             : { color: 'var(--color-text)' }}
-                          onMouseEnter={e => { if (!group.active.includes(item)) e.currentTarget.style.background = 'oklch(100% 0 0 / 5%)'; }}
+                          onMouseEnter={e => { if (!group.active.includes(item)) e.currentTarget.style.background = 'var(--sur-5)'; }}
                           onMouseLeave={e => { if (!group.active.includes(item)) e.currentTarget.style.background = ''; }}>
                           {item}
                         </button>
@@ -417,7 +417,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
 
           {/* Refresh */}
           <button onClick={() => load(true)} disabled={refreshing}
-            className="p-2 rounded-xl transition-colors disabled:opacity-40 hover:bg-white/5"
+            className="p-2 rounded-xl transition-colors disabled:opacity-40 hover:bg-[var(--sur-5)]"
             style={{ color: 'var(--color-text-muted)' }}>
             <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
           </button>
@@ -433,7 +433,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
           className="w-full rounded-2xl pl-10 pr-4 py-2.5 text-sm outline-none transition-all"
-          style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 10%)', color: 'var(--color-text)' }}
+          style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-10)', color: 'var(--color-text)' }}
         />
         {searchQuery && (
           <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 transition-colors"
@@ -465,7 +465,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
       {loading && (
         <div className="space-y-3">
           {[...Array(6)].map((_, i) => (
-            <div key={i} className="h-16 rounded-2xl animate-pulse" style={{ background: 'oklch(100% 0 0 / 6%)' }} />
+            <div key={i} className="h-16 rounded-2xl animate-pulse" style={{ background: 'var(--sur-6)' }} />
           ))}
         </div>
       )}
@@ -473,8 +473,8 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
       {/* Empty state */}
       {!loading && displayed.length === 0 && (
         <div className="rounded-3xl p-16 flex flex-col items-center gap-3"
-          style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 8%)' }}>
-          <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ background: 'oklch(100% 0 0 / 8%)' }}>
+          style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+          <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ background: 'var(--sur-8)' }}>
             <Inbox className="w-6 h-6" style={{ color: 'var(--color-text-muted)' }} />
           </div>
           <p className="text-sm font-bold" style={{ color: 'var(--color-text-muted)' }}>
@@ -492,19 +492,19 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
       {/* Ledger list */}
       {!loading && displayed.length > 0 && (
         <div className="rounded-3xl overflow-hidden"
-          style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 8%)' }}>
+          style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
           {displayed.map((t, i) => {
             const noteKey = `${sheetId}_${t.category}_${(t.vendor || '').toLowerCase()}_${t.amount.toFixed(2)}`;
             const noteData = transactionNotes[noteKey];
             return (
-              <div key={i} className="flex items-center gap-3 px-5 py-4 transition-colors hover:bg-white/5 animate-enter"
-                style={{ '--enter-delay': `${Math.min(i, 14) * 25}ms`, ...(i > 0 ? { borderTop: '1px solid oklch(100% 0 0 / 6%)' } : {}) }}>
+              <div key={i} className="flex items-center gap-3 px-5 py-4 transition-colors hover:bg-[var(--sur-5)] animate-enter"
+                style={{ '--enter-delay': `${Math.min(i, 14) * 25}ms`, ...(i > 0 ? { borderTop: '1px solid var(--sur-6)' } : {}) }}>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>{t.vendor}</p>
                   {t.txDate && <p className="text-[10px] mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{formatTxDate(t.txDate)}</p>}
                   <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                      style={{ background: 'oklch(100% 0 0 / 8%)', color: 'var(--color-text-muted)' }}>{t.category}</span>
+                      style={{ background: 'var(--sur-8)', color: 'var(--color-text-muted)' }}>{t.category}</span>
                     {t.method && (
                       <span className="text-[10px] font-black px-2 py-0.5 rounded-full"
                         style={METHOD_STYLE[t.method] || {}}>

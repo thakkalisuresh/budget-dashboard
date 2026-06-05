@@ -556,7 +556,7 @@ export function ChatAgent({
         <div
           className="fixed z-50 w-80 sm:w-96 glass-heavy rounded-[2rem] shadow-2xl flex flex-col overflow-hidden"
           style={{
-            border: '1px solid oklch(100% 0 0 / 10%)',
+            border: '1px solid var(--sur-10)',
             bottom: 'calc(env(safe-area-inset-bottom) + 5.5rem)',
             right: '1.5rem',
             maxHeight: 'calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 9rem)',
@@ -572,7 +572,7 @@ export function ChatAgent({
             </div>
             <p className="text-sm font-black text-white tracking-tight">fund-ient</p>
             {monthName && (
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap" style={{ background: 'oklch(100% 0 0 / 15%)', color: 'oklch(92% 0.04 265)' }}>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap" style={{ background: 'var(--sur-15)', color: 'oklch(92% 0.04 265)' }}>
                 {monthName}
               </span>
             )}
@@ -605,7 +605,7 @@ export function ChatAgent({
                         onClick={() => sendMessage(prompt)}
                         disabled={isBusy}
                         className="w-full text-left text-xs px-3 py-2.5 rounded-xl transition-colors font-medium disabled:opacity-50"
-                        style={{ background: 'oklch(100% 0 0 / 5%)', border: '1px solid oklch(100% 0 0 / 8%)', color: 'var(--color-text-secondary)' }}
+                        style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-8)', color: 'var(--color-text-secondary)' }}
                       >
                         {prompt}
                       </button>
@@ -629,7 +629,7 @@ export function ChatAgent({
                         className="max-w-[85%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed"
                         style={msg.role === 'user'
                           ? { background: 'var(--color-accent)', color: 'white', borderBottomRightRadius: '0.25rem' }
-                          : { background: 'oklch(100% 0 0 / 6%)', color: 'var(--color-text)', borderBottomLeftRadius: '0.25rem' }}
+                          : { background: 'var(--sur-6)', color: 'var(--color-text)', borderBottomLeftRadius: '0.25rem' }}
                       >
                         {msg.content
                           ? msg.role === 'user'
@@ -674,7 +674,7 @@ export function ChatAgent({
                       <button
                         onClick={() => pendingConfirm.resolve(false)}
                         className="flex-1 px-3 py-2 rounded-xl text-xs font-bold transition-colors"
-                        style={{ background: 'oklch(100% 0 0 / 8%)', color: 'var(--color-text)' }}
+                        style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}
                       >
                         Cancel
                       </button>
@@ -691,7 +691,7 @@ export function ChatAgent({
               )}
 
               {/* Input bar */}
-              <div className="p-3 flex gap-2 flex-shrink-0" style={{ borderTop: '1px solid oklch(100% 0 0 / 8%)' }}>
+              <div className="p-3 flex gap-2 flex-shrink-0" style={{ borderTop: '1px solid var(--sur-8)' }}>
                 <input
                   ref={inputRef}
                   type="text"
@@ -701,7 +701,7 @@ export function ChatAgent({
                   placeholder={toolRunning ? 'Adding expense…' : 'Ask about your budget…'}
                   disabled={isBusy}
                   className="flex-1 rounded-xl px-3 py-2 text-sm outline-none disabled:opacity-50 min-w-0"
-                  style={{ background: 'oklch(100% 0 0 / 5%)', border: '1px solid oklch(100% 0 0 / 10%)', color: 'var(--color-text)' }}
+                  style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-10)', color: 'var(--color-text)' }}
                 />
                 <button
                   onClick={() => sendMessage(input)}

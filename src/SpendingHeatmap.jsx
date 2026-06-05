@@ -143,7 +143,7 @@ export function SpendingHeatmap({ sheetId, accessToken, currencySymbol = '$', mo
   return (
     <div
       className="animate-enter rounded-[1.25rem] p-5 sm:p-6 space-y-4"
-      style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 8%)' }}
+      style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}
       ref={containerRef}
       onMouseLeave={() => setTooltip(null)}
     >
@@ -190,7 +190,7 @@ export function SpendingHeatmap({ sheetId, accessToken, currencySymbol = '$', mo
       <div className="relative">
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center rounded-xl z-10" style={{ background: 'oklch(14% 0.010 265 / 60%)' }}>
-            <div className="w-5 h-5 border-2 rounded-full animate-spin" style={{ borderColor: 'oklch(100% 0 0 / 15%)', borderTopColor: 'var(--color-success)' }} />
+            <div className="w-5 h-5 border-2 rounded-full animate-spin" style={{ borderColor: 'var(--sur-15)', borderTopColor: 'var(--color-success)' }} />
           </div>
         )}
         <div

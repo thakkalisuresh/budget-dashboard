@@ -23,7 +23,7 @@ export function ThemePicker() {
   return (
     <div
       className="flex items-center gap-2 px-2.5 py-2 rounded-xl"
-      style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 10%)' }}
+      style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-10)' }}
     >
       <Palette
         className="w-3.5 h-3.5 flex-shrink-0"

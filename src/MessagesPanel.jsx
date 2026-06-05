@@ -33,13 +33,13 @@ export function MessagesPanel({ messages, unreadCount, onMarkAllRead, onDismiss,
   return (
     <div
       className="glass-heavy overflow-hidden flex flex-col rounded-t-[2rem] sm:rounded-2xl max-h-[80vh] sm:max-h-[70vh]"
-      style={{ border: '1px solid oklch(100% 0 0 / 10%)', paddingBottom: 'env(safe-area-inset-bottom)' }}
+      style={{ border: '1px solid var(--sur-10)', paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       {/* Mobile drag handle */}
-      <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" style={{ background: 'oklch(100% 0 0 / 20%)' }} />
+      <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" style={{ background: 'var(--sur-20)' }} />
 
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 flex-shrink-0" style={{ borderBottom: '1px solid oklch(100% 0 0 / 8%)' }}>
+      <div className="flex items-center justify-between px-4 py-3 flex-shrink-0" style={{ borderBottom: '1px solid var(--sur-8)' }}>
         <div className="flex items-center gap-2">
           <Bell className="w-4 h-4" style={{ color: 'var(--color-text-muted)' }} />
           <span className="text-sm font-black" style={{ color: 'var(--color-text)' }}>Messages</span>
@@ -84,7 +84,7 @@ export function MessagesPanel({ messages, unreadCount, onMarkAllRead, onDismiss,
       <div className="overflow-y-auto flex-1">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 gap-3">
-            <div className="w-10 h-10 rounded-2xl flex items-center justify-center" style={{ background: 'oklch(100% 0 0 / 6%)' }}>
+            <div className="w-10 h-10 rounded-2xl flex items-center justify-center" style={{ background: 'var(--sur-6)' }}>
               <Inbox className="w-5 h-5" style={{ color: 'var(--color-text-muted)' }} />
             </div>
             <p className="text-xs font-bold" style={{ color: 'var(--color-text-muted)' }}>No messages yet</p>
@@ -99,7 +99,7 @@ export function MessagesPanel({ messages, unreadCount, onMarkAllRead, onDismiss,
                   key={msg.id}
                   className="flex gap-3 px-4 py-3 transition-colors"
                   style={{
-                    borderTop: idx > 0 ? '1px solid oklch(100% 0 0 / 6%)' : undefined,
+                    borderTop: idx > 0 ? '1px solid var(--sur-6)' : undefined,
                     background: !msg.read ? 'var(--color-accent-subtle)' : undefined,
                   }}
                 >

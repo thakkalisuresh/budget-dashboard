@@ -13,9 +13,9 @@ export function CategoryActionSheet({ categoryActionFor, setCategoryActionFor, c
       <div className="fixed inset-0 z-50 flex items-end justify-center">
         <div
           className="glass-heavy animate-sheet-up rounded-t-3xl w-full overflow-hidden"
-          style={{ border: '1px solid oklch(100% 0 0 / 10%)', borderBottom: 'none' }}
+          style={{ border: '1px solid var(--sur-10)', borderBottom: 'none' }}
         >
-          <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-4" style={{ background: 'oklch(100% 0 0 / 20%)' }} />
+          <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-4" style={{ background: 'var(--sur-20)' }} />
 
           <div className="px-6 pb-3 flex items-center gap-3">
             <span className="text-2xl">{categoryIcons[categoryActionFor.name] || '📁'}</span>
@@ -29,7 +29,7 @@ export function CategoryActionSheet({ categoryActionFor, setCategoryActionFor, c
             <button
               onClick={() => { setCategoryActionFor(null); setIconPickerFor(categoryActionFor.name); }}
               className="w-full flex items-center gap-4 px-5 py-4 rounded-2xl text-left active:scale-[0.98] transition-all"
-              style={{ background: 'oklch(100% 0 0 / 5%)', border: '1px solid oklch(100% 0 0 / 8%)' }}
+              style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-8)' }}
             >
               <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'oklch(78% 0.16 75 / 12%)' }}>
                 <Smile className="w-5 h-5" style={{ color: 'var(--color-warning)' }} />
@@ -43,7 +43,7 @@ export function CategoryActionSheet({ categoryActionFor, setCategoryActionFor, c
             <button
               onClick={() => { setCategoryActionFor(null); setRenamingCategory(categoryActionFor); }}
               className="w-full flex items-center gap-4 px-5 py-4 rounded-2xl text-left active:scale-[0.98] transition-all"
-              style={{ background: 'oklch(100% 0 0 / 5%)', border: '1px solid oklch(100% 0 0 / 8%)' }}
+              style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-8)' }}
             >
               <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: 'var(--color-accent-subtle)' }}>
                 <Pencil className="w-5 h-5" style={{ color: 'var(--color-accent-text)' }} />
@@ -71,7 +71,7 @@ export function CategoryActionSheet({ categoryActionFor, setCategoryActionFor, c
             <button
               onClick={() => setCategoryActionFor(null)}
               className="w-full py-4 rounded-2xl text-sm font-bold transition-colors mt-1"
-              style={{ background: 'oklch(100% 0 0 / 8%)', color: 'var(--color-text-muted)' }}
+              style={{ background: 'var(--sur-8)', color: 'var(--color-text-muted)' }}
             >
               Cancel
             </button>

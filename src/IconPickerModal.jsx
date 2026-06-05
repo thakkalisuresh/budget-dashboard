@@ -18,13 +18,13 @@ export function IconPickerModal({ categoryName, currentIcon, onPick, onClose }) 
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
         <div
           className="glass-heavy animate-dialog-enter rounded-3xl w-full max-w-sm overflow-hidden flex flex-col max-h-[85vh]"
-          style={{ border: '1px solid oklch(100% 0 0 / 10%)' }}
+          style={{ border: '1px solid var(--sur-10)' }}
         >
 
           {/* Header */}
           <div
             className="px-6 pt-6 pb-4 flex items-center justify-between flex-shrink-0"
-            style={{ borderBottom: '1px solid oklch(100% 0 0 / 8%)' }}
+            style={{ borderBottom: '1px solid var(--sur-8)' }}
           >
             <div>
               <p className="text-sm font-black" style={{ color: 'var(--color-text)' }}>Choose an icon</p>
@@ -42,7 +42,7 @@ export function IconPickerModal({ categoryName, currentIcon, onPick, onClose }) 
               placeholder="Search  (e.g. food, car, home…)"
               autoFocus
               className="w-full rounded-2xl px-4 py-2.5 text-sm outline-none transition-all"
-              style={{ background: 'oklch(100% 0 0 / 5%)', border: '1px solid oklch(100% 0 0 / 12%)', color: 'var(--color-text)' }}
+              style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}
             />
           </div>
 
@@ -75,7 +75,7 @@ export function IconPickerModal({ categoryName, currentIcon, onPick, onClose }) 
             <button
               onClick={onClose}
               className="w-full py-2.5 rounded-2xl text-sm font-bold transition-colors"
-              style={{ background: 'oklch(100% 0 0 / 8%)', color: 'var(--color-text)' }}
+              style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}
             >
               Cancel
             </button>

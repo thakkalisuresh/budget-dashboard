@@ -22,7 +22,7 @@ export function StatCardCompact({ title, value, subtext, onEdit, currencySymbol 
       style={{
         '--enter-delay': `${enterDelay}ms`,
         background: 'var(--color-surface)',
-        border: '1px solid oklch(100% 0 0 / 8%)',
+        border: '1px solid var(--sur-8)',
       }}
     >
       <div className="flex items-start justify-between gap-1">
@@ -75,7 +75,7 @@ function HeroStat({ title, value, subtext, onEdit, currencySymbol, enterDelay })
         <p className="text-xs font-semibold tracking-widest uppercase" style={{ color: 'var(--color-text-muted)' }}>{title}</p>
         {onEdit && (
           <button onClick={onEdit} title="Edit"
-            className="p-1.5 rounded-lg transition-colors duration-150 active:scale-95 hover:bg-white/5"
+            className="p-1.5 rounded-lg transition-colors duration-150 active:scale-95 hover:bg-[var(--sur-5)]"
             style={{ color: 'var(--color-text-muted)' }}>
             <Pencil className="w-3.5 h-3.5" />
           </button>
@@ -111,7 +111,7 @@ function InlineStat({ title, value, subtext, onEdit, currencySymbol, enterDelay 
       style={{
         '--enter-delay': `${enterDelay}ms`,
         background: 'var(--color-surface)',
-        border: '1px solid oklch(100% 0 0 / 8%)',
+        border: '1px solid var(--sur-8)',
       }}
     >
       <div className="min-w-0">
@@ -125,7 +125,7 @@ function InlineStat({ title, value, subtext, onEdit, currencySymbol, enterDelay 
         </p>
         {onEdit && (
           <button onClick={onEdit} title="Edit"
-            className="p-1 rounded transition-colors duration-150 active:scale-95 hover:bg-white/5"
+            className="p-1 rounded transition-colors duration-150 active:scale-95 hover:bg-[var(--sur-5)]"
             style={{ color: 'var(--color-text-muted)' }}>
             <Pencil className="w-3 h-3" />
           </button>

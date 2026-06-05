@@ -388,9 +388,9 @@ export function OnboardingWizard({ onDone }) {
       <div className="fixed inset-0 z-[71] flex items-end sm:items-center justify-center sm:p-4">
         <div
           className="glass-heavy animate-sheet-up rounded-t-3xl sm:rounded-3xl w-full sm:max-w-md overflow-hidden"
-          style={{ border: '1px solid oklch(100% 0 0 / 10%)', borderBottom: 'none' }}
+          style={{ border: '1px solid var(--sur-10)', borderBottom: 'none' }}
         >
-          <div className="w-10 h-1 rounded-full mx-auto mt-3 sm:hidden" style={{ background: 'oklch(100% 0 0 / 20%)' }} />
+          <div className="w-10 h-1 rounded-full mx-auto mt-3 sm:hidden" style={{ background: 'var(--sur-20)' }} />
 
           {/* Skip */}
           <div className="flex justify-end px-6 pt-4">
@@ -422,7 +422,7 @@ export function OnboardingWizard({ onDone }) {
                   className="h-1.5 rounded-full transition-all duration-300"
                   style={i === step
                     ? { width: '1.5rem', background: 'var(--color-accent)' }
-                    : { width: '0.375rem', background: 'oklch(100% 0 0 / 15%)' }}
+                    : { width: '0.375rem', background: 'var(--sur-15)' }}
                 />
               ))}
             </div>

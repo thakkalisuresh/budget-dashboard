@@ -318,7 +318,10 @@ function Dashboard({ auth }) {
 
         {/* Read-only banner */}
         {isReadOnly && (
-          <div className="flex items-center gap-3 px-4 py-3 bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-700/40 rounded-2xl text-sm font-bold text-violet-800 dark:text-violet-300">
+          <div
+            className="flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-bold"
+            style={{ background: 'oklch(62% 0.20 295 / 10%)', border: '1px solid oklch(62% 0.20 295 / 25%)', color: 'oklch(62% 0.20 295)' }}
+          >
             <EyeOff className="w-4 h-4 flex-shrink-0" />
             View-only mode — you can browse but not make changes
           </div>
@@ -326,7 +329,10 @@ function Dashboard({ auth }) {
 
         {/* Offline banner */}
         {!isOnline && (
-          <div className="flex items-center gap-3 px-4 py-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded-2xl text-sm font-bold text-amber-800 dark:text-amber-300">
+          <div
+            className="flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-bold"
+            style={{ background: 'oklch(78% 0.16 75 / 10%)', border: '1px solid oklch(78% 0.16 75 / 25%)', color: 'var(--color-warning)' }}
+          >
             <WifiOff className="w-4 h-4 flex-shrink-0" />
             {getQueue().length > 0
               ? `You're offline — ${getQueue().length} expense${getQueue().length === 1 ? '' : 's'} pending sync`
@@ -336,7 +342,10 @@ function Dashboard({ auth }) {
 
         {/* Sync confirmation toast */}
         {syncedCount > 0 && (
-          <div className="flex items-center gap-3 px-4 py-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700/40 rounded-2xl text-sm font-bold text-emerald-800 dark:text-emerald-300">
+          <div
+            className="flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-bold"
+            style={{ background: 'oklch(72% 0.17 145 / 10%)', border: '1px solid oklch(72% 0.17 145 / 25%)', color: 'var(--color-success)' }}
+          >
             <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
             </svg>
@@ -346,11 +355,15 @@ function Dashboard({ auth }) {
 
         {/* Session expired banner */}
         {isOnline && sessionExpired && (
-          <div className="flex items-center justify-between gap-3 px-4 py-3 bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-700/40 rounded-2xl">
-            <span className="text-sm font-bold text-rose-700 dark:text-rose-300">Session expired — sign back in to sync changes</span>
+          <div
+            className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl"
+            style={{ background: 'oklch(62% 0.22 25 / 10%)', border: '1px solid oklch(62% 0.22 25 / 25%)' }}
+          >
+            <span className="text-sm font-bold" style={{ color: 'var(--color-danger)' }}>Session expired — sign back in to sync changes</span>
             <button
               onClick={() => setSessionExpired(false)}
-              className="text-xs font-bold text-rose-500 hover:text-rose-700 dark:hover:text-rose-200 transition-colors"
+              className="text-xs font-bold transition-colors"
+              style={{ color: 'var(--color-danger)' }}
             >
               Dismiss
             </button>
@@ -388,16 +401,20 @@ function Dashboard({ auth }) {
 
         {/* Missing current month banner */}
         {currentMonthMissing && (
-          <div className="flex items-center justify-between gap-4 px-5 py-3.5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/40 rounded-2xl">
+          <div
+            className="flex items-center justify-between gap-4 px-5 py-3.5 rounded-2xl"
+            style={{ background: 'oklch(78% 0.16 75 / 10%)', border: '1px solid oklch(78% 0.16 75 / 25%)' }}
+          >
             <div className="flex items-center gap-3">
-              <span className="text-amber-500 text-lg">📅</span>
-              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+              <span className="text-lg">📅</span>
+              <p className="text-sm font-medium" style={{ color: 'var(--color-warning)' }}>
                 No sheet for <span className="font-black">{currentMonthLabel}</span> yet — showing the most recent month instead.
               </p>
             </div>
             <button
               onClick={() => setShowNewMonth(true)}
-              className="flex-shrink-0 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-black rounded-xl transition-colors"
+              className="flex-shrink-0 px-4 py-2 text-white text-xs font-black rounded-xl transition-colors"
+              style={{ background: 'var(--color-warning)' }}
             >
               + Create it
             </button>
@@ -477,7 +494,7 @@ function Dashboard({ auth }) {
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 lg:gap-4">
               {[...Array(4)].map((_, i) => (
                 <div key={i} className="rounded-2xl p-4 h-24"
-                  style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 8%)' }}>
+                  style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
                   <div className="skeleton h-2.5 w-16 mb-3" />
                   <div className="skeleton h-7 w-24" />
                 </div>
@@ -551,7 +568,6 @@ function Dashboard({ auth }) {
                   value={salaryReceived}
                   onEdit={() => setEditingSalary(true)}
                   currencySymbol={currencySymbol}
-                  valueColor="text-slate-900 dark:text-white"
                   enterDelay={60}
                 />
                 <StatCard
@@ -559,7 +575,6 @@ function Dashboard({ auth }) {
                   value={totalActual}
                   subtext={`of ${currencySymbol}${totalBudget.toFixed(2)} budget`}
                   currencySymbol={currencySymbol}
-                  valueColor="text-slate-900 dark:text-white"
                   enterDelay={100}
                 />
                 <StatCard

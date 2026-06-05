@@ -3,7 +3,7 @@ import { Plus, Camera, Sparkles, CalendarCheck } from 'lucide-react';
 
 const labelStyle = {
   background: 'var(--color-surface)',
-  border: '1px solid oklch(100% 0 0 / 10%)',
+  border: '1px solid var(--sur-10)',
   color: 'var(--color-text)',
   boxShadow: '0 4px 12px oklch(0% 0 0 / 30%)',
 };

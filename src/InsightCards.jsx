@@ -15,7 +15,7 @@ export function InsightCards({
         style={{
           '--enter-delay': '60ms',
           background: 'var(--color-surface)',
-          border: '1px solid oklch(100% 0 0 / 8%)',
+          border: '1px solid var(--sur-8)',
         }}
       >
         <p className="text-[10px] font-semibold mb-4" style={{ color: 'var(--color-text-muted)' }}>
@@ -35,7 +35,7 @@ export function InsightCards({
               {nonMonthlyItems.length} one-time purchase{nonMonthlyItems.length > 1 ? 's' : ''} removed
               ({currencySymbol}{nonMonthlyTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })})
             </p>
-            <div className="space-y-1.5 pt-3" style={{ borderTop: '1px solid oklch(100% 0 0 / 8%)' }}>
+            <div className="space-y-1.5 pt-3" style={{ borderTop: '1px solid var(--sur-8)' }}>
               {nonMonthlyItems.map((item, i) => (
                 <div key={i} className="flex justify-between text-xs" style={{ color: 'var(--color-text-muted)' }}>
                   <span className="truncate mr-2">{item.vendor}</span>

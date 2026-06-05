@@ -109,14 +109,14 @@ export function AddCategoryDialog({ accessToken, sheetId, onClose, onSuccess, on
       <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4">
         <div
           className="glass-heavy animate-sheet-up rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm overflow-hidden max-h-[90vh] flex flex-col"
-          style={{ border: '1px solid oklch(100% 0 0 / 10%)', borderBottom: 'none' }}
+          style={{ border: '1px solid var(--sur-10)', borderBottom: 'none' }}
         >
-          <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" style={{ background: 'oklch(100% 0 0 / 20%)' }} />
+          <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" style={{ background: 'var(--sur-20)' }} />
 
           {/* Header */}
-          <div className="flex items-center justify-between px-8 pt-8 pb-6 flex-shrink-0" style={{ borderBottom: '1px solid oklch(100% 0 0 / 8%)' }}>
+          <div className="flex items-center justify-between px-8 pt-8 pb-6 flex-shrink-0" style={{ borderBottom: '1px solid var(--sur-8)' }}>
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl flex items-center justify-center" style={{ background: 'oklch(100% 0 0 / 8%)' }}>
+              <div className="w-10 h-10 rounded-2xl flex items-center justify-center" style={{ background: 'var(--sur-8)' }}>
                 <FolderPlus className="w-5 h-5" style={{ color: 'var(--color-text-muted)' }} />
               </div>
               <div>
@@ -146,14 +146,14 @@ export function AddCategoryDialog({ accessToken, sheetId, onClose, onSuccess, on
                       key={i}
                       className="flex items-center gap-3 text-sm font-bold transition-all"
                       style={{
-                        color: done ? 'var(--color-success)' : active ? 'var(--color-accent-text)' : 'oklch(100% 0 0 / 20%)',
+                        color: done ? 'var(--color-success)' : active ? 'var(--color-accent-text)' : 'var(--sur-20)',
                       }}
                     >
                       <div
                         className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 transition-colors"
                         style={{
                           background: done ? 'var(--color-success)' : 'transparent',
-                          border: done ? 'none' : active ? '2px solid var(--color-accent)' : '2px solid oklch(100% 0 0 / 20%)',
+                          border: done ? 'none' : active ? '2px solid var(--color-accent)' : '2px solid var(--sur-20)',
                         }}
                       >
                         {done && <Check className="w-3 h-3 text-white" />}
@@ -172,7 +172,7 @@ export function AddCategoryDialog({ accessToken, sheetId, onClose, onSuccess, on
                 <p className="text-sm leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
                   These months already exist after <span className="font-black" style={{ color: 'var(--color-text)' }}>{currentMonthName}</span>:
                 </p>
-                <div className="px-4 py-3 rounded-2xl" style={{ background: 'oklch(100% 0 0 / 5%)', border: '1px solid oklch(100% 0 0 / 8%)' }}>
+                <div className="px-4 py-3 rounded-2xl" style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-8)' }}>
                   {futureMonths.map(m => (
                     <p key={m.sheetId} className="text-sm font-bold" style={{ color: 'var(--color-text)' }}>· {m.name}</p>
                   ))}
@@ -189,7 +189,7 @@ export function AddCategoryDialog({ accessToken, sheetId, onClose, onSuccess, on
                   <button
                     onClick={() => runSave(false)}
                     className="w-full py-3 rounded-2xl text-sm font-bold transition-colors"
-                    style={{ background: 'oklch(100% 0 0 / 8%)', color: 'var(--color-text)' }}
+                    style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}
                   >
                     No — only new months going forward
                   </button>
@@ -217,7 +217,7 @@ export function AddCategoryDialog({ accessToken, sheetId, onClose, onSuccess, on
                     onKeyDown={e => e.key === 'Enter' && handleNext()}
                     autoFocus
                     className="w-full rounded-2xl px-4 py-3 text-sm outline-none transition-all"
-                    style={{ background: 'oklch(100% 0 0 / 5%)', border: '1px solid oklch(100% 0 0 / 12%)', color: 'var(--color-text)' }}
+                    style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}
                   />
                 </div>
 
@@ -235,7 +235,7 @@ export function AddCategoryDialog({ accessToken, sheetId, onClose, onSuccess, on
                           border: `2px solid oklch(65% 0.18 ${hue} / 40%)`,
                           color: `oklch(72% 0.16 ${hue})`,
                         } : {
-                          background: 'oklch(100% 0 0 / 5%)',
+                          background: 'var(--sur-5)',
                           border: '2px solid transparent',
                           color: 'var(--color-text-muted)',
                         }}
@@ -249,7 +249,7 @@ export function AddCategoryDialog({ accessToken, sheetId, onClose, onSuccess, on
 
                 <div className="space-y-2">
                   <label className="text-xs font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>
-                    Monthly budget <span className="normal-case font-medium" style={{ color: 'oklch(100% 0 0 / 25%)' }}>(optional)</span>
+                    Monthly budget <span className="normal-case font-medium" style={{ color: 'var(--sur-25)' }}>(optional)</span>
                   </label>
                   <input
                     type="number"
@@ -259,7 +259,7 @@ export function AddCategoryDialog({ accessToken, sheetId, onClose, onSuccess, on
                     value={budget}
                     onChange={e => { setBudget(e.target.value); setError(''); }}
                     className="w-full rounded-2xl px-4 py-3 text-sm outline-none transition-all"
-                    style={{ background: 'oklch(100% 0 0 / 5%)', border: '1px solid oklch(100% 0 0 / 12%)', color: 'var(--color-text)' }}
+                    style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}
                   />
                 </div>
 
@@ -280,7 +280,7 @@ export function AddCategoryDialog({ accessToken, sheetId, onClose, onSuccess, on
                           border: '2px solid var(--color-accent-border)',
                           color: 'var(--color-accent-text)',
                         } : {
-                          background: 'oklch(100% 0 0 / 5%)',
+                          background: 'var(--sur-5)',
                           border: '2px solid transparent',
                           color: 'var(--color-text-muted)',
                         }}
@@ -309,7 +309,7 @@ export function AddCategoryDialog({ accessToken, sheetId, onClose, onSuccess, on
               <button
                 onClick={onClose}
                 className="flex-1 py-3 rounded-2xl text-sm font-bold transition-colors"
-                style={{ background: 'oklch(100% 0 0 / 8%)', color: 'var(--color-text)' }}
+                style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}
               >
                 Cancel
               </button>

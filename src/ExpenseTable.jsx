@@ -4,7 +4,7 @@ import { hasDetail } from './fetchDetail.js';
 import { ReceiptScanButton } from './ReceiptScanner.jsx';
 
 const inputCls = "rounded-xl px-4 py-2 text-sm outline-none transition-all";
-const inputStyle = { background: 'oklch(100% 0 0 / 5%)', border: '1px solid oklch(100% 0 0 / 12%)', color: 'var(--color-text)' };
+const inputStyle = { background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' };
 
 export function ExpenseTable({
   expenses, currencySymbol, categoryIcons,
@@ -22,10 +22,10 @@ export function ExpenseTable({
   return (
     <div
       className="rounded-[2rem] overflow-hidden"
-      style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 8%)' }}
+      style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}
     >
       {/* Header */}
-      <div className="px-4 py-4 sm:p-8 flex justify-between items-center gap-3" style={{ borderBottom: '1px solid oklch(100% 0 0 / 6%)' }}>
+      <div className="px-4 py-4 sm:p-8 flex justify-between items-center gap-3" style={{ borderBottom: '1px solid var(--sur-6)' }}>
         <div>
           <h2 className="text-base sm:text-xl font-black" style={{ color: 'var(--color-text)' }}>Expense Breakdown</h2>
           <p className="text-xs sm:text-sm mt-0.5 sm:mt-1 hidden sm:block" style={{ color: 'var(--color-text-muted)' }}>Detailed view of all monthly outgoings</p>
@@ -47,7 +47,7 @@ export function ExpenseTable({
             onClick={onAddCategory}
             title="Add a new budget category"
             className="flex items-center gap-2 px-4 py-2 sm:px-5 sm:py-2.5 rounded-2xl text-sm font-bold transition-all active:scale-95"
-            style={{ background: 'oklch(100% 0 0 / 6%)', border: '1px solid oklch(100% 0 0 / 10%)', color: 'var(--color-text-secondary)' }}
+            style={{ background: 'var(--sur-6)', border: '1px solid var(--sur-10)', color: 'var(--color-text-secondary)' }}
           >
             <FolderPlus className="w-4 h-4" />
             <span className="hidden sm:inline">New Category</span>
@@ -112,7 +112,7 @@ export function ExpenseTable({
                 data-rowindex={rowIdx}
                 className="group transition-all cursor-grab active:cursor-grabbing"
                 style={{
-                  borderTop: rowIdx === 0 ? 'none' : '1px solid oklch(100% 0 0 / 5%)',
+                  borderTop: rowIdx === 0 ? 'none' : '1px solid var(--sur-5)',
                   ...(tableDragging === rowIdx
                     ? { opacity: 0.4 }
                     : tableDragOver === rowIdx
@@ -138,7 +138,7 @@ export function ExpenseTable({
                         className={`font-bold text-sm sm:text-base truncate max-w-[200px] ${hasDetail(item.name) ? 'cursor-pointer underline underline-offset-4' : ''}`}
                         style={{
                           color: 'var(--color-text)',
-                          textDecorationColor: hasDetail(item.name) ? 'oklch(100% 0 0 / 15%)' : undefined,
+                          textDecorationColor: hasDetail(item.name) ? 'var(--sur-15)' : undefined,
                         }}
                         title={item.name}
                         onClick={() => onExpenseClick(item.name)}
@@ -167,7 +167,7 @@ export function ExpenseTable({
                     <div className="flex items-center gap-1.5">
                       <span
                         className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold tabular-nums"
-                        style={{ background: 'oklch(100% 0 0 / 8%)', color: 'var(--color-text-muted)' }}
+                        style={{ background: 'var(--sur-8)', color: 'var(--color-text-muted)' }}
                       >
                         {item.budget > 0 ? `${currencySymbol}${item.budget.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '—'}
                       </span>
@@ -240,14 +240,14 @@ export function ExpenseTable({
             ))}
           </tbody>
           <tfoot>
-            <tr style={{ borderTop: '2px solid oklch(100% 0 0 / 10%)', background: 'oklch(100% 0 0 / 4%)' }}>
+            <tr style={{ borderTop: '2px solid var(--sur-10)', background: 'var(--sur-4)' }}>
               <td className="px-3 py-4 sm:px-8 sm:py-5">
                 <span className="text-xs sm:text-sm font-black uppercase tracking-wide" style={{ color: 'var(--color-text)' }}>Monthly Total</span>
               </td>
               <td className="px-3 py-4 sm:px-8 sm:py-5 tabular-nums hidden sm:table-cell">
                 <span
                   className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold tabular-nums"
-                  style={{ background: 'oklch(100% 0 0 / 10%)', color: 'var(--color-text-muted)' }}
+                  style={{ background: 'var(--sur-10)', color: 'var(--color-text-muted)' }}
                 >
                   {currencySymbol}{totalBudget.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                 </span>

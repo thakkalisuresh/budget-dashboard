@@ -13,7 +13,7 @@ export function CameraFab({ activeTab, scanTriggerRef }) {
       style={{
         bottom: 'calc(64px + env(safe-area-inset-bottom) + 1rem)',
         right: '1rem',
-        border: '1px solid oklch(100% 0 0 / 12%)',
+        border: '1px solid var(--sur-12)',
         boxShadow: '0 2px 16px oklch(0% 0 0 / 30%)',
       }}
       aria-label="Scan receipt"

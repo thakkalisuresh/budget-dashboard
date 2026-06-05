@@ -54,7 +54,7 @@ export function MonthPickerBar({
           className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-150 active:scale-[0.97] disabled:opacity-50"
           style={{
             background: 'var(--color-surface)',
-            border: '1px solid oklch(100% 0 0 / 10%)',
+            border: '1px solid var(--sur-10)',
             color: 'var(--color-text)',
           }}
         >
@@ -96,14 +96,14 @@ export function MonthPickerBar({
             ref={sheetRef}
             className="relative glass-heavy animate-sheet-up rounded-t-3xl flex flex-col max-h-[70vh] lg:max-w-sm lg:mx-auto lg:mb-0 lg:rounded-3xl lg:mb-8"
             style={{
-              border: '1px solid oklch(100% 0 0 / 10%)',
+              border: '1px solid var(--sur-10)',
               borderBottom: 'none',
               paddingBottom: 'env(safe-area-inset-bottom)',
             }}
           >
             {/* Handle */}
             <div className="flex justify-center pt-3 pb-1 flex-shrink-0">
-              <div className="w-9 h-1 rounded-full" style={{ background: 'oklch(100% 0 0 / 20%)' }} />
+              <div className="w-9 h-1 rounded-full" style={{ background: 'var(--sur-20)' }} />
             </div>
 
             {/* Title */}
@@ -121,7 +121,7 @@ export function MonthPickerBar({
                   <div key={month.sheetId} className="flex items-center rounded-xl overflow-hidden mb-0.5">
                     <button
                       onClick={() => handleSelect(month.sheetId)}
-                      className="flex-1 flex items-center gap-3 px-3 py-3.5 text-sm font-semibold text-left transition-colors duration-150 rounded-xl hover:bg-white/5"
+                      className="flex-1 flex items-center gap-3 px-3 py-3.5 text-sm font-semibold text-left transition-colors duration-150 rounded-xl hover:bg-[var(--sur-5)]"
                       style={{ color: isActive ? 'var(--color-accent-text)' : 'var(--color-text)' }}
                     >
                       <span
@@ -147,7 +147,7 @@ export function MonthPickerBar({
             </div>
 
             {/* New month action */}
-            <div className="px-5 py-4 flex-shrink-0" style={{ borderTop: '1px solid oklch(100% 0 0 / 8%)' }}>
+            <div className="px-5 py-4 flex-shrink-0" style={{ borderTop: '1px solid var(--sur-8)' }}>
               <button
                 onClick={() => { setOpen(false); onNewMonth(); }}
                 className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold transition-all duration-150 active:scale-[0.98]"

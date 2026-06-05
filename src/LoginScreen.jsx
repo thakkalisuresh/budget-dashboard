@@ -18,7 +18,7 @@ export function LoginScreen({ onSuccess, onError, loading, denied }) {
       <div className="w-full max-w-sm">
         <div
           className="glass-heavy rounded-[2rem] p-10 text-center space-y-8"
-          style={{ border: '1px solid oklch(100% 0 0 / 10%)' }}
+          style={{ border: '1px solid var(--sur-10)' }}
         >
 
           {/* Icon */}
@@ -55,7 +55,7 @@ export function LoginScreen({ onSuccess, onError, loading, denied }) {
             onClick={() => login()}
             disabled={loading}
             className="w-full flex items-center justify-center gap-3 px-6 py-3.5 rounded-2xl text-sm font-bold transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed"
-            style={{ background: 'oklch(100% 0 0 / 6%)', border: '1px solid oklch(100% 0 0 / 12%)', color: 'var(--color-text)' }}
+            style={{ background: 'var(--sur-6)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}
           >
             {loading ? (
               <svg className="w-5 h-5 animate-spin" style={{ color: 'var(--color-text-muted)' }} viewBox="0 0 24 24" fill="none">
@@ -73,7 +73,7 @@ export function LoginScreen({ onSuccess, onError, loading, denied }) {
             {loading ? 'Signing in…' : 'Sign in with Google'}
           </button>
 
-          <p className="text-[11px]" style={{ color: 'oklch(100% 0 0 / 20%)' }}>Private — access restricted to authorised users only</p>
+          <p className="text-[11px]" style={{ color: 'var(--sur-20)' }}>Private — access restricted to authorised users only</p>
         </div>
       </div>
     </div>
@@ -107,7 +107,7 @@ export function OfflineUnlockScreen({ onUnlock, onSignInInstead }) {
       <div className="w-full max-w-sm">
         <div
           className="glass-heavy rounded-[2rem] p-10 text-center space-y-6"
-          style={{ border: '1px solid oklch(100% 0 0 / 10%)' }}
+          style={{ border: '1px solid var(--sur-10)' }}
         >
 
           {/* Avatar or fallback icon */}
@@ -117,7 +117,7 @@ export function OfflineUnlockScreen({ onUnlock, onSignInInstead }) {
                 <img src={cached.picture} alt="" className="w-16 h-16 rounded-2xl object-cover" referrerPolicy="no-referrer" />
                 <div
                   className="absolute -bottom-1.5 -right-1.5 w-6 h-6 rounded-lg flex items-center justify-center"
-                  style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 10%)' }}
+                  style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-10)' }}
                 >
                   <WifiOff className="w-3 h-3" style={{ color: 'var(--color-text-muted)' }} />
                 </div>
@@ -125,7 +125,7 @@ export function OfflineUnlockScreen({ onUnlock, onSignInInstead }) {
             ) : (
               <div
                 className="w-16 h-16 rounded-2xl flex items-center justify-center"
-                style={{ background: 'oklch(100% 0 0 / 6%)' }}
+                style={{ background: 'var(--sur-6)' }}
               >
                 <WifiOff className="w-7 h-7" style={{ color: 'var(--color-text-muted)' }} />
               </div>
@@ -152,7 +152,7 @@ export function OfflineUnlockScreen({ onUnlock, onSignInInstead }) {
           )}
 
           {status === 'idle' && (
-            <p className="text-xs py-1" style={{ color: 'oklch(100% 0 0 / 20%)' }}>
+            <p className="text-xs py-1" style={{ color: 'var(--sur-20)' }}>
               Use Face ID or fingerprint to continue
             </p>
           )}
@@ -177,7 +177,7 @@ export function OfflineUnlockScreen({ onUnlock, onSignInInstead }) {
             </div>
           )}
 
-          <p className="text-[11px]" style={{ color: 'oklch(100% 0 0 / 20%)' }}>
+          <p className="text-[11px]" style={{ color: 'var(--sur-20)' }}>
             Read-only · Edits sync when reconnected
           </p>
         </div>

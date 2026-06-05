@@ -98,7 +98,7 @@ export function BudgetRules({ data, loading, currencySymbol = '$' }) {
                   <span>Target <span style={{ color: 'var(--color-text)' }}>{(cat.targetPct * 100).toFixed(0)}%</span></span>
                 </div>
 
-                <div className="relative h-3 rounded-full overflow-hidden" style={{ background: 'oklch(100% 0 0 / 10%)' }}>
+                <div className="relative h-3 rounded-full overflow-hidden" style={{ background: 'var(--sur-10)' }}>
                   <div
                     className="absolute top-0 left-0 h-full rounded-full transition-all duration-700"
                     style={{ width: `${baseFillPct}%`, background: barColor }}
@@ -125,7 +125,7 @@ export function BudgetRules({ data, loading, currencySymbol = '$' }) {
               </div>
 
               {/* Footer */}
-              <div className="mt-auto pt-4 space-y-1.5" style={{ borderTop: '1px solid oklch(100% 0 0 / 8%)' }}>
+              <div className="mt-auto pt-4 space-y-1.5" style={{ borderTop: '1px solid var(--sur-8)' }}>
                 <div className="flex justify-between text-xs">
                   <span style={{ color: 'var(--color-text-muted)' }}>Target amount</span>
                   <span className="font-bold tabular-nums" style={{ color: 'var(--color-text-secondary)' }}>
