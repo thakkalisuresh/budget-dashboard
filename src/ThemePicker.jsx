@@ -21,7 +21,10 @@ export function ThemePicker() {
   };
 
   return (
-    <div className="flex items-center gap-2 px-2.5 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-sm">
+    <div
+      className="flex items-center gap-2 px-2.5 py-2 rounded-xl"
+      style={{ background: 'var(--color-surface)', border: '1px solid oklch(100% 0 0 / 10%)' }}
+    >
       <Palette
         className="w-3.5 h-3.5 flex-shrink-0"
         style={{ color: `oklch(65% 0.18 ${hue})` }}
