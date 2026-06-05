@@ -21,7 +21,8 @@ export function BottomNav({ activeTab, setActiveTab, onAdd, isReadOnly }) {
       <div className="relative">
         {/* Glass bar */}
         <div
-          className="glass-heavy border-t border-white/10 h-16"
+          className="glass-heavy h-16"
+          style={{ borderTop: '1px solid var(--sur-10)' }}
           style={{ mask: NOTCH_MASK, WebkitMask: NOTCH_MASK }}
         >
           <div className="flex h-full">

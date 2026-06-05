@@ -94,7 +94,7 @@ export function MonthPickerBar({
           {/* Sheet panel */}
           <div
             ref={sheetRef}
-            className="relative glass-heavy animate-sheet-up rounded-t-3xl flex flex-col max-h-[70vh] lg:max-w-sm lg:mx-auto lg:mb-0 lg:rounded-3xl lg:mb-8"
+            className="relative glass-heavy animate-sheet-up rounded-t-3xl flex flex-col max-h-[70vh] lg:max-w-sm lg:mx-auto lg:mb-8 lg:rounded-3xl"
             style={{
               border: '1px solid var(--sur-10)',
               borderBottom: 'none',
@@ -134,7 +134,7 @@ export function MonthPickerBar({
                     {months.length > 1 && (
                       <button
                         onClick={() => handleDelete(month)}
-                        className="p-2 mr-1 rounded-lg transition-colors duration-150 hover:bg-white/8"
+                        className="p-2 mr-1 rounded-lg transition-colors duration-150 hover:bg-[var(--sur-8)]"
                         aria-label={`Delete ${month.name}`}
                         style={{ color: 'var(--color-text-muted)' }}
                       >

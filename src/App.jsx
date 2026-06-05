@@ -685,8 +685,8 @@ function Dashboard({ auth }) {
 
             </div>
 
-            {/* Right column */}
-            <div className="space-y-6 lg:sticky lg:top-[5rem]">
+            {/* Right column — sticky on desktop, capped so it never overflows viewport */}
+            <div className="space-y-6 lg:sticky lg:top-[5rem] lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pb-4 lg:pr-0.5">
 
               {/* Donut chart */}
               {settings.visibility.donutChart !== false && (
@@ -970,18 +970,17 @@ function Dashboard({ auth }) {
         /></Suspense>
       )}
 
+      {/* SpeedDial — mobile only (sm:hidden in the component itself) */}
       {!isReadOnly && (
-        <div className="hidden lg:block">
-          <SpeedDial
-            fabOpen={fabOpen}
-            setFabOpen={setFabOpen}
-            detail={detail}
-            scanTriggerRef={scanTriggerRef}
-            onAddExpense={() => setShowAddDialog(true)}
-            onOpenChat={() => setChatOpen(true)}
-            onBulkRecurring={(settings.recurringExpenses || []).length > 0 ? () => setShowBulkRecurring(true) : null}
-          />
-        </div>
+        <SpeedDial
+          fabOpen={fabOpen}
+          setFabOpen={setFabOpen}
+          detail={detail}
+          scanTriggerRef={scanTriggerRef}
+          onAddExpense={() => setShowAddDialog(true)}
+          onOpenChat={() => setChatOpen(true)}
+          onBulkRecurring={(settings.recurringExpenses || []).length > 0 ? () => setShowBulkRecurring(true) : null}
+        />
       )}
 
       <CameraFab activeTab={activeTab} scanTriggerRef={scanTriggerRef} />

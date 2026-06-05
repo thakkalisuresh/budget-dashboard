@@ -313,6 +313,31 @@
   background-size: 200% 100%;
 }
 
+/* ── Custom scrollbar — thin, accent-tinted, respects theme ───────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--sur-15);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--sur-20); }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ── Focus ring — visible keyboard nav, matches accent color ──────────────── */
+:focus-visible {
+  outline: 2px solid var(--color-accent-border);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* Suppress outline on mouse/touch focus for cleaner look */
+:focus:not(:focus-visible) { outline: none; }
+
+/* ── Text selection ────────────────────────────────────────────────────────── */
+::selection {
+  background: var(--color-accent-subtle);
+  color: var(--color-accent-text);
+}
+
 /* ── Reduced motion: kill all animations ──────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   .animate-enter,
