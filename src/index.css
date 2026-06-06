@@ -360,6 +360,11 @@
 }
 /* Suppress outline on mouse/touch focus for cleaner look */
 :focus:not(:focus-visible) { outline: none; }
+/* Tab/nav buttons already have a visual active indicator — no outline needed */
+[role="tab"]:focus-visible,
+[role="tab"]:focus {
+  outline: none;
+}
 
 /* ── Text selection ────────────────────────────────────────────────────────── */
 ::selection {

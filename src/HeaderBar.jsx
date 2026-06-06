@@ -53,7 +53,7 @@ function TabSwitcher({ activeTab, setActiveTab }) {
           role="tab"
           aria-selected={activeTab === tab}
           onClick={() => setActiveTab(tab)}
-          className="relative px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors duration-150 whitespace-nowrap focus:outline-none"
+          className="relative px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors duration-150 whitespace-nowrap focus:outline-none focus-visible:outline-none"
           style={{
             color: activeTab === tab
               ? 'var(--color-text)'
