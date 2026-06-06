@@ -35,7 +35,7 @@ export function BottomNav({ activeTab, setActiveTab, onAdd, isReadOnly }) {
                 <button
                   key={id}
                   onClick={() => setActiveTab(id)}
-                  className="flex-1 flex flex-col items-center justify-center gap-1"
+                  className="flex-1 flex flex-col items-center justify-center gap-1 focus:outline-none"
                   aria-label={label}
                   aria-current={isActive ? 'page' : undefined}
                 >
