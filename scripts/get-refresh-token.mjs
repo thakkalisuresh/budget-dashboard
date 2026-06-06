@@ -12,7 +12,7 @@ import { URL } from 'url';
 const require = createRequire(import.meta.url);
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const CLIENT_ID     = process.env.GOOGLE_CLIENT_ID     || '22304622967-110b8rnveq2cboo1uihnlklom2tobqp4.apps.googleusercontent.com';
+const CLIENT_ID     = process.env.GOOGLE_CLIENT_ID     || '';
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
 const REDIRECT_URI  = 'http://localhost:3000/oauth2callback';
 
@@ -21,6 +21,13 @@ const SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets',
 ];
 // ─────────────────────────────────────────────────────────────────────────────
+
+if (!CLIENT_ID) {
+  console.error('\n❌  Set GOOGLE_CLIENT_ID before running:');
+  console.error('    $env:GOOGLE_CLIENT_ID="your-client-id"  (PowerShell)');
+  console.error('    export GOOGLE_CLIENT_ID="your-client-id" (bash)\n');
+  process.exit(1);
+}
 
 if (!CLIENT_SECRET) {
   console.error('\n❌  Set GOOGLE_CLIENT_SECRET before running:');
