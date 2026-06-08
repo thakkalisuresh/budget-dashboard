@@ -34,14 +34,15 @@ function TabSwitcher({ activeTab, setActiveTab }) {
     <div
       role="tablist"
       className="relative flex p-1 rounded-xl"
-      style={{ background: 'var(--sur-6)' }}
+      style={{ background: 'var(--sur-8)' }}
     >
       {/* Sliding pill */}
       <div
         aria-hidden="true"
         className="absolute top-1 bottom-1 left-1 rounded-lg pointer-events-none"
         style={{
-          background: 'var(--sur-10)',
+          background: 'var(--sur-20)',
+          boxShadow: '0 1px 3px oklch(0% 0 0 / 30%)',
           width: `calc((100% - 8px) / ${TABS.length})`,
           transform: `translateX(calc(${tabIdx} * 100%))`,
           transition: 'transform 150ms var(--ease-out)',
