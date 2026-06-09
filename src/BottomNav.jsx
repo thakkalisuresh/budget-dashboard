@@ -22,8 +22,7 @@ export function BottomNav({ activeTab, setActiveTab, onAdd, isReadOnly }) {
         {/* Glass bar */}
         <div
           className="glass-heavy h-16"
-          style={{ borderTop: '1px solid var(--sur-10)' }}
-          style={{ mask: NOTCH_MASK, WebkitMask: NOTCH_MASK }}
+          style={{ borderTop: '1px solid var(--sur-10)', mask: NOTCH_MASK, WebkitMask: NOTCH_MASK }}
         >
           <div className="flex h-full">
             {NAV_ITEMS.map(({ id, Icon, label }) => {
