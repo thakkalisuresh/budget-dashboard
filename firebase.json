@@ -3,6 +3,8 @@
     "public": "dist",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
+      { "source": "/api/verify-user", "function": "verifyUser" },
+      { "source": "/api/claude", "function": "claude" },
       {
         "source": "**",
         "destination": "/index.html"
