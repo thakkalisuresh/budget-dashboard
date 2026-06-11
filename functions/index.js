@@ -8,3 +8,6 @@ export const ping = onRequest({ region: 'us-central1' }, (req, res) => {
 // Phase 3 — auth + Claude proxy (ported from Netlify edge functions).
 export { verifyUser } from './verify-user.mjs';
 export { claude } from './claude.mjs';
+
+// Phase 4 — Telegram bot webhook (WhatsApp out of scope).
+export { telegramWebhook } from './telegram-webhook.mjs';

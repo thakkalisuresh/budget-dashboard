@@ -5,6 +5,7 @@
     "rewrites": [
       { "source": "/api/verify-user", "function": "verifyUser" },
       { "source": "/api/claude", "function": "claude" },
+      { "source": "/api/telegram", "function": "telegramWebhook" },
       {
         "source": "**",
         "destination": "/index.html"
