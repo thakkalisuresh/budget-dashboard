@@ -14,9 +14,8 @@ import {
   getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID,
   getTotals, getRecentExpenses, writeSalaryAmount, writeBudgetAmount,
   addCategory, checkMonthExists, getLatestMonthData, getUserSettings,
-  createMonth, getAllowedEmails, updateUserSettingsFor,
+  createMonth,
 } from './_sheets.mjs';
-import { getStore } from '@netlify/blobs';
 import { convertToUSD } from './_currency.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
 import { buildRewardsLine, getEffectiveRates } from './_card-rewards.mjs';
@@ -310,43 +309,6 @@ export async function handleTextReply(ctx, text) {
     return ctx.send(
       `Send the receipt photo for:\n${lastlog.vendor} · $${lastlog.amount} (${lastlog.category})`
     );
-  }
-
-  // ── APPLY RATES / IGNORE (monthly rate auto-check response) ──
-  if (normalized === 'APPLY RATES' || normalized === 'APPLY') {
-    const proposals = getStore('rate-proposals');
-    const proposal = await proposals.get('latest', { type: 'json' }).catch(() => null);
-    if (!proposal || !proposal.rates) {
-      return ctx.send('No pending rate change to apply.');
-    }
-    const emails = getAllowedEmails();
-    let updated = 0;
-    for (const email of emails) {
-      try {
-        await updateUserSettingsFor(email, (s) => { s.cardRewardRates = proposal.rates; return s; });
-        updated++;
-      } catch (e) {
-        console.error('bot-core: APPLY RATES write failed for', email, e.message);
-      }
-    }
-    if (updated === 0) {
-      return ctx.send('Failed to update rates. Please try again or use the dashboard.');
-    }
-    await proposals.delete('latest').catch(() => {});
-    const cards = (proposal.summary || []).map(c => c.card).join(', ');
-    console.log(`bot-core: rates applied to ${updated} account(s) by ${userId}`);
-    return ctx.send(
-      `✅ Rates updated for the household${cards ? ` (${cards})` : ''}. Future rewards calculations will use the new rates.`
-    );
-  }
-  if (normalized === 'IGNORE') {
-    const proposals = getStore('rate-proposals');
-    const proposal = await proposals.get('latest', { type: 'json' }).catch(() => null);
-    if (!proposal) {
-      return ctx.send('No pending rate change to ignore.');
-    }
-    await proposals.delete('latest').catch(() => {});
-    return ctx.send('👍 Keeping current rates. The proposed change has been discarded.');
   }
 
   // ── SET SALARY ──
