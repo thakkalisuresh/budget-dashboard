@@ -42,10 +42,11 @@ export const TELEGRAM_BOT_TOKEN      = defineSecret('TELEGRAM_BOT_TOKEN');
 export const TELEGRAM_WEBHOOK_SECRET = defineSecret('TELEGRAM_WEBHOOK_SECRET');
 export const TELEGRAM_ALLOWED_USERS  = defineSecret('TELEGRAM_ALLOWED_USERS');
 
-// ── WhatsApp / Twilio (bound in Phase 4) ───────────────────────────────────
-export const TWILIO_ACCOUNT_SID    = defineSecret('TWILIO_ACCOUNT_SID');
-export const TWILIO_AUTH_TOKEN     = defineSecret('TWILIO_AUTH_TOKEN');
-export const WHATSAPP_ALLOWED_PHONES = defineSecret('WHATSAPP_ALLOWED_PHONES');
+// NOTE: WhatsApp/Twilio (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
+// WHATSAPP_ALLOWED_PHONES) are intentionally NOT declared — WhatsApp is out of
+// scope for this migration. Firebase requires a value for every declared
+// secret at deploy time, so declaring unset secrets blocks deploys. Re-add
+// here (and set the values) if WhatsApp is ever revived.
 
 // ── MCP server (bound in Phase 6) ──────────────────────────────────────────
 export const MCP_API_KEY = defineSecret('MCP_API_KEY');
