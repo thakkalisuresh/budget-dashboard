@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertCircle } from 'lucide-react';
 
-export function BudgetBarsChart({ expenses, currencySymbol, overallRemaining, barSortOrder }) {
+function BudgetBarsChart({ expenses, currencySymbol, overallRemaining, barSortOrder }) {
   const [mounted, setMounted] = useState(false);
 
   // Trigger entrance on mount AND whenever the data changes (month switch).
@@ -130,3 +130,6 @@ export function BudgetBarsChart({ expenses, currencySymbol, overallRemaining, ba
     </div>
   );
 }
+
+export const MemoBudgetBarsChart = React.memo(BudgetBarsChart);
+export { MemoBudgetBarsChart as BudgetBarsChart };

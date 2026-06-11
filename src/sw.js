@@ -1,11 +1,25 @@
 import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching';
 import { registerRoute } from 'workbox-routing';
-import { NetworkFirst } from 'workbox-strategies';
+import { NetworkFirst, CacheFirst } from 'workbox-strategies';
 import { ExpirationPlugin } from 'workbox-expiration';
 
 // ── Precaching ────────────────────────────────────────────────────────────────
 precacheAndRoute(self.__WB_MANIFEST);
 cleanupOutdatedCaches();
+
+// ── Runtime caching — heavy lazy chunks (PDF export, statement reconcile, geo map) ──
+// These are excluded from the precache manifest (see vite.config.js globIgnores) to
+// shrink first-install size. Cached on first use instead — content-hashed filenames
+// mean a new app version gets a new URL, so this is safe to cache long-term.
+registerRoute(
+  ({ url }) => /\/assets\/(react-pdf\.browser|pdfParsers|claudePdfParser|SpendingMap)-.*\.(js|css)$/.test(url.pathname),
+  new CacheFirst({
+    cacheName: 'lazy-chunks',
+    plugins: [
+      new ExpirationPlugin({ maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 30 }),
+    ],
+  })
+);
 
 // ── Runtime caching — Sheets API ──────────────────────────────────────────────
 // SEC-05: cap cached financial data at 1 hour / 50 entries so it doesn't

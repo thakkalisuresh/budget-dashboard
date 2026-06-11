@@ -6,7 +6,7 @@ const prefersReducedMotion = () =>
   typeof window !== 'undefined' &&
   window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-export function DonutChart({ expenses, totalActual, currencySymbol, isDark, categoryColors, donutLegendCount }) {
+function DonutChart({ expenses, totalActual, currencySymbol, isDark, categoryColors, donutLegendCount }) {
   const [hoveredSlice, setHoveredSlice] = useState(null);
   const [legendMounted, setLegendMounted] = useState(false);
 
@@ -213,3 +213,6 @@ export function DonutChart({ expenses, totalActual, currencySymbol, isDark, cate
     </div>
   );
 }
+
+export const MemoDonutChart = React.memo(DonutChart);
+export { MemoDonutChart as DonutChart };

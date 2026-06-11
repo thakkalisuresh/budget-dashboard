@@ -1,7 +1,7 @@
 import React from 'react';
 import { TrendingUp, TrendingDown } from 'lucide-react';
 
-export function InsightCards({
+function InsightCards({
   nonMonthlyItems, nonMonthlyTotal, balanceWithoutNonMonthly,
   potentialDifference, currencySymbol,
 }) {
@@ -94,3 +94,6 @@ export function InsightCards({
     </div>
   );
 }
+
+export const MemoInsightCards = React.memo(InsightCards);
+export { MemoInsightCards as InsightCards };

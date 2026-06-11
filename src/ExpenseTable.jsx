@@ -6,7 +6,7 @@ import { ReceiptScanButton } from './ReceiptScanner.jsx';
 const inputCls = "rounded-xl px-4 py-2 text-sm outline-none transition-all";
 const inputStyle = { background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' };
 
-export function ExpenseTable({
+function ExpenseTable({
   expenses, currencySymbol, categoryIcons,
   totalBudget, totalActual, overallRemaining,
   isAdding, setIsAdding, newItem, setNewItem, onInsert,
@@ -283,3 +283,6 @@ export function ExpenseTable({
     </div>
   );
 }
+
+export const MemoExpenseTable = React.memo(ExpenseTable);
+export { MemoExpenseTable as ExpenseTable };

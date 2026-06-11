@@ -5,7 +5,7 @@ import { CARD_REWARDS, getEffectiveRates } from './cardRewards.js';
 import { CURRENCIES } from './currency.js';
 import { CATEGORIES, getAllCategoryNames } from './sheetsApi.js';
 import { newRuleId } from './smartRules.js';
-import * as d3 from 'd3';
+import { schemeTableau10 } from 'd3-scale-chromatic';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -443,7 +443,7 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
     }));
 
   const getCategoryColor = (name, idx) =>
-    settings.categoryColors?.[name] || d3.schemeTableau10[idx % 10];
+    settings.categoryColors?.[name] || schemeTableau10[idx % 10];
 
   const updateCategoryColor = (name, color) =>
     updateSettings(prev => ({

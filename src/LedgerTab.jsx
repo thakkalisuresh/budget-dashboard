@@ -1,5 +1,11 @@
 import React, { useEffect, useState, useMemo } from 'react';
+import { List, useDynamicRowHeight } from 'react-window';
 import { RefreshCw, Inbox, SlidersHorizontal, ArrowUpDown, X, Download, Search, FileText, MessageSquare } from 'lucide-react';
+
+// Above this many displayed rows, the list is virtualized (react-window) so we
+// only render the visible window. Below it, we keep the lightweight .map() render
+// with its staggered entrance animation (no perf issue at typical monthly counts).
+const VIRTUALIZE_THRESHOLD = 150;
 import { getAllCategoryNames, fetchDetailRows, fetchHistory, fuzzyNamesMatch, formatTxDate } from './sheetsApi.js';
 import { downloadBlob, downloadCSV, transactionsToJson } from './exportHelpers.js';
 
@@ -88,7 +94,92 @@ async function buildLedger(sheetId, accessToken, monthName = '') {
 }
 
 const CACHE_MS = 2 * 60 * 1000; // 2 minutes
+const LOCAL_CACHE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour — matches SEC-05 SW Sheets-cache convention
 export const ledgerCache = new Map(); // sheetId → { data, fetchedAt }
+
+const ledgerCacheKey = (sheetId) => `budget_ledger_cache_${sheetId}`;
+
+function loadCachedLedger(sheetId) {
+  try {
+    const raw = localStorage.getItem(ledgerCacheKey(sheetId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.data || Date.now() - parsed.fetchedAt > LOCAL_CACHE_MAX_AGE_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+// Shared row renderer — used by both the animated .map() path and the
+// virtualized List path so the markup stays identical. `style`/`animate` differ
+// per path: virtualized rows get react-window's absolute-positioning style and
+// no entrance animation; animated rows get the staggered --enter-delay.
+const LedgerRow = React.memo(function LedgerRow({
+  t, index, sheetId, transactionNotes, currencySymbol, style, animate = false,
+}) {
+  const noteKey = `${sheetId}_${t.category}_${(t.vendor || '').toLowerCase()}_${t.amount.toFixed(2)}`;
+  const noteData = transactionNotes[noteKey];
+  return (
+    <div
+      className={`flex items-center gap-3 px-5 py-4 transition-colors hover:bg-[var(--sur-5)]${animate ? ' animate-enter' : ''}`}
+      style={{
+        ...style,
+        ...(animate ? { '--enter-delay': `${Math.min(index, 14) * 25}ms` } : {}),
+        ...(index > 0 ? { borderTop: '1px solid var(--sur-6)' } : {}),
+      }}
+    >
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>{t.vendor}</p>
+        {t.txDate && <p className="text-[10px] mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{formatTxDate(t.txDate)}</p>}
+        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+            style={{ background: 'var(--sur-8)', color: 'var(--color-text-muted)' }}>{t.category}</span>
+          {t.method && (
+            <span className="text-[10px] font-black px-2 py-0.5 rounded-full"
+              style={METHOD_STYLE[t.method] || {}}>
+              {t.method}
+            </span>
+          )}
+          {t.paymentMethod && (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0"
+              style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
+              💳 {t.paymentMethod}
+            </span>
+          )}
+          {noteData?.tags?.map(tag => (
+            <span key={tag} className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+              style={{ background: 'oklch(62% 0.20 295 / 15%)', color: 'oklch(72% 0.18 295)' }}>{tag}</span>
+          ))}
+          {noteData?.note && (
+            <span title={noteData.note} style={{ color: 'var(--color-text-muted)' }}>
+              <MessageSquare className="w-3 h-3" />
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="text-right flex-shrink-0">
+        <p className="text-sm font-black tabular-nums" style={{ color: 'var(--color-text)' }}>{currencySymbol}{t.amount.toFixed(2)}</p>
+        {t.date && <p className="text-[10px] mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{formatDate(t.date)}</p>}
+        {t.user && <p className="text-[10px] font-bold" style={{ color: 'var(--color-text-muted)' }}>{t.user}</p>}
+      </div>
+    </div>
+  );
+});
+
+// react-window row adapter — receives { index, style, ...rowProps } from <List>.
+function VirtualLedgerRow({ index, style, items, sheetId, transactionNotes, currencySymbol }) {
+  return (
+    <LedgerRow
+      t={items[index]}
+      index={index}
+      style={style}
+      sheetId={sheetId}
+      transactionNotes={transactionNotes}
+      currencySymbol={currencySymbol}
+    />
+  );
+}
 
 export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthName = '', expenses = [], salaryReceived = 0, transactionNotes = {}, onUpdateNote, refreshKey = 0, months = [] }) {
   const [transactions, setTransactions] = useState([]);
@@ -107,7 +198,11 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
   const [filterMethods, setFilterMethods]       = useState([]);
   const [filterUsers, setFilterUsers]           = useState([]);
 
-  const load = async (isRefresh = false) => {
+  // Auto-measured row heights for the virtualized path (rows vary in height as
+  // badges/notes wrap). Keyed by sheetId so the measurement cache resets on month switch.
+  const rowHeightCache = useDynamicRowHeight({ defaultRowHeight: 76, key: sheetId });
+
+  const load = async (isRefresh = false, silent = false) => {
     // Serve from cache if fresh (unless explicit refresh)
     const cached = ledgerCache.get(sheetId);
     if (!isRefresh && cached && (Date.now() - cached.fetchedAt < CACHE_MS)) {
@@ -115,17 +210,31 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
       setLoading(false);
       return;
     }
-    if (isRefresh) setRefreshing(true); else setLoading(true);
+    if (isRefresh) setRefreshing(true);
+    else if (!silent) setLoading(true);
     try {
       const data = await buildLedger(sheetId, accessToken, monthName);
-      ledgerCache.set(sheetId, { data, fetchedAt: Date.now() });
+      const fetchedAt = Date.now();
+      ledgerCache.set(sheetId, { data, fetchedAt });
+      try { localStorage.setItem(ledgerCacheKey(sheetId), JSON.stringify({ data, fetchedAt })); } catch { /* ignore quota errors */ }
       setTransactions(data);
     }
-    catch { setTransactions([]); }
+    catch { if (!silent) setTransactions([]); }
     finally { setLoading(false); setRefreshing(false); }
   };
 
-  useEffect(() => { load(); }, [sheetId, refreshKey]);
+  // Warm-start from localStorage cache instantly on sheet change, then refresh in background
+  useEffect(() => {
+    const cached = loadCachedLedger(sheetId);
+    if (cached) {
+      setTransactions(cached.data);
+      setLoading(false);
+      load(false, true);
+    } else {
+      setTransactions([]);
+      load();
+    }
+  }, [sheetId, refreshKey]);
 
   const allCategories = useMemo(() => [...new Set(transactions.map(t => t.category))].sort(), [transactions]);
   const allMethods    = useMemo(() => [...new Set(transactions.map(t => t.method).filter(Boolean))].sort(), [transactions]);
@@ -489,54 +598,36 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
         </div>
       )}
 
-      {/* Ledger list */}
+      {/* Ledger list — virtualized for large lists, animated .map() otherwise */}
       {!loading && displayed.length > 0 && (
-        <div className="rounded-3xl overflow-hidden"
-          style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
-          {displayed.map((t, i) => {
-            const noteKey = `${sheetId}_${t.category}_${(t.vendor || '').toLowerCase()}_${t.amount.toFixed(2)}`;
-            const noteData = transactionNotes[noteKey];
-            return (
-              <div key={i} className="flex items-center gap-3 px-5 py-4 transition-colors hover:bg-[var(--sur-5)] animate-enter"
-                style={{ '--enter-delay': `${Math.min(i, 14) * 25}ms`, ...(i > 0 ? { borderTop: '1px solid var(--sur-6)' } : {}) }}>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>{t.vendor}</p>
-                  {t.txDate && <p className="text-[10px] mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{formatTxDate(t.txDate)}</p>}
-                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                      style={{ background: 'var(--sur-8)', color: 'var(--color-text-muted)' }}>{t.category}</span>
-                    {t.method && (
-                      <span className="text-[10px] font-black px-2 py-0.5 rounded-full"
-                        style={METHOD_STYLE[t.method] || {}}>
-                        {t.method}
-                      </span>
-                    )}
-                    {t.paymentMethod && (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full flex-shrink-0"
-                        style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
-                        💳 {t.paymentMethod}
-                      </span>
-                    )}
-                    {noteData?.tags?.map(tag => (
-                      <span key={tag} className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                        style={{ background: 'oklch(62% 0.20 295 / 15%)', color: 'oklch(72% 0.18 295)' }}>{tag}</span>
-                    ))}
-                    {noteData?.note && (
-                      <span title={noteData.note} style={{ color: 'var(--color-text-muted)' }}>
-                        <MessageSquare className="w-3 h-3" />
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="text-right flex-shrink-0">
-                  <p className="text-sm font-black tabular-nums" style={{ color: 'var(--color-text)' }}>{currencySymbol}{t.amount.toFixed(2)}</p>
-                  {t.date && <p className="text-[10px] mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{formatDate(t.date)}</p>}
-                  {t.user && <p className="text-[10px] font-bold" style={{ color: 'var(--color-text-muted)' }}>{t.user}</p>}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        displayed.length > VIRTUALIZE_THRESHOLD ? (
+          <div className="rounded-3xl overflow-hidden"
+            style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+            <List
+              rowComponent={VirtualLedgerRow}
+              rowCount={displayed.length}
+              rowHeight={rowHeightCache}
+              rowProps={{ items: displayed, sheetId, transactionNotes, currencySymbol }}
+              overscanCount={8}
+              style={{ height: 'min(70vh, 760px)' }}
+            />
+          </div>
+        ) : (
+          <div className="rounded-3xl overflow-hidden"
+            style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+            {displayed.map((t, i) => (
+              <LedgerRow
+                key={i}
+                t={t}
+                index={i}
+                animate
+                sheetId={sheetId}
+                transactionNotes={transactionNotes}
+                currencySymbol={currencySymbol}
+              />
+            ))}
+          </div>
+        )
       )}
     </div>
   );

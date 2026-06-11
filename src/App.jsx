@@ -127,6 +127,9 @@ function Dashboard({ auth }) {
   const { settings, loading: settingsLoading, updateSettings } = useSettings(user.email, user.accessToken);
   const currencySymbol = getCurrencySymbol(settings.currency || 'USD');
   const categoryIcons  = { ...DEFAULT_ICONS, ...(settings.categoryIcons || {}) };
+  // Stable array references so memoized children (ExpenseTable etc.) can skip re-renders
+  const smartRules = useMemo(() => settings.smartRules || [], [settings.smartRules]);
+  const cardRules  = useMemo(() => settings.cardRules || [], [settings.cardRules]);
 
   // Theme (dark/light, font size, accent color) — extracted to useTheme hook
   const { isDark, setIsDark } = useTheme(settings, updateSettings);
@@ -644,9 +647,9 @@ function Dashboard({ auth }) {
                     item,
                   ],
                 }))}
-                smartRules={settings.smartRules || []}
+                smartRules={smartRules}
                 cards={settings.cards || []}
-                cardRules={settings.cardRules || []}
+                cardRules={cardRules}
               />
 
               {/* Insight cards */}
@@ -772,9 +775,9 @@ function Dashboard({ auth }) {
               refreshNonMonthly();
             }
           }}
-          smartRules={settings.smartRules || []}
+          smartRules={smartRules}
           cards={settings.cards || []}
-          cardRules={settings.cardRules || []}
+          cardRules={cardRules}
           onSaveRecurring={item => updateSettings(prev => ({
             ...prev,
             recurringExpenses: [
@@ -856,8 +859,8 @@ function Dashboard({ auth }) {
           accessToken={user.accessToken}
           onClose={() => setShowReconcile(false)}
           onComplete={() => refresh()}
-          smartRules={settings.smartRules || []}
-          cardRules={settings.cardRules || []}
+          smartRules={smartRules}
+          cardRules={cardRules}
           reconciledFingerprints={settings.reconciledFingerprints || []}
           onAddFingerprints={fps => updateSettings(prev => ({
             ...prev,

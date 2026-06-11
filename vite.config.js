@@ -51,6 +51,16 @@ export default defineConfig({
       },
       injectManifest: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico}'],
+        // Exclude heavy, rarely-used lazy chunks from the upfront precache —
+        // they're served via a CacheFirst runtime route in sw.js instead
+        // (filenames are content-hashed, so a new version gets a new URL).
+        globIgnores: [
+          '**/react-pdf.browser-*.js',
+          '**/pdfParsers-*.js',
+          '**/claudePdfParser-*.js',
+          '**/SpendingMap-*.js',
+          '**/SpendingMap-*.css',
+        ],
       },
     }),
   ],

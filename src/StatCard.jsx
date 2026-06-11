@@ -13,7 +13,7 @@ function FormattedValue({ value, currencySymbol }) {
 }
 
 // ── Compact 2×2 grid card (mobile Phase 7) ─────────────────────────────────
-export function StatCardCompact({ title, value, subtext, onEdit, currencySymbol = '$', enterDelay = 0 }) {
+function StatCardCompact({ title, value, subtext, onEdit, currencySymbol = '$', enterDelay = 0 }) {
   const isNeg = value < 0;
 
   return (
@@ -136,7 +136,12 @@ function InlineStat({ title, value, subtext, onEdit, currencySymbol, enterDelay 
 }
 
 // ── Public StatCard — keeps the old API intact for desktop ─────────────────
-export function StatCard({ title, value, subtext, onEdit, currencySymbol = '$', hero = false, valueColor, enterDelay = 0 }) {
+function StatCard({ title, value, subtext, onEdit, currencySymbol = '$', hero = false, valueColor, enterDelay = 0 }) {
   if (hero) return <HeroStat title={title} value={value} subtext={subtext} onEdit={onEdit} currencySymbol={currencySymbol} enterDelay={enterDelay} />;
   return <InlineStat title={title} value={value} subtext={subtext} onEdit={onEdit} currencySymbol={currencySymbol} valueColor={valueColor} enterDelay={enterDelay} />;
 }
+
+export const MemoStatCard = React.memo(StatCard);
+export { MemoStatCard as StatCard };
+export const MemoStatCardCompact = React.memo(StatCardCompact);
+export { MemoStatCardCompact as StatCardCompact };

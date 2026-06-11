@@ -7,6 +7,17 @@ const DEV_MOCK = import.meta.env.DEV && import.meta.env.VITE_DEV_MOCK === 'true'
 
 const TEMPLATE_ID = import.meta.env.VITE_TEMPLATE_SHEET_ID;
 
+const MONTHS_CACHE_KEY = 'budget_months_cache';
+
+function loadCachedMonths() {
+  try {
+    const cached = localStorage.getItem(MONTHS_CACHE_KEY);
+    return cached ? JSON.parse(cached) : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Read the Months registry from the template sheet */
 async function fetchMonths(accessToken) {
   const range = encodeURIComponent("'Months'!A2:B50");
@@ -234,7 +245,7 @@ async function removeMonthEntry(monthName, accessToken) {
 }
 
 export function useMonths(accessToken, allowedEmails = []) {
-  const [months, setMonths]   = useState(() => DEV_MOCK ? MOCK_MONTHS : []);
+  const [months, setMonths]   = useState(() => DEV_MOCK ? MOCK_MONTHS : loadCachedMonths());
   const [loading, setLoading] = useState(!DEV_MOCK);
 
   const load = useCallback(async () => {
@@ -242,6 +253,7 @@ export function useMonths(accessToken, allowedEmails = []) {
     try {
       const list = await fetchMonths(accessToken);
       setMonths(list);
+      try { localStorage.setItem(MONTHS_CACHE_KEY, JSON.stringify(list)); } catch { /* ignore quota errors */ }
     } catch (e) {
       console.error('useMonths:', e);
     } finally {
