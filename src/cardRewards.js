@@ -76,7 +76,7 @@ export function cardEarnsRewards(card, rates = CARD_REWARDS) {
 /**
  * Effective rate table: user-overridden rates from settings if present,
  * otherwise the hardcoded CARD_REWARDS defaults. `cardRewardRates` is set by
- * the monthly auto-check's APPLY RATES flow (or Settings UI in Phase 4).
+ * the Settings UI.
  */
 export function getEffectiveRates(settings) {
   const custom = settings && settings.cardRewardRates;

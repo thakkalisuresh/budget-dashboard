@@ -25,3 +25,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Firebase
+.firebase
+firebase-debug.log
+firebase-debug.*.log
+ui-debug.log
+*.cache

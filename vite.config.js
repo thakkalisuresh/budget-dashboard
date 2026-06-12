@@ -7,10 +7,11 @@ import { execSync } from 'child_process'
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
 
-// Netlify sets COMMIT_REF on every deploy; fall back to local git for dev builds
+// GitHub Actions sets GITHUB_SHA (full 40-char) on every CI build; slice to 7.
+// Fall back to local git for dev builds.
 let commitSha = 'dev'
 try {
-  commitSha = process.env.COMMIT_REF?.slice(0, 7)
+  commitSha = process.env.GITHUB_SHA?.slice(0, 7)
     || execSync('git rev-parse --short HEAD', { stdio: ['pipe', 'pipe', 'ignore'] }).toString().trim()
 } catch { /* non-git environment */ }
 

@@ -23,7 +23,7 @@ import { kbYesCancel, kbYesSkip, kbConfirmDelete } from './_telegram.mjs';
 
 const DAILY_LIMIT    = 50;
 const UNDO_WINDOW_MS = 10 * 60 * 1000;
-const DASHBOARD_URL  = process.env.SITE_URL || 'https://budget-dashboard-tracker.netlify.app';
+const DASHBOARD_URL  = process.env.SITE_URL || 'https://fundient-dashboard.web.app';
 
 /* ── Card resolution (server-side mirror of src/smartRules + resolveCardName) ── */
 

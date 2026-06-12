@@ -2,9 +2,21 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, develop]
   pull_request:
-    branches: [main, master]
+    branches: [main, develop]
+
+# Frontend build-time config (Vite VITE_* vars). On Netlify these come from the
+# site's env UI; on GitHub Actions they come from repository variables (Settings
+# → Secrets and variables → Actions → Variables). Non-secret — they are baked
+# into the shipped client bundle. Applied workflow-wide so every `npm run build`
+# (smoke test + the deploy jobs) produces a functional bundle.
+env:
+  VITE_SHEET_ID: ${{ vars.VITE_SHEET_ID }}
+  VITE_TEMPLATE_SHEET_ID: ${{ vars.VITE_TEMPLATE_SHEET_ID }}
+  VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
+  VITE_ALLOWED_EMAILS: ${{ vars.VITE_ALLOWED_EMAILS }}
+  VITE_VAPID_PUBLIC_KEY: ${{ vars.VITE_VAPID_PUBLIC_KEY }}
 
 jobs:
   ci:
@@ -29,3 +41,113 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # Live deploy to Firebase on pushes to main/develop. Parallel-run target is the
+  # single project `fundient-dashboard`; Netlify still deploys independently via
+  # its own git integration until Part D cutover. Requires the FIREBASE_SERVICE_ACCOUNT
+  # repo secret (a CI service-account JSON key) — until that exists, this job
+  # skips gracefully so the `ci` gate stays green.
+  deploy-live:
+    needs: ci
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check deploy secret
+        id: secret
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$SA" ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::FIREBASE_SERVICE_ACCOUNT not set — skipping Firebase deploy."
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.secret.outputs.present == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.secret.outputs.present == 'true'
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        if: steps.secret.outputs.present == 'true'
+        run: npm ci
+
+      - name: Build frontend
+        if: steps.secret.outputs.present == 'true'
+        run: npm run build
+
+      # The firebase CLI loads functions/index.js to discover the exported
+      # functions before deploy, so its dependencies must be installed locally.
+      - name: Install functions dependencies
+        if: steps.secret.outputs.present == 'true'
+        run: npm ci
+        working-directory: functions
+
+      - name: Write service account key
+        if: steps.secret.outputs.present == 'true'
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: printf '%s' "$SA" > "$RUNNER_TEMP/firebase-sa.json"
+
+      - name: Deploy functions + hosting
+        if: steps.secret.outputs.present == 'true'
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: npx --yes firebase-tools@^13 deploy --only functions,hosting --project fundient-dashboard --non-interactive
+
+      - name: Remove service account key
+        if: always() && steps.secret.outputs.present == 'true'
+        run: rm -f "$RUNNER_TEMP/firebase-sa.json"
+
+  # Hosting preview channel for PRs. Preview channels are hosting-only; their
+  # /api/* rewrites resolve to the live Cloud Functions. Skips gracefully if the
+  # service-account secret is absent.
+  deploy-preview:
+    needs: ci
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check deploy secret
+        id: secret
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$SA" ]; then
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::FIREBASE_SERVICE_ACCOUNT not set — skipping preview deploy."
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.secret.outputs.present == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.secret.outputs.present == 'true'
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        if: steps.secret.outputs.present == 'true'
+        run: npm ci
+
+      - name: Build frontend
+        if: steps.secret.outputs.present == 'true'
+        run: npm run build
+
+      - name: Deploy preview channel
+        if: steps.secret.outputs.present == 'true'
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId: fundient-dashboard
+          expires: 7d

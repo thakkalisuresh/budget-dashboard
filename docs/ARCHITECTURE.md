@@ -19,7 +19,6 @@ Browser (React SPA)
   |     |── push-subscribe     (save Web Push subscription to Netlify Blobs)
   |     |── push-unsubscribe   (remove push subscription)
   |     |── push-alert         (send push notification on budget threshold)
-  |     |── push-digest        (scheduled weekly spending digest)
   |
   |── Service Worker (Workbox)
   |     |── Precache app shell (offline-capable)
@@ -186,7 +185,7 @@ Booking Method is only meaningful for CSR airline/hotel transactions — writing
 **Settings** (`useSettings` → `DEFAULT_SETTINGS`)
 - `cards`: pre-seeded list of card/account names (user-editable in Settings).
 - `cardRules`: `[{ id, vendorPattern, category, card }]` — auto-assigns a card. Category-specific rules beat vendor-only; longer patterns beat shorter.
-- `cardRewardRates`: `null` = use hardcoded `CARD_REWARDS`; set to a custom rate table by APPLY RATES or the Settings UI. Read via `getEffectiveRates(settings)`.
+- `cardRewardRates`: `null` = use hardcoded `CARD_REWARDS`; set to a custom rate table via the Settings UI. Read via `getEffectiveRates(settings)`.
 
 **Resolution chain** (used by add-expense, scanner, import, reconcile, bot):
 `Vision-extracted card → resolveCardName() fuzzy match against cards list → applyCardRules(vendor, category) → manual pick`. `resolveCardName` normalizes punctuation/case and guards short names (e.g. "Cash" won't match "…active cash").
@@ -227,7 +226,7 @@ Reward cards and rates:
 
 Key functions:
 - `calculateRewards(card, mcc, amount, ytdSpend, bookingMethod, rates)` — `mcc` from `resolveMCC`; `bookingMethod` for CSR portal/direct; `rates` defaults to `CARD_REWARDS` but respects `getEffectiveRates(settings)`.
-- `getEffectiveRates(settings)` — returns `settings.cardRewardRates` if set, otherwise `CARD_REWARDS`. Used by CardsTab, bot confirm flow, and rate-check application.
+- `getEffectiveRates(settings)` — returns `settings.cardRewardRates` if set, otherwise `CARD_REWARDS`. Used by CardsTab and the bot confirm flow.
 - `getBestCard(category, vendor, rates)` — ranks all reward cards by estimated $/$ return; ties prefer cash back.
 - The two rate modules (`cardRewards.js` and `_card-rewards.mjs`) are **duplicated and must be kept in sync** — the server can't import client modules. The drift-guard test `cardRewardsSync.test.js` fails CI on any divergence.
 
@@ -237,20 +236,6 @@ After copying the template, `writeV2Headers` writes the correct V2 header row to
 **Settings merge** (`loadUserSettings`): Any cards in `DEFAULT_SETTINGS.cards` that are missing from the user's saved list are automatically appended on load, so new pre-seeded cards (e.g. Bilt Blue Card) appear without requiring a manual Settings entry.
 
 **Booking method** — stored per transaction only when card = CSR and MCC is a travel code (4511 airlines, 7011 hotels, CHASE_PORTAL). The UI shows the booking method toggle in AddExpenseDialog and ReceiptScanner when both conditions are met.
-
-**Monthly rate auto-check** (`netlify/functions/rate-check.mjs`, `netlify/functions/_rate-check.mjs`)
-
-Scheduled `0 9 1 * *` (1st of month, 09:00 UTC). The deployed wrapper (`rate-check.mjs`) injects Claude Sonnet + web search, Telegram, and Sheets; the core logic lives in `_rate-check.mjs` (pure, DI, fully unit-tested).
-
-Flow:
-1. Load effective rates from `getUserSettings()` (or fall back to `CARD_REWARDS`).
-2. For each reward card, call Claude Sonnet with `tools: [{ type: 'web_search_20250305' }]` against the issuer page (Bankrate fallback for Amex). Source hints are hardcoded per card.
-3. Parse the response with `parseClaudeRates()` — tolerates fenced/prose output; extracts the last valid JSON blob.
-4. `diffRateTable(oldCfg, newCfg)` — compares every MCC node + default.
-5. **High confidence + actual diff** → store proposal in `rate-proposals/latest` (Netlify Blobs), send Telegram notification to all `TELEGRAM_ALLOWED_USERS`, append read-only in-app message for all `ALLOWED_EMAILS`.
-6. Low/medium confidence or no change → silence.
-
-Bot replies: `APPLY RATES` writes `proposal.rates` to `cardRewardRates` for **all household accounts** via `updateUserSettingsFor`. `IGNORE` deletes the proposal blob.
 
 ### Key UI Components
 
@@ -287,7 +272,6 @@ Bot replies: `APPLY RATES` writes `proposal.rates` to `cardRewardRates` for **al
 - **_auth.mjs**: shared auth helpers (origin check, `sec-fetch-site` validation, bearer token verification). Not deployed (underscore prefix).
 - **push-subscribe / push-unsubscribe**: Web Push subscription storage via `@netlify/blobs`.
 - **push-alert**: sends a push notification on budget threshold breach.
-- **push-digest**: scheduled weekly spending summary.
 
 ### Messaging Bot (Telegram / WhatsApp)
 
