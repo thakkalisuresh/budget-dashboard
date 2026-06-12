@@ -16,3 +16,6 @@ export { telegramWebhook } from './telegram-webhook.mjs';
 export { pushSubscribe } from './push-subscribe.mjs';
 export { pushUnsubscribe } from './push-unsubscribe.mjs';
 export { pushAlert } from './push-alert.mjs';
+
+// Phase 6 — MCP server (JSON-RPC; rate-limit state Netlify Blobs → Firestore).
+export { mcp } from './mcp-server.mjs';

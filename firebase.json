@@ -9,6 +9,7 @@
       { "source": "/api/push-subscribe", "function": "pushSubscribe" },
       { "source": "/api/push-unsubscribe", "function": "pushUnsubscribe" },
       { "source": "/api/push-alert", "function": "pushAlert" },
+      { "source": "/api/mcp", "function": "mcp" },
       {
         "source": "**",
         "destination": "/index.html"
