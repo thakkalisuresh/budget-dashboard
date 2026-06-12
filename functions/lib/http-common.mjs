@@ -41,3 +41,59 @@ export async function sha256Hex(s) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
+
+// ── Bearer-token verification (push-* functions) ─────────────────────────────
+// Small in-memory cache so we don't hit Google on every push event.
+const BEARER_TOKEN_CACHE_MS = 5 * 60_000;
+const BEARER_FAIL_CACHE_MS  = 30_000;
+const BEARER_MAX_ENTRIES    = 500;
+const BEARER_MAX_FAIL       = 50;
+const bearerCache     = new Map();
+const bearerFailCache = new Map();
+
+/**
+ * Verify a Google access token from the Authorization header.
+ * Returns { ok, email } if the token is valid and the email is in ALLOWED_EMAILS.
+ */
+export async function verifyBearer(req) {
+  const auth = req.get('authorization') || '';
+  const m = /^Bearer\s+(.+)$/i.exec(auth);
+  if (!m) return { ok: false };
+  const token = m[1].trim();
+
+  const hash = await sha256Hex(token);
+  const now  = Date.now();
+
+  const failHit = bearerFailCache.get(hash);
+  if (failHit && failHit.validUntil > now) return failHit;
+
+  const hit = bearerCache.get(hash);
+  if (hit && hit.validUntil > now) return hit;
+
+  let googleRes;
+  try {
+    googleRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    return { ok: false };
+  }
+  if (!googleRes.ok) {
+    if (bearerFailCache.size >= BEARER_MAX_FAIL) bearerFailCache.delete(bearerFailCache.keys().next().value);
+    const miss = { ok: false, validUntil: now + BEARER_FAIL_CACHE_MS };
+    bearerFailCache.set(hash, miss);
+    return miss;
+  }
+  const profile = await googleRes.json().catch(() => null);
+  const email   = profile?.email?.toLowerCase();
+
+  const allowed = new Set(
+    (process.env.ALLOWED_EMAILS || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean)
+  );
+  const ok = !!email && allowed.has(email);
+
+  if (bearerCache.size >= BEARER_MAX_ENTRIES) bearerCache.delete(bearerCache.keys().next().value);
+  const result = { ok, email, validUntil: now + BEARER_TOKEN_CACHE_MS };
+  bearerCache.set(hash, result);
+  return result;
+}

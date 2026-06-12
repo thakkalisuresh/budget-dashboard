@@ -11,3 +11,8 @@ export { claude } from './claude.mjs';
 
 // Phase 4 — Telegram bot webhook (WhatsApp out of scope).
 export { telegramWebhook } from './telegram-webhook.mjs';
+
+// Phase 5 — push notifications (Netlify Blobs → Firestore).
+export { pushSubscribe } from './push-subscribe.mjs';
+export { pushUnsubscribe } from './push-unsubscribe.mjs';
+export { pushAlert } from './push-alert.mjs';
