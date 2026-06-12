@@ -6,10 +6,10 @@
 
 // Origins allowed to call the API. Behind Hosting rewrites, /api/* is
 // same-origin with the site, so the browser sends the site's own origin.
-// Both the Netlify origin (parallel run) and the new Firebase origins are
-// listed; drop the Netlify entry at final cutover (Part D).
+// (The legacy Netlify origin was dropped post-cutover — nothing on that host
+// calls these functions, and an allowlisted dead *.netlify.app subdomain is a
+// takeover risk once the site is deleted.)
 export const ALLOWED_ORIGINS = new Set([
-  'https://budget-dashboard-tracker.netlify.app',
   'https://fundient-dashboard.web.app',
   'https://fundient-dashboard.firebaseapp.com',
   'http://localhost:5173', // vite dev

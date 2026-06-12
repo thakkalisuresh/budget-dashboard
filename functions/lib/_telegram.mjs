@@ -1,21 +1,27 @@
 /**
  * Telegram Bot API transport helpers.
- * Ported from netlify/functions/_telegram.mjs. Only `validateTelegramWebhook`
- * changed — it reads the secret-token header via Express `req.get()` instead of
- * the Web `req.headers.get()`. BOT_TOKEN/WEBHOOK_SECRET come from process.env
- * (injected by bound defineSecret params at cold start).
+ * Ported from netlify/functions/_telegram.mjs. `validateTelegramWebhook` reads
+ * the secret-token header via Express `req.get()` (was Web `req.headers.get()`)
+ * and now compares in constant time. BOT_TOKEN/WEBHOOK_SECRET come from
+ * process.env (injected by bound defineSecret params at cold start).
  */
+import { createHash, timingSafeEqual } from 'node:crypto';
 
 const BOT_TOKEN      = process.env.TELEGRAM_BOT_TOKEN;
 const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET;
 const TELEGRAM_API   = `https://api.telegram.org/bot${BOT_TOKEN}`;
+
+const sha256 = (s) => createHash('sha256').update(String(s)).digest();
 
 /* ── Webhook validation ── */
 
 export function validateTelegramWebhook(req) {
   if (!WEBHOOK_SECRET) return false;
   const header = req.get('x-telegram-bot-api-secret-token');
-  return header === WEBHOOK_SECRET;
+  if (!header) return false;
+  // Constant-time compare over fixed-length digests (avoids the length leak of
+  // comparing raw strings of differing length).
+  return timingSafeEqual(sha256(header), sha256(WEBHOOK_SECRET));
 }
 
 /* ── Send messages ── */

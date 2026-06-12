@@ -7,7 +7,7 @@
  */
 import { onRequest } from 'firebase-functions/v2/https';
 import { ALLOWED_EMAILS, VIEWER_EMAILS } from './lib/secrets.mjs';
-import { corsOriginFor, sendJson } from './lib/http-common.mjs';
+import { corsOriginFor, hasValidSecFetchSite, sendJson } from './lib/http-common.mjs';
 
 export const verifyUser = onRequest(
   { region: 'us-central1', secrets: [ALLOWED_EMAILS, VIEWER_EMAILS], cors: false },
@@ -27,6 +27,15 @@ export const verifyUser = onRequest(
     }
 
     if (!corsOrigin) { sendJson(res, 403, { allowed: false, error: 'Forbidden' }); return; }
+
+    // sec-fetch-site must be present and same-origin/same-site — closes the
+    // spoofed-Origin-from-curl bypass (matches the claude proxy). The SPA's
+    // same-origin fetch (behind the Hosting rewrite) always sets this.
+    if (!hasValidSecFetchSite(req)) {
+      sendJson(res, 403, { allowed: false, error: 'Forbidden' }, corsOrigin);
+      return;
+    }
+
     if (req.method !== 'POST') { res.status(405).send('Method not allowed'); return; }
 
     let accessToken;
