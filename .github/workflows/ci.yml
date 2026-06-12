@@ -6,6 +6,18 @@ on:
   pull_request:
     branches: [main, develop]
 
+# Frontend build-time config (Vite VITE_* vars). On Netlify these come from the
+# site's env UI; on GitHub Actions they come from repository variables (Settings
+# → Secrets and variables → Actions → Variables). Non-secret — they are baked
+# into the shipped client bundle. Applied workflow-wide so every `npm run build`
+# (smoke test + the deploy jobs) produces a functional bundle.
+env:
+  VITE_SHEET_ID: ${{ vars.VITE_SHEET_ID }}
+  VITE_TEMPLATE_SHEET_ID: ${{ vars.VITE_TEMPLATE_SHEET_ID }}
+  VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
+  VITE_ALLOWED_EMAILS: ${{ vars.VITE_ALLOWED_EMAILS }}
+  VITE_VAPID_PUBLIC_KEY: ${{ vars.VITE_VAPID_PUBLIC_KEY }}
+
 jobs:
   ci:
     runs-on: ubuntu-latest
