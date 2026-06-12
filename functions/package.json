@@ -16,5 +16,11 @@
     "firebase-admin": "^12.7.0",
     "firebase-functions": "^6.3.0",
     "web-push": "^3.6.7"
+  },
+  "comments": {
+    "overrides": "uuid pinned to >=11.1.1 to clear GHSA-w5hq-g745-h8pq pulled in transitively via firebase-admin (google-gax/gaxios/teeny-request bundle uuid 9.x; firebase-admin 10.x). Surgical fix — avoids the firebase-admin 12->14 major bump that `npm audit fix --force` suggests. Drop this override once firebase-admin is upgraded."
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
   }
 }
