@@ -102,11 +102,18 @@ export async function appendExpense({ category, vendor, amount, txDate, sheetId,
     ? [month, year, dateVal, safeString(vendor), amount, safeString(paymentMethod || ''), safeString(bookingMethod || ''), uuid]
     : [month, year, dateVal, safeString(vendor), amount, safeString(paymentMethod || ''), uuid];
 
-  // Read current row count so we can write directly to the next row — avoids
-  // the :append API skipping past named table bounds (RentTable, etc.)
-  const colARange = encodeURIComponent(`'${config.sheet}'!A:A`);
-  const colAData  = await sheetsRequest(sheetId, `/values/${colARange}`);
-  const nextRow   = (colAData.values || []).length + 1;
+  // Find the last row that has actual data (vendor or amount) rather than using
+  // values.length, which counts formula-only rows returned by the FORMULA render
+  // mode even when they appear visually empty (e.g. =SUM(...) in a totals row).
+  const dataRange = encodeURIComponent(`'${config.sheet}'!A:H`);
+  const rowsData  = await sheetsRequest(sheetId, `/values/${dataRange}?valueRenderOption=FORMULA`);
+  const rows      = rowsData.values || [];
+  let lastDataIdx = 0;
+  for (let i = rows.length - 1; i >= 1; i--) {
+    const r = rows[i];
+    if (r && (r[3] || r[4])) { lastDataIdx = i; break; }
+  }
+  const nextRow = lastDataIdx + 2;
   const endCol    = isTravelCat ? 'H' : 'G';
   const rowRange  = encodeURIComponent(`'${config.sheet}'!A${nextRow}:${endCol}${nextRow}`);
   // RAW preserves the date string as text so Sheets doesn't convert it to a serial number.
