@@ -27,7 +27,7 @@ function CheckboxSquare({ checked, onClick, size = 'md', color = 'indigo' }) {
   return (
     <div
       onClick={onClick}
-      className={`${sizeClass} flex items-center justify-center flex-shrink-0 transition-colors cursor-pointer`}
+      className={`${sizeClass} flex items-center justify-center flex-shrink-0 cursor-pointer`}
       style={checked
         ? { background: checkedBg, borderColor: checkedBg }
         : { background: 'var(--sur-5)', borderColor: 'var(--sur-20)' }
@@ -276,7 +276,7 @@ function ReceiptConfirmModal({ s }) {
 function StatementTransactionRow({ t, i, onToggle, onEdit, onToggleNonMonthly, onToggleRecurring }) {
   return (
     <div
-      className="flex flex-col p-3 rounded-2xl transition-all"
+      className="flex flex-col p-3 rounded-2xl transition-colors"
       style={{
         background: 'var(--sur-4)',
         border: t.selected
@@ -333,7 +333,7 @@ function StatementReviewModal({ s }) {
     <>
       <Backdrop onClick={s.phase === 'statement-importing' ? undefined : s.handleClose} />
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="glass-heavy animate-dialog-enter rounded-3xl w-full max-w-lg overflow-hidden max-h-[90vh] flex flex-col"
+        <div className="glass-heavy animate-dialog-enter rounded-3xl w-full max-w-lg overflow-hidden max-h-[75vh] flex flex-col"
           style={{ border: '1px solid var(--sur-10)' }}>
 
           <div className="px-6 pt-7 pb-5 flex items-start justify-between flex-shrink-0" style={{ borderBottom: '1px solid var(--sur-8)' }}>
@@ -406,18 +406,18 @@ function RowEditModal({ s }) {
     <>
       <div className="fixed inset-0 z-[60] animate-overlay-in" style={{ background: 'oklch(0% 0 0 / 50%)', backdropFilter: 'blur(4px)' }} onClick={() => s.setEditingIndex(null)} />
       <div className="fixed inset-0 z-[61] flex items-end sm:items-center justify-center sm:p-4">
-        <div className="glass-heavy animate-sheet-up rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm overflow-hidden"
-          style={{ border: '1px solid var(--sur-10)', borderBottom: 'none' }}>
-          <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-1 sm:hidden" style={{ background: 'var(--sur-20)' }} />
+        <div className="glass-heavy animate-sheet-up rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm overflow-hidden flex flex-col"
+          style={{ border: '1px solid var(--sur-10)', borderBottom: 'none', maxHeight: 'calc(92vh - env(safe-area-inset-bottom))' }}>
+          <div className="w-10 h-1 rounded-full mx-auto mt-3 mb-1 sm:hidden flex-shrink-0" style={{ background: 'var(--sur-20)' }} />
 
-          <div className="px-6 pt-5 pb-4 flex items-center justify-between" style={{ borderBottom: '1px solid var(--sur-8)' }}>
+          <div className="px-6 pt-5 pb-4 flex items-center justify-between flex-shrink-0" style={{ borderBottom: '1px solid var(--sur-8)' }}>
             <p className="text-base font-black" style={{ color: 'var(--color-text)' }}>Edit Transaction</p>
             <button onClick={() => s.setEditingIndex(null)} className="p-1.5 rounded-xl transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}>
               <X className="w-4 h-4" />
             </button>
           </div>
 
-          <div className="px-6 py-5 space-y-4">
+          <div className="px-6 py-5 space-y-4 overflow-y-auto flex-1">
             <div className="space-y-1.5">
               <label className="text-[11px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>Vendor / Name</label>
               <input type="text" value={s.editVendor} onChange={e => s.setEditVendor(e.target.value)} placeholder="e.g. Whole Foods" autoFocus className={inputCls} style={inputStyle} />
@@ -451,7 +451,7 @@ function RowEditModal({ s }) {
             )}
           </div>
 
-          <div className="px-6 pt-1 flex gap-3" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)' }}>
+          <div className="px-6 pt-1 flex gap-3 flex-shrink-0" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)' }}>
             <button onClick={() => s.setEditingIndex(null)} className="flex-1 py-3 rounded-2xl text-sm font-bold transition-colors"
               style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}>Cancel</button>
             <button onClick={s.saveRowEdit} className="flex-1 py-3 rounded-2xl text-sm font-bold text-white transition-all active:scale-[0.98] flex items-center justify-center gap-2"

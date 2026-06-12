@@ -52,7 +52,6 @@ import { DeleteMonthDialog } from './DeleteMonthDialog.jsx';
 import { MonthPickerBar } from './MonthPickerBar.jsx';
 import { HeaderBar } from './HeaderBar.jsx';
 import { BottomNav } from './BottomNav.jsx';
-import { CameraFab } from './CameraFab.jsx';
 
 function App() {
   const auth = useAuth();
@@ -317,7 +316,7 @@ function Dashboard({ auth }) {
     >
       {/* Spacer that pushes content below the fixed glass header on desktop */}
       <div className="hidden lg:block" style={{ height: 'var(--header-offset)' }} />
-      <div className="max-w-7xl mx-auto space-y-6 pb-24 lg:pb-12">
+      <div className="max-w-7xl mx-auto space-y-6 pb-28 lg:pb-12">
 
         {/* Read-only banner */}
         {isReadOnly && (
@@ -985,8 +984,6 @@ function Dashboard({ auth }) {
           onBulkRecurring={(settings.recurringExpenses || []).length > 0 ? () => setShowBulkRecurring(true) : null}
         />
       )}
-
-      <CameraFab activeTab={activeTab} scanTriggerRef={scanTriggerRef} />
 
       <BottomNav
         activeTab={activeTab}

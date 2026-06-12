@@ -56,9 +56,15 @@ export async function addOrUpdateExpense(
     if (bmColV2 >= 0) newRow[bmColV2] = safeText(bookingMethod || '');
     newRow[uuidColV2] = newUUID;
 
-    // Write directly to the next row after existing data — avoids the :append
-    // API skipping past named table bounds (RentTable, GroceryTable, etc.)
-    const nextRow  = values.length + 1;
+    // Find the last row that has actual data (vendor or amount) rather than using
+    // values.length, which counts formula-only rows returned by the FORMULA render
+    // mode even when they appear visually empty (e.g. =SUM(...) in a totals row).
+    let lastDataIdx = 0;
+    for (let i = values.length - 1; i >= 1; i--) {
+      const r = values[i];
+      if (r && (r[3] || r[4])) { lastDataIdx = i; break; }
+    }
+    const nextRow  = lastDataIdx + 2;
     const endCol   = colLetter(uuidColV2);
     const rowRange = encodeURIComponent(`'${config.sheet}'!A${nextRow}:${endCol}${nextRow}`);
     // RAW preserves the date string as text so Sheets doesn't convert it to a serial number.
@@ -101,7 +107,12 @@ export async function addOrUpdateExpense(
       newRow[config.amtCol]  = amount;
       newRow[uuidCol]        = newUUID;
 
-      const nextRowV1 = values.length + 1;
+      let lastDataIdxV1 = 0;
+      for (let i = values.length - 1; i >= 1; i--) {
+        const r = values[i];
+        if (r && (r[config.descCol] || r[config.amtCol])) { lastDataIdxV1 = i; break; }
+      }
+      const nextRowV1 = lastDataIdxV1 + 2;
       const endColV1  = colLetter(uuidCol);
       const rangeV1   = encodeURIComponent(`'${config.sheet}'!A${nextRowV1}:${endColV1}${nextRowV1}`);
       await apiFetch(sheetId, `/values/${rangeV1}?valueInputOption=USER_ENTERED`, {

@@ -16,7 +16,7 @@ export function SpeedDial({ fabOpen, setFabOpen, detail, scanTriggerRef, onAddEx
       )}
       <div
         className={`sm:hidden fixed z-50 transition-all duration-200 ${detail ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
-        style={{ bottom: 'calc(env(safe-area-inset-bottom) + 1.5rem)', right: '1.5rem', width: '56px', height: '56px' }}
+        style={{ bottom: 'calc(env(safe-area-inset-bottom) + 64px + 0.75rem)', right: '1rem', width: '56px', height: '56px' }}
       >
         {/* Scan / Import */}
         <div
