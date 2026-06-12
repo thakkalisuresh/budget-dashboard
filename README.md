@@ -21,7 +21,7 @@ Personal budget dashboard built with React and backed by Google Sheets. Tracks m
 |---|---|
 | Frontend | React 19, Vite, Tailwind CSS v4 |
 | Charts | D3.js (tree-shaken sub-packages) |
-| Backend | Netlify Edge Functions (Deno) + Netlify Functions (Node.js) |
+| Backend | Firebase Cloud Functions (2nd gen, Node 22) + Firestore |
 | Data | Google Sheets API + Google Drive API |
 | Auth | Google OAuth 2.0 (implicit flow) + WebAuthn |
 | AI | Anthropic Claude (receipt scanning, statement parsing, chat) |
@@ -36,10 +36,10 @@ cp .env.example .env   # fill in your credentials
 npm run dev       # Vite dev server at localhost:5173
 ```
 
-For edge function support (receipt scanning, auth verification):
+For API support (receipt scanning, auth verification, push, bot, MCP):
 
 ```bash
-npx netlify dev   # starts Vite + edge functions on localhost:8888
+firebase emulators:start --only functions,hosting   # runs the /api/* Cloud Functions locally
 ```
 
 ## Setup
@@ -49,7 +49,7 @@ npx netlify dev   # starts Vite + edge functions on localhost:8888
 1. Create a project in [Google Cloud Console](https://console.cloud.google.com/)
 2. Enable **Google Sheets API** and **Google Drive API**
 3. Create an **OAuth 2.0 Client ID** (Web application)
-   - Authorized origins: `http://localhost:5173`, `https://your-site.netlify.app`
+   - Authorized origins: `http://localhost:5173`, `https://<your-project>.web.app`, `https://<your-project>.firebaseapp.com`
 4. Copy the client ID → `VITE_GOOGLE_CLIENT_ID`
 
 ### 2. Google Sheet
@@ -72,7 +72,7 @@ VITE_TEMPLATE_SHEET_ID=your-template-sheet-id
 VITE_VAPID_PUBLIC_KEY=your-vapid-public-key
 ```
 
-See [docs/ENV.md](docs/ENV.md) for the full list including server-side Netlify variables.
+See [docs/ENV.md](docs/ENV.md) for the full list including the server-side secrets (Firebase Secret Manager).
 
 ## Testing
 
@@ -85,7 +85,7 @@ npm run test:watch  # watch mode
 
 - [Architecture](docs/ARCHITECTURE.md) — component map, data flow, offline model, animation architecture
 - [Environment Variables](docs/ENV.md) — all `VITE_*` and server-side vars
-- [Deployment](docs/DEPLOYMENT.md) — Google Cloud setup, VAPID keys, Netlify config
+- [Deployment](docs/DEPLOYMENT.md) — Google Cloud setup, VAPID keys, Firebase config (Secret Manager, CI deploy)
 - [Security Model](docs/SECURITY-MODEL.md) — auth, token encryption, CSP, input validation
 - [Security Notes](SECURITY.md) — known tradeoffs and accepted limitations
 - [Contributing](CONTRIBUTING.md) — dev setup, conventions, PR workflow

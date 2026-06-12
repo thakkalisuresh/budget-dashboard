@@ -11,7 +11,7 @@ This document describes the security architecture of the Fundient Budget Dashboa
 - `VIEWER_EMAILS` grants read-only access (a subset of ALLOWED_EMAILS)
 
 ### Token Validation Caching
-- Edge functions cache validated tokens by SHA-256 hash (never raw tokens) for 5 minutes
+- Cloud Functions cache validated tokens by SHA-256 hash (never raw tokens) for 5 minutes
 - Failed tokens are cached separately with a 30-second TTL and a 50-entry cap to prevent cache poisoning (SEC-15)
 - Valid tokens use a 500-entry cap with FIFO eviction
 
@@ -34,13 +34,19 @@ This document describes the security architecture of the Fundient Budget Dashboa
 
 ## Authorization
 
-### Edge Functions
+### Cloud Functions
+All `/api/*` endpoints enforce an allowlisted `Origin` and a valid
+`sec-fetch-site` header (blocks spoofed-Origin requests from curl), then verify
+the caller's Google bearer token against `ALLOWED_EMAILS`.
+
 - `/api/verify-user`: validates token, returns role (owner/viewer)
 - `/api/claude`: requires valid Bearer token + allowlisted email
   - Model allowlist: only `claude-haiku-4-5`
   - `max_tokens` capped at 4096
   - Request body capped at 8MB
-  - `sec-fetch-site` header required (blocks non-browser requests like curl)
+- `/api/push-*`: bearer-verified; always act on the verified email, never client-supplied
+- `/api/telegram`: validates the `x-telegram-bot-api-secret-token` header in constant time, then an allowlisted numeric user ID
+- `/api/mcp`: single shared `MCP_API_KEY` (Bearer / `X-API-Key`), constant-time compared, 100 req/hour per key
 
 ### Rate Limiting
 - IP-based: 20 requests/minute (stops unauthenticated floods)
@@ -50,7 +56,7 @@ This document describes the security architecture of the Fundient Budget Dashboa
 ## Content Security
 
 ### CSP (Content-Security-Policy)
-Configured in `netlify.toml`:
+Configured in `firebase.json` (`hosting.headers`):
 - `script-src 'self'` (no unsafe-inline for scripts)
 - `style-src 'self' 'unsafe-inline'` (required for runtime accent color injection)
 - `connect-src` allowlists googleapis.com, open.er-api.com, accounts.google.com
@@ -86,5 +92,7 @@ Configured in `netlify.toml`:
 
 ## Secrets Management
 - `.env` is gitignored and was never committed (verified via `git log --all --full-history -- .env`)
-- `ANTHROPIC_API_KEY` only exists server-side (edge function env)
+- Server secrets live in **Firebase Secret Manager** (declared in `functions/lib/secrets.mjs`), injected into `process.env` only at function cold start. `ANTHROPIC_API_KEY` and all other secrets never reach the client.
+- Firestore is **default-deny** (`firestore.rules`); `push_subscriptions` / `bot_state` / `mcp_rate_limit` are reachable only via the Admin SDK inside functions.
+- The CI deploy service-account key is a GitHub secret, written to a temp file and removed on `if: always()`; it is never logged.
 - `VITE_DEV_ACCESS_TOKEN` is gated on `import.meta.env.DEV` (stripped in production builds)

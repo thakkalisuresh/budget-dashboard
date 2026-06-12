@@ -9,10 +9,11 @@ cp .env.example .env   # fill in credentials — see docs/ENV.md
 npm run dev    # Vite at localhost:5173
 ```
 
-Edge functions (`/api/verify-user`, `/api/claude`) require the Netlify CLI:
+The `/api/*` endpoints (`/api/verify-user`, `/api/claude`, push, telegram, mcp)
+are Firebase Cloud Functions — run them locally with the Firebase emulators:
 
 ```bash
-npx netlify dev   # runs everything on localhost:8888
+firebase emulators:start --only functions,hosting
 ```
 
 ## Secret Phrase Gate
@@ -33,9 +34,10 @@ src/
   sh*.js                   # individual sheet operation modules
   PinLock.jsx              # PIN hashing (PBKDF2), AES-GCM encryption, WebAuthn
   sw.js                    # Workbox service worker (precache + background sync)
-  netlify/
-    edge-functions/        # Deno edge functions (verify-user, claude)
-    functions/             # Node.js functions (push-*)
+functions/                 # Firebase Cloud Functions (2nd gen, Express onRequest)
+  index.js                 # exports all 8 functions
+  verify-user.mjs claude.mjs push-*.mjs telegram-webhook.mjs mcp-server.mjs
+  lib/                     # secrets, http-common, firestore, bot-store, ported data layer
 ```
 
 ## Code Conventions
@@ -58,11 +60,11 @@ Tests use Vitest. Mock at the boundary — fake `fetch`, not internal modules. D
 
 ## Making Changes
 
-1. Branch from `main`
-2. Run `npm test` before opening a PR — all 86 tests must pass
+1. Branch from `develop` (feature work merges to `develop`; `main` is the deploy target)
+2. Run `npm test` before opening a PR — the full suite must pass
 3. For visual changes: start the dev server (`npm run dev`) and verify in a browser before marking done
-4. For edge function changes: use `npx netlify dev` to test locally — Vite alone won't run them
-5. Never commit `.env` or any file containing secrets
+4. For Cloud Function changes: use `firebase emulators:start` to test locally — Vite alone won't run them
+5. Never commit `.env`, `.env.local`, or any file containing secrets
 
 ## Commit Style
 
@@ -88,10 +90,11 @@ No `Co-Authored-By` trailers.
 
 ## Deployment
 
-Netlify auto-deploys on push to `main`. Manual deploy:
+CI auto-deploys to Firebase on push to `main` or `develop` (the `deploy-live`
+job in `.github/workflows/ci.yml`). Manual deploy:
 
 ```bash
-npx netlify deploy --prod
+firebase deploy --only functions,hosting --project <your-project>
 ```
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for full setup.

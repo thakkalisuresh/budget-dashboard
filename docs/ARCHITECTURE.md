@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Fundient is a personal budget dashboard built with React + Vite, deployed on Netlify, and backed by Google Sheets as its primary data store.
+Fundient is a personal budget dashboard built with React + Vite, deployed on Firebase Hosting + Cloud Functions, and backed by Google Sheets as its primary data store.
 
 ## High-Level Data Flow
 
@@ -11,12 +11,12 @@ Browser (React SPA)
   |── Google Sheets API (read/write budget data)
   |── Google Drive API (copy template sheet for new months)
   |
-  |── Netlify Edge Functions (Deno, runs at CDN edge)
+  |── Firebase Cloud Functions (2nd gen, Node 22, Express onRequest)
   |     |── /api/verify-user   (email allowlist check, returns role)
   |     |── /api/claude        (Anthropic API proxy — receipt scanning, chat)
-  |
-  |── Netlify Functions (Node.js)
-  |     |── push-subscribe     (save Web Push subscription to Netlify Blobs)
+  |     |── /api/telegram      (Telegram bot webhook)
+  |     |── /api/mcp           (MCP server — JSON-RPC tools for Claude clients)
+  |     |── push-subscribe     (save Web Push subscription to Firestore)
   |     |── push-unsubscribe   (remove push subscription)
   |     |── push-alert         (send push notification on budget threshold)
   |
@@ -190,7 +190,7 @@ Booking Method is only meaningful for CSR airline/hotel transactions — writing
 **Resolution chain** (used by add-expense, scanner, import, reconcile, bot):
 `Vision-extracted card → resolveCardName() fuzzy match against cards list → applyCardRules(vendor, category) → manual pick`. `resolveCardName` normalizes punctuation/case and guards short names (e.g. "Cash" won't match "…active cash").
 
-**MCC-based rewards engine** (`src/cardRewards.js` + `src/vendorMCC.js`, mirrored server-side in `netlify/functions/_card-rewards.mjs`)
+**MCC-based rewards engine** (`src/cardRewards.js` + `src/vendorMCC.js`, mirrored server-side in `functions/lib/_card-rewards.mjs`)
 
 Rates are keyed by Merchant Category Code (MCC), not app category name, so they work correctly across vendors (e.g. Uber → rideshare 3% on Amex, Uber Eats → dining 5812 not rideshare).
 
@@ -231,7 +231,7 @@ Key functions:
 - The two rate modules (`cardRewards.js` and `_card-rewards.mjs`) are **duplicated and must be kept in sync** — the server can't import client modules. The drift-guard test `cardRewardsSync.test.js` fails CI on any divergence.
 
 **New month creation** (`src/useMonths.js` → `createMonth`):
-After copying the template, `writeV2Headers` writes the correct V2 header row to every category sheet AND clears rows 2–20 to remove stale template content. This prevents Google Sheets named-table definitions (RentTable, GroceryTable, etc.) from causing new expense rows to be written at the wrong position — the Sheets `:append` API was skipping to the end of the table range instead of the first empty row. New expenses now use a direct row write (`PUT` to `values.length + 1`) rather than `:append`.
+After copying the template, `writeV2Headers` writes the correct V2 header row to every category sheet AND clears rows 2–20 to remove stale template content. This prevents Google Sheets named-table definitions (RentTable, GroceryTable, etc.) from causing new expense rows to be written at the wrong position — the Sheets `:append` API was skipping to the end of the table range instead of the first empty row. New expenses now use a direct row write rather than `:append`, targeting the row after the last one that actually holds vendor/amount data (a backward scan that skips formula-only rows like `=SUM()` which the FORMULA render mode reports as non-empty).
 
 **Settings merge** (`loadUserSettings`): Any cards in `DEFAULT_SETTINGS.cards` that are missing from the user's saved list are automatically appended on load, so new pre-seeded cards (e.g. Bilt Blue Card) appear without requiring a manual Settings entry.
 
@@ -262,22 +262,48 @@ After copying the template, `writeV2Headers` writes the correct V2 header row to
 
 ## Server Architecture
 
-### Edge Functions (Deno)
+All server code is **Firebase Cloud Functions (2nd gen)**, Node 22, written as
+Express `onRequest` handlers under `functions/`. Hosting rewrites in
+`firebase.json` map `/api/*` to each function so the browser calls them
+same-origin. Secrets are declared once in `functions/lib/secrets.mjs`
+(`defineSecret`) and injected into `process.env` at cold start — that lets the
+ported data-layer libs read `process.env.X` unchanged. Shared HTTP helpers
+(origin allowlist, `sec-fetch-site` check, bearer verification, CORS, SHA-256)
+live in `functions/lib/http-common.mjs`.
 
-- **verify-user.js**: validates Google access tokens against Google's userinfo endpoint. Checks email against `ALLOWED_EMAILS`. Returns `{ allowed, email, name, picture, role }`. Token hashes cached for 5 minutes (500-entry FIFO cap). Failed tokens cached with 30s TTL (50-entry cap, SEC-15).
-- **claude.js**: Anthropic API proxy. Validates bearer token, enforces model allowlist (`claude-haiku-4-5`), caps `max_tokens` at 4096, enforces 8MB body limit. Dual-layer rate limiting: IP 20 req/min, email 10 req/min. Requires `sec-fetch-site: same-origin` header.
+### API endpoints
 
-### Functions (Node.js)
+- **verify-user.mjs**: validates Google access tokens against Google's userinfo endpoint. Checks email against `ALLOWED_EMAILS`. Returns `{ allowed, email, name, picture, role }`. Token hashes cached for 5 minutes (500-entry FIFO cap). Failed tokens cached with 30s TTL (50-entry cap, SEC-15). Requires an allowlisted `Origin` + `sec-fetch-site`.
+- **claude.mjs**: Anthropic API proxy. Validates bearer token, enforces model allowlist (`claude-haiku-4-5`), caps `max_tokens` at 4096, enforces 8MB body limit. Dual-layer rate limiting: IP 20 req/min, email 10 req/min. Requires `sec-fetch-site: same-origin`. `maxInstances: 5` keeps the per-instance in-memory rate limits meaningful.
+- **push-subscribe / push-unsubscribe / push-alert**: Web Push. Subscriptions are stored in the Firestore `push_subscriptions` collection (doc id = verified email). All three verify a bearer token and always act on the *verified* email, never a client-supplied one. `push-alert` keeps a 5s-per-email anti-spam cap and prunes dead subscriptions on a 410.
 
-- **_auth.mjs**: shared auth helpers (origin check, `sec-fetch-site` validation, bearer token verification). Not deployed (underscore prefix).
-- **push-subscribe / push-unsubscribe**: Web Push subscription storage via `@netlify/blobs`.
-- **push-alert**: sends a push notification on budget threshold breach.
+### Persistence (Firestore)
 
-### Messaging Bot (Telegram / WhatsApp)
+The Admin SDK (`functions/lib/firestore.mjs`) bypasses security rules; the rules
+themselves are default-deny so no client can read these collections directly:
 
-`telegram-webhook.mjs` and `whatsapp-webhook.mjs` share transport-agnostic logic in `_bot-core.mjs`. Receipt/wallet images are parsed by `_extraction.mjs` (Gemini), which now also returns `payment_method`. The bot resolves a card (Vision → fuzzy match → `cardRules`, all via `getUserSettings()`) and surfaces it in two places:
+- `push_subscriptions` — one doc per email (`subscription`, `preferredHour`, `timezoneOffset`).
+- `bot_state` — bot working state via `functions/lib/bot-store.mjs`, a Firestore adapter that mirrors the old Netlify Blobs API (`get`/`setJSON`/`delete`/`list`) so the ported bot code runs unchanged.
+- `mcp_rate_limit` — fixed-window counters per API-key hash for the MCP server.
+
+### MCP server
+
+`mcp-server.mjs` exposes the budget tools over JSON-RPC 2.0 (Streamable HTTP) for
+external Claude clients. Auth is a single shared `MCP_API_KEY` (Bearer or
+`X-API-Key`), compared in constant time. Rate-limited to 100 req/hour per key
+(Firestore-backed, fails open). RPC logic lives in `functions/lib/_mcp.mjs`.
+
+### Messaging Bot (Telegram)
+
+`telegram-webhook.mjs` validates the `x-telegram-bot-api-secret-token` header
+(constant-time compare) and shares transport-agnostic logic in
+`functions/lib/_bot-core.mjs`. Receipt/wallet images are parsed by
+`_extraction.mjs` (Gemini), which also returns `payment_method`. The bot resolves
+a card (Vision → fuzzy match → `cardRules`, all via `getUserSettings()`) and
+surfaces it in two places:
 
 - **Pending confirmation** — adds a `Card:` line and a `card: <name>` edit option alongside the existing `category:` / `amount:` edits.
 - **Logged confirmation** — adds the resolved `Card:`, a **rewards line** from `_card-rewards.mjs` `buildRewardsLine()` (best-card ✓ or a better-card recommendation with estimated savings), and a direct `View Sheet:` link to the month's Google Sheet (`/spreadsheets/d/{sheetId}`).
 
-`_card-rewards.mjs` is a server-side duplicate of `src/cardRewards.js` — keep the rate tables in sync.
+(WhatsApp/Twilio was dropped during the Firebase migration — Telegram only.)
+`functions/lib/_card-rewards.mjs` is a server-side duplicate of `src/cardRewards.js` — keep the rate tables in sync.

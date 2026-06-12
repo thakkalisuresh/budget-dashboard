@@ -29,6 +29,5 @@ When `VITE_DEV_MOCK=true`, the app:
 
 ## Notes
 
-- `.env.local` is gitignored — never committed
-- `.env` is committed and contains non-secret configuration only (no API keys or tokens)
-- Production auth uses the server-side edge function (`netlify/functions/verify-user`) — `VITE_ALLOWED_EMAILS` is only a dev fallback
+- `.env` and `.env.local` are both gitignored — never committed. In CI the `VITE_*` values come from GitHub repository variables (non-secret; baked into the public client bundle).
+- Production auth uses the server-side Cloud Function (`functions/verify-user.mjs`, checking Secret Manager `ALLOWED_EMAILS`) — `VITE_ALLOWED_EMAILS` is only a dev/client-UX fallback.

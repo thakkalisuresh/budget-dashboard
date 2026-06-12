@@ -1,5 +1,22 @@
 # Changelog
 
+## [2026-06-12] — Backend migration: Netlify → Firebase
+
+### Infrastructure
+
+- **Hosting + API moved from Netlify to Firebase.** The SPA now serves from Firebase Hosting and all server logic runs as Firebase Cloud Functions (2nd gen, Node 22, Express `onRequest`) under `functions/`. Motivation: Netlify Pro's build-minute metering cost ~$20/mo; Firebase builds run in GitHub Actions (no build-minute billing) and Cloud Functions/Hosting usage for a single household stays in the free tier.
+- **Netlify Edge Functions (Deno) + Netlify Functions (Node) → unified Cloud Functions.** `verify-user`, `claude`, `push-subscribe/unsubscribe/alert`, `telegram-webhook`, and the `mcp` server were ported with their security controls intact (origin + `sec-fetch-site` gates, token caches, rate limits, model allowlist, body caps).
+- **Netlify Blobs → Firestore.** Push subscriptions (`push_subscriptions`), bot state (`bot_state`, via a Blobs-compatible adapter), and MCP rate limits (`mcp_rate_limit`) now live in Firestore. Rules are default-deny — all access is via the Admin SDK.
+- **Secrets → Firebase Secret Manager** (declared in `functions/lib/secrets.mjs`, injected at cold start). Client `VITE_*` vars come from GitHub repository variables in CI.
+- **CI/CD**: `.github/workflows/ci.yml` gained `deploy-live` (push to `main`/`develop` → `firebase deploy`) and `deploy-preview` (PR hosting channels).
+- WhatsApp/Twilio support was dropped (was never fully activated); the bot is Telegram-only.
+
+### Security hardening (Part E review)
+
+- Dropped the legacy Netlify origin from the API CORS allowlist post-cutover.
+- Telegram webhook-secret now compared in constant time (`timingSafeEqual` over digests).
+- Added the `sec-fetch-site` check to `verify-user`, matching the Claude proxy.
+
 ## [2026-06-02] — Post-launch fixes & Bilt Blue Card
 
 ### New card

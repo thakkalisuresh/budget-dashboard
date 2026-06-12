@@ -10,7 +10,7 @@
   - Inline add of missing transactions
   - Debit vs credit handling (ask user when net is zero but movements exist)
   - Surface internal transfers to user for manual exclusion
-  - Netlify Function for Anthropic API key (server-side, not exposed in browser)
+  - Cloud Function for Anthropic API key (server-side, not exposed in browser)
 
 ---
 
