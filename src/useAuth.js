@@ -389,18 +389,25 @@ export function useAuth() {
   // Biometric login for mobile cold-starts. Verifies the platform authenticator,
   // waits up to 5 s for a silent Google token refresh so real data loads first,
   // then falls back to the offline cached session if the refresh times out/fails.
+  // pendingMobileLogin stays true the entire time so the spinner keeps showing —
+  // it's only cleared once we have a session, avoiding a flash of the Google login screen.
   const triggerMobileLogin = async () => {
     const ok = await verifyLoginBiometric();
     if (!ok) return false;
-    setPendingMobileLogin(false);
+    // Keep pendingMobileLogin=true here — MobileLoginScreen spinner stays visible
 
     if (navigator.onLine) {
       const refreshed = await attemptSilentRefreshAsync(5000);
-      if (refreshed) return true; // onGoogleSuccess already called — full session
+      if (refreshed) {
+        // onGoogleSuccess already set user — now dismiss the biometric screen
+        setPendingMobileLogin(false);
+        return true;
+      }
     }
 
-    // Offline or silent refresh failed — load cached profile so dashboard is usable
+    // Silent refresh failed or offline — load cached profile as offline session
     const cached = loadOfflineCache();
+    setPendingMobileLogin(false); // batched with setUser below in React 18
     if (cached) setUser(cached);
     return true;
   };
