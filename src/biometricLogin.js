@@ -34,7 +34,7 @@ export async function registerLoginBiometric(email) {
         authenticatorSelection: {
           authenticatorAttachment: 'platform',
           userVerification: 'required',
-          // omit residentKey — let the platform decide, avoids iCloud Keychain prompts
+          // omit residentKey — lets the platform decide, avoids iCloud Keychain prompts on iOS
         },
         timeout: 60000,
       },
@@ -59,7 +59,7 @@ export async function verifyLoginBiometric() {
         allowCredentials: [{
           type: 'public-key',
           id: b64decode(stored),
-          // no transports — let the platform pick the right transport
+          // no transports restriction — lets the platform pick the right transport
         }],
         userVerification: 'required',
         timeout: 60000,
