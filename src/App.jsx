@@ -14,7 +14,7 @@ import { useMessages } from './useMessages.js';
 import { usePush } from './usePush.js';
 import { DEFAULT_ICONS } from './categoryIcons.js';
 import { usePinLock, PinLockScreen } from './PinLock.jsx';
-import { LoginScreen, OfflineUnlockScreen } from './LoginScreen.jsx';
+import { LoginScreen, OfflineUnlockScreen, MobileLoginScreen, BiometricSetupSheet } from './LoginScreen.jsx';
 import { BudgetRules } from './BudgetRules.jsx';
 import { useTheme } from './useTheme.js';
 import { useNonMonthlyExpenses } from './useNonMonthlyExpenses.js';
@@ -56,10 +56,24 @@ import { BottomNav } from './BottomNav.jsx';
 function App() {
   const auth = useAuth();
   const { user, denied, loadingAuth, onGoogleSuccess, onGoogleError,
-          pendingOfflineUnlock, unlockOffline, cancelOfflineUnlock } = auth;
+          pendingOfflineUnlock, unlockOffline, cancelOfflineUnlock,
+          pendingMobileLogin, setPendingMobileLogin, triggerMobileLogin } = auth;
 
   if (pendingOfflineUnlock) {
     return <OfflineUnlockScreen onUnlock={unlockOffline} onSignInInstead={cancelOfflineUnlock} />;
+  }
+
+  if (!user && pendingMobileLogin) {
+    return (
+      <MobileLoginScreen
+        onBiometricLogin={triggerMobileLogin}
+        onSignInInstead={() => setPendingMobileLogin(false)}
+        loading={loadingAuth}
+        denied={denied}
+        onSuccess={onGoogleSuccess}
+        onError={onGoogleError}
+      />
+    );
   }
 
   if (!user) {
@@ -71,7 +85,8 @@ function App() {
 
 function Dashboard({ auth }) {
   const { user, signOut, sessionExpired, setSessionExpired,
-          lockToken, unlockToken, setupEncryption } = auth;
+          lockToken, unlockToken, setupEncryption,
+          showBiometricSetup, setShowBiometricSetup } = auth;
   const pinLock = usePinLock(signOut);
 
   // Show the lock screen whenever the session is in the "needs PIN" state —
@@ -871,6 +886,14 @@ function Dashboard({ auth }) {
       {/* Onboarding wizard — shown once per user */}
       {!settingsLoading && !settings.hasSeenOnboarding && !isReadOnly && (
         <OnboardingWizard onDone={() => updateSettings(prev => ({ ...prev, hasSeenOnboarding: true }))} />
+      )}
+
+      {/* Biometric login setup — offered once after first Google login on mobile */}
+      {showBiometricSetup && (
+        <BiometricSetupSheet
+          email={user?.email}
+          onDismiss={() => setShowBiometricSetup(false)}
+        />
       )}
 
       {/* PIN lock overlay */}
