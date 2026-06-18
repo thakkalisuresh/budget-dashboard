@@ -91,8 +91,12 @@ export function MobileLoginScreen({ onBiometricLogin, onSignInInstead, loading, 
 
   const attempt = useCallback(async () => {
     setStatus('verifying');
-    const ok = await onBiometricLogin();
-    if (!ok) setStatus('failed');
+    const result = await onBiometricLogin();
+    if (!result.ok) {
+      // reason='token' → biometric passed but no valid token; go straight to Google auth
+      // reason='biometric' → Face ID/fingerprint genuinely failed; show retry
+      setStatus(result.reason === 'token' ? 'google' : 'failed');
+    }
   }, [onBiometricLogin]);
 
   useEffect(() => {

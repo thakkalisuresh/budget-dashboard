@@ -16,8 +16,9 @@ function isMobileDevice() {
 
 const DEV_MOCK = import.meta.env.DEV && import.meta.env.VITE_DEV_MOCK === 'true';
 
-const STORAGE_KEY    = 'budget_auth';
-const AUTH_CACHE_KEY = 'budget_auth_cache';
+const STORAGE_KEY      = 'budget_auth';
+const AUTH_CACHE_KEY   = 'budget_auth_cache';
+const MOBILE_TOKEN_KEY = 'budget_mobile_token';
 
 /** True if a PIN is set AND biometric is NOT — the "encrypt the token" regime.
  *  When biometric is registered we leave plaintext in sessionStorage because
@@ -80,6 +81,17 @@ function loadOfflineCache() {
   } catch {
     return null;
   }
+}
+
+function loadMobileToken() {
+  try {
+    const raw = localStorage.getItem(MOBILE_TOKEN_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed.accessToken || !parsed.expiresAt) return null;
+    if (Date.now() > parsed.expiresAt) { localStorage.removeItem(MOBILE_TOKEN_KEY); return null; }
+    return parsed;
+  } catch { return null; }
 }
 
 export function useAuth() {
@@ -218,6 +230,15 @@ export function useAuth() {
       // XSS or a malicious extension can read it. Setting a PIN enables AES-GCM
       // encryption via isEncryptingRegime() above. Token expires in ≤1 hour.
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(auth));
+      // Persist token for mobile biometric cold-start restoration (guarded by Face ID / fingerprint)
+      if (isMobileDevice()) {
+        localStorage.setItem(MOBILE_TOKEN_KEY, JSON.stringify({
+          accessToken: auth.accessToken,
+          expiresAt:   auth.expiresAt,
+          email: auth.email, name: auth.name, picture: auth.picture,
+          role: auth.role, allowedEmails: auth.allowedEmails,
+        }));
+      }
       // Cache profile only in localStorage — no access token, no ciphertext
       localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify({
         email: auth.email, name: auth.name, picture: auth.picture,
@@ -369,10 +390,18 @@ export function useAuth() {
   // Promise-based silent refresh with a timeout. Resolves true if a fresh token
   // was obtained (onGoogleSuccess called), false if it timed out or failed.
   // Does NOT set sessionExpired — caller decides how to handle failure.
-  const attemptSilentRefreshAsync = (timeoutMs = 5000) => new Promise((resolve) => {
+  // Polls for window.google to handle the async GIS script load by @react-oauth/google.
+  const attemptSilentRefreshAsync = (timeoutMs = 10000) => new Promise(async (resolve) => {
     const t = setTimeout(() => resolve(false), timeoutMs);
     try {
-      const client = window.google?.accounts?.oauth2?.initTokenClient({
+      // GIS script is loaded asynchronously by @react-oauth/google — wait for it
+      const deadline = Date.now() + timeoutMs - 500;
+      while (!window.google?.accounts?.oauth2 && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 50));
+      }
+      if (!window.google?.accounts?.oauth2) { clearTimeout(t); resolve(false); return; }
+
+      const client = window.google.accounts.oauth2.initTokenClient({
         client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
         scope: [
           'openid email profile',
@@ -406,8 +435,9 @@ export function useAuth() {
 
   // Biometric login for mobile cold-starts. Biometric verification and the silent
   // Google token refresh run in parallel (refresh was started at screen mount).
-  // pendingMobileLogin stays true until a real session is established or we give
-  // up — no stale cached data is ever loaded.
+  // Returns { ok: true } on success, or { ok: false, reason } on failure where
+  // reason='biometric' means Face ID/fingerprint failed, reason='token' means
+  // biometric passed but no valid token exists (go straight to Google auth).
   const triggerMobileLogin = async () => {
     const [ok, refreshed] = await Promise.all([
       verifyLoginBiometric(),
@@ -415,17 +445,28 @@ export function useAuth() {
     ]);
     silentRefreshRef.current = null;
 
-    if (!ok) return false; // biometric failed — MobileLoginScreen shows retry/Google
+    if (!ok) return { ok: false, reason: 'biometric' };
 
     if (refreshed) {
       // onGoogleSuccess already called inside attemptSilentRefreshAsync — full session ready
       setPendingMobileLogin(false);
-      return true;
+      return { ok: true };
     }
 
-    // Refresh failed — never show stale data, fall back to Google login
+    // Silent refresh failed — try restoring a not-yet-expired token from localStorage
+    const stored = loadMobileToken();
+    if (stored) {
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+      setSessionExpired(false);
+      setUser(stored);
+      setPendingMobileLogin(false);
+      setTimeout(attemptSilentRefresh, 1000); // proactive background refresh
+      return { ok: true };
+    }
+
+    // No valid token — biometric passed but session is expired, go straight to Google auth
     setPendingMobileLogin(false);
-    return false; // MobileLoginScreen shows "Sign in with Google instead"
+    return { ok: false, reason: 'token' };
   };
 
   // Upgrade offline session to full session when internet returns
