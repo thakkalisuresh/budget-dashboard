@@ -5,7 +5,14 @@ import {
   derivePinKey, aesEncrypt, aesDecrypt, ensureEncSalt,
   PIN_HASH_KEY, BIOMETRIC_KEY, verifyBiometric,
 } from './PinLock.jsx';
+import {
+  isLoginBiometricRegistered, verifyLoginBiometric,
+} from './biometricLogin.js';
 import { MOCK_USER } from './mockData.js';
+
+function isMobileDevice() {
+  return /iPhone|iPad|Android/i.test(navigator.userAgent);
+}
 
 const DEV_MOCK = import.meta.env.DEV && import.meta.env.VITE_DEV_MOCK === 'true';
 
@@ -93,6 +100,19 @@ export function useAuth() {
     if (!loadOfflineCache()) return false;
     return !!localStorage.getItem(BIOMETRIC_KEY);
   });
+
+  // Mobile biometric login — on mobile, if a login credential is registered and
+  // no active session exists, gate the login screen behind biometric instead of
+  // showing Google OAuth immediately. Desktop always stays false.
+  const [pendingMobileLogin, setPendingMobileLogin] = useState(() => {
+    if (DEV_MOCK) return false;
+    if (loadStored()) return false;
+    if (!isMobileDevice()) return false;
+    return isLoginBiometricRegistered();
+  });
+
+  // Controls the post-first-login "Enable Face ID / fingerprint?" bottom sheet.
+  const [showBiometricSetup, setShowBiometricSetup] = useState(false);
 
   // ── Localhost dev bypass ──────────────────────────────────────────────────
   // When VITE_DEV_MOCK=true: skip OAuth entirely — MOCK_USER is pre-set above.
@@ -194,6 +214,12 @@ export function useAuth() {
       }));
       setSessionExpired(false);
       setUser(auth);
+
+      // On mobile, after first successful login with no login biometric yet,
+      // offer to register one for future cold-starts.
+      if (isMobileDevice() && !isLoginBiometricRegistered()) {
+        setShowBiometricSetup(true);
+      }
     } catch {
       setDenied(true);
     } finally {
@@ -329,6 +355,23 @@ export function useAuth() {
 
   const cancelOfflineUnlock = () => setPendingOfflineUnlock(false);
 
+  // Biometric login for mobile cold-starts. Verifies the platform authenticator,
+  // then fires a silent Google token refresh to establish a full session.
+  const triggerMobileLogin = async () => {
+    const ok = await verifyLoginBiometric();
+    if (!ok) return false;
+    setPendingMobileLogin(false);
+    attemptSilentRefresh();
+    return true;
+  };
+
+  // If the silent refresh after biometric fails (revoked access etc.),
+  // fall back to the standard Google login screen.
+  useEffect(() => {
+    if (sessionExpired && pendingMobileLogin) setPendingMobileLogin(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionExpired]);
+
   // Upgrade offline session to full session when internet returns
   useEffect(() => {
     if (!user?.isOfflineSession) return;
@@ -389,5 +432,7 @@ export function useAuth() {
     sessionExpired, setSessionExpired,
     lockToken, unlockToken, setupEncryption,
     pendingOfflineUnlock, unlockOffline, cancelOfflineUnlock,
+    pendingMobileLogin, setPendingMobileLogin, triggerMobileLogin,
+    showBiometricSetup, setShowBiometricSetup,
   };
 }
