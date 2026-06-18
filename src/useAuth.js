@@ -114,6 +114,17 @@ export function useAuth() {
   // Controls the post-first-login "Enable Face ID / fingerprint?" bottom sheet.
   const [showBiometricSetup, setShowBiometricSetup] = useState(false);
 
+  // Holds the in-flight silent refresh promise started at biometric screen mount.
+  const silentRefreshRef = useRef(null);
+
+  // Start the silent token refresh immediately when the biometric screen is about
+  // to show, so it runs in parallel with Face ID / fingerprint (not after).
+  useEffect(() => {
+    if (!pendingMobileLogin || !navigator.onLine) return;
+    silentRefreshRef.current = attemptSilentRefreshAsync(10000);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ── Localhost dev bypass ──────────────────────────────────────────────────
   // When VITE_DEV_MOCK=true: skip OAuth entirely — MOCK_USER is pre-set above.
   // When VITE_DEV_ACCESS_TOKEN is set: skip OAuth popup and auto-login on load.
@@ -386,30 +397,28 @@ export function useAuth() {
     }
   });
 
-  // Biometric login for mobile cold-starts. Verifies the platform authenticator,
-  // waits up to 5 s for a silent Google token refresh so real data loads first,
-  // then falls back to the offline cached session if the refresh times out/fails.
-  // pendingMobileLogin stays true the entire time so the spinner keeps showing —
-  // it's only cleared once we have a session, avoiding a flash of the Google login screen.
+  // Biometric login for mobile cold-starts. Biometric verification and the silent
+  // Google token refresh run in parallel (refresh was started at screen mount).
+  // pendingMobileLogin stays true until a real session is established or we give
+  // up — no stale cached data is ever loaded.
   const triggerMobileLogin = async () => {
-    const ok = await verifyLoginBiometric();
-    if (!ok) return false;
-    // Keep pendingMobileLogin=true here — MobileLoginScreen spinner stays visible
+    const [ok, refreshed] = await Promise.all([
+      verifyLoginBiometric(),
+      silentRefreshRef.current ?? Promise.resolve(false),
+    ]);
+    silentRefreshRef.current = null;
 
-    if (navigator.onLine) {
-      const refreshed = await attemptSilentRefreshAsync(5000);
-      if (refreshed) {
-        // onGoogleSuccess already set user — now dismiss the biometric screen
-        setPendingMobileLogin(false);
-        return true;
-      }
+    if (!ok) return false; // biometric failed — MobileLoginScreen shows retry/Google
+
+    if (refreshed) {
+      // onGoogleSuccess already called inside attemptSilentRefreshAsync — full session ready
+      setPendingMobileLogin(false);
+      return true;
     }
 
-    // Silent refresh failed or offline — load cached profile as offline session
-    const cached = loadOfflineCache();
-    setPendingMobileLogin(false); // batched with setUser below in React 18
-    if (cached) setUser(cached);
-    return true;
+    // Refresh failed — never show stale data, fall back to Google login
+    setPendingMobileLogin(false);
+    return false; // MobileLoginScreen shows "Sign in with Google instead"
   };
 
   // Upgrade offline session to full session when internet returns
