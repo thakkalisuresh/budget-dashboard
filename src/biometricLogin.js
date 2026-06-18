@@ -14,8 +14,9 @@ export function isLoginBiometricRegistered() {
 
 export async function registerLoginBiometric(email) {
   try {
+    if (!window.PublicKeyCredential) return { ok: false, error: 'WebAuthn not supported' };
     const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-    if (!available) return null;
+    if (!available) return { ok: false, error: 'No platform authenticator available' };
 
     const credential = await navigator.credentials.create({
       publicKey: {
@@ -33,18 +34,18 @@ export async function registerLoginBiometric(email) {
         authenticatorSelection: {
           authenticatorAttachment: 'platform',
           userVerification: 'required',
-          residentKey: 'preferred',
+          // omit residentKey — let the platform decide, avoids iCloud Keychain prompts
         },
         timeout: 60000,
       },
     });
 
-    if (!credential) return null;
+    if (!credential) return { ok: false, error: 'No credential returned' };
     const id = b64encode(credential.rawId);
     localStorage.setItem(LOGIN_BIOMETRIC_KEY, id);
-    return id;
-  } catch {
-    return null;
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err?.message || err?.name || 'Unknown error' };
   }
 }
 
@@ -58,7 +59,7 @@ export async function verifyLoginBiometric() {
         allowCredentials: [{
           type: 'public-key',
           id: b64decode(stored),
-          transports: ['internal'],
+          // no transports — let the platform pick the right transport
         }],
         userVerification: 'required',
         timeout: 60000,

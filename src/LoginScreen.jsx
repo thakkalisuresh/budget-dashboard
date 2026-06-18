@@ -194,13 +194,16 @@ export function BiometricSetupSheet({ email, onDismiss }) {
   const [status, setStatus] = useState('idle');
   const bioLabel = /iPhone|iPad/.test(navigator.userAgent) ? 'Face ID' : 'fingerprint';
 
+  const [errorMsg, setErrorMsg] = useState('');
+
   const handleAccept = async () => {
     setStatus('registering');
     const result = await registerLoginBiometric(email);
-    if (result) {
+    if (result?.ok) {
       setStatus('done');
       setTimeout(onDismiss, 800);
     } else {
+      setErrorMsg(result?.error || 'Unknown error');
       setStatus('failed');
     }
   };
@@ -233,7 +236,7 @@ export function BiometricSetupSheet({ email, onDismiss }) {
         )}
         {status === 'failed' && (
           <p className="text-sm" style={{ color: 'var(--color-danger)' }}>
-            Registration failed — you can try again later in Settings.
+            Registration failed{errorMsg ? `: ${errorMsg}` : ''}.
           </p>
         )}
 
