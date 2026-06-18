@@ -356,21 +356,19 @@ export function useAuth() {
   const cancelOfflineUnlock = () => setPendingOfflineUnlock(false);
 
   // Biometric login for mobile cold-starts. Verifies the platform authenticator,
-  // then fires a silent Google token refresh to establish a full session.
+  // loads the offline-cached profile immediately so the dashboard is visible,
+  // then attempts a silent Google token refresh in the background to upgrade to
+  // a full session. Mirrors unlockOffline() — same pattern, separate credential.
   const triggerMobileLogin = async () => {
     const ok = await verifyLoginBiometric();
     if (!ok) return false;
+    const cached = loadOfflineCache();
+    if (!cached) return false;
     setPendingMobileLogin(false);
-    attemptSilentRefresh();
+    setUser(cached); // isOfflineSession: true — dashboard renders immediately
+    if (navigator.onLine) attemptSilentRefresh(); // upgrades to full session if Google session alive
     return true;
   };
-
-  // If the silent refresh after biometric fails (revoked access etc.),
-  // fall back to the standard Google login screen.
-  useEffect(() => {
-    if (sessionExpired && pendingMobileLogin) setPendingMobileLogin(false);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionExpired]);
 
   // Upgrade offline session to full session when internet returns
   useEffect(() => {
