@@ -355,18 +355,53 @@ export function useAuth() {
 
   const cancelOfflineUnlock = () => setPendingOfflineUnlock(false);
 
+  // Promise-based silent refresh with a timeout. Resolves true if a fresh token
+  // was obtained (onGoogleSuccess called), false if it timed out or failed.
+  // Does NOT set sessionExpired — caller decides how to handle failure.
+  const attemptSilentRefreshAsync = (timeoutMs = 5000) => new Promise((resolve) => {
+    const t = setTimeout(() => resolve(false), timeoutMs);
+    try {
+      const client = window.google?.accounts?.oauth2?.initTokenClient({
+        client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
+        scope: [
+          'openid email profile',
+          'https://www.googleapis.com/auth/spreadsheets',
+        ].join(' '),
+        prompt: '',
+        callback: async (tokenResponse) => {
+          clearTimeout(t);
+          if (tokenResponse?.access_token) {
+            await onGoogleSuccess(tokenResponse);
+            resolve(true);
+          } else {
+            resolve(false);
+          }
+        },
+      });
+      if (!client) { clearTimeout(t); resolve(false); return; }
+      client.requestAccessToken({ prompt: '' });
+    } catch {
+      clearTimeout(t);
+      resolve(false);
+    }
+  });
+
   // Biometric login for mobile cold-starts. Verifies the platform authenticator,
-  // loads the offline-cached profile immediately so the dashboard is visible,
-  // then attempts a silent Google token refresh in the background to upgrade to
-  // a full session. Mirrors unlockOffline() — same pattern, separate credential.
+  // waits up to 5 s for a silent Google token refresh so real data loads first,
+  // then falls back to the offline cached session if the refresh times out/fails.
   const triggerMobileLogin = async () => {
     const ok = await verifyLoginBiometric();
     if (!ok) return false;
-    const cached = loadOfflineCache();
-    if (!cached) return false;
     setPendingMobileLogin(false);
-    setUser(cached); // isOfflineSession: true — dashboard renders immediately
-    if (navigator.onLine) attemptSilentRefresh(); // upgrades to full session if Google session alive
+
+    if (navigator.onLine) {
+      const refreshed = await attemptSilentRefreshAsync(5000);
+      if (refreshed) return true; // onGoogleSuccess already called — full session
+    }
+
+    // Offline or silent refresh failed — load cached profile so dashboard is usable
+    const cached = loadOfflineCache();
+    if (cached) setUser(cached);
     return true;
   };
 
