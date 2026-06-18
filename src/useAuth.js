@@ -382,6 +382,13 @@ export function useAuth() {
         callback: async (tokenResponse) => {
           clearTimeout(t);
           if (tokenResponse?.access_token) {
+            // Reject tokens that don't include the Sheets scope — a silent refresh
+            // can return a limited token that passes userinfo but fails Sheets API.
+            const scope = tokenResponse.scope || '';
+            if (scope && !scope.includes('spreadsheets')) {
+              resolve(false);
+              return;
+            }
             await onGoogleSuccess(tokenResponse);
             resolve(true);
           } else {
