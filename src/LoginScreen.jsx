@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useGoogleLogin } from '@react-oauth/google';
 import { WifiOff } from 'lucide-react';
+import { registerLoginBiometric } from './biometricLogin.js';
 
 export function LoginScreen({ onSuccess, onError, loading, denied }) {
   const login = useGoogleLogin({
@@ -75,6 +76,185 @@ export function LoginScreen({ onSuccess, onError, loading, denied }) {
 
           <p className="text-[11px]" style={{ color: 'var(--sur-20)' }}>Private — access restricted to authorised users only</p>
         </div>
+      </div>
+    </div>
+  );
+}
+
+export function MobileLoginScreen({ onBiometricLogin, onSignInInstead, loading, denied, onSuccess, onError }) {
+  const [status, setStatus] = useState('idle');
+  const bioLabel = /iPhone|iPad/.test(navigator.userAgent) ? 'Face ID' : 'Fingerprint';
+
+  const cached = useMemo(() => {
+    try { return JSON.parse(localStorage.getItem('budget_auth_cache') || 'null'); } catch { return null; }
+  }, []);
+
+  const attempt = useCallback(async () => {
+    setStatus('verifying');
+    const ok = await onBiometricLogin();
+    if (!ok) setStatus('failed');
+  }, [onBiometricLogin]);
+
+  useEffect(() => {
+    const t = setTimeout(attempt, 250);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (status === 'google') {
+    return <LoginScreen onSuccess={onSuccess} onError={onError} loading={loading} denied={denied} />;
+  }
+
+  return (
+    <div
+      className="min-h-screen flex items-center justify-center p-6 transition-colors duration-300"
+      style={{ background: 'var(--color-bg)' }}
+    >
+      <div className="w-full max-w-sm">
+        <div
+          className="glass-heavy rounded-[2rem] p-10 text-center space-y-6"
+          style={{ border: '1px solid var(--sur-10)' }}
+        >
+          <div className="flex justify-center">
+            {cached?.picture ? (
+              <img src={cached.picture} alt="" className="w-16 h-16 rounded-2xl object-cover" referrerPolicy="no-referrer" />
+            ) : (
+              <div
+                className="w-16 h-16 rounded-2xl flex items-center justify-center"
+                style={{ background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}
+              >
+                <svg className="w-8 h-8" style={{ color: 'var(--color-accent-text)' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <h1 className="text-xl font-black tracking-tight" style={{ color: 'var(--color-text)' }}>
+              {cached?.name ? `Hi, ${cached.name.split(' ')[0]}` : 'Welcome back'}
+            </h1>
+            <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+              Use {bioLabel} to sign in
+            </p>
+          </div>
+
+          {status === 'verifying' && (
+            <div className="flex items-center justify-center gap-2 text-sm py-1" style={{ color: 'var(--color-text-muted)' }}>
+              <svg className="w-4 h-4 animate-spin flex-shrink-0" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+              Verifying…
+            </div>
+          )}
+
+          {status === 'idle' && (
+            <p className="text-xs py-1" style={{ color: 'var(--sur-20)' }}>
+              Waiting for {bioLabel}…
+            </p>
+          )}
+
+          {status === 'failed' && (
+            <div className="space-y-3">
+              <p className="text-sm" style={{ color: 'var(--color-danger)' }}>{bioLabel} verification failed</p>
+              <button
+                onClick={attempt}
+                className="w-full py-3 rounded-2xl text-sm font-bold text-white active:scale-[0.97] transition-all"
+                style={{ background: 'var(--color-text)' }}
+              >
+                Try again
+              </button>
+              <button
+                onClick={() => setStatus('google')}
+                className="w-full py-2 text-sm transition-colors"
+                style={{ color: 'var(--color-text-muted)' }}
+              >
+                Sign in with Google instead
+              </button>
+            </div>
+          )}
+
+          {status !== 'failed' && (
+            <button
+              onClick={() => setStatus('google')}
+              className="w-full py-2 text-sm transition-colors"
+              style={{ color: 'var(--sur-20)' }}
+            >
+              Sign in with Google instead
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function BiometricSetupSheet({ email, onDismiss }) {
+  const [status, setStatus] = useState('idle');
+  const bioLabel = /iPhone|iPad/.test(navigator.userAgent) ? 'Face ID' : 'fingerprint';
+
+  const handleAccept = async () => {
+    setStatus('registering');
+    const result = await registerLoginBiometric(email);
+    if (result) {
+      setStatus('done');
+      setTimeout(onDismiss, 800);
+    } else {
+      setStatus('failed');
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[90] flex items-end justify-center p-4"
+      style={{ background: 'oklch(0% 0 0 / 60%)' }}
+    >
+      <div
+        className="glass-heavy w-full max-w-sm rounded-[2rem] p-8 text-center space-y-5"
+        style={{
+          border: '1px solid var(--sur-10)',
+          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 2rem)',
+        }}
+      >
+        <div className="space-y-2">
+          <p className="text-lg font-black" style={{ color: 'var(--color-text)' }}>
+            Enable {bioLabel} login?
+          </p>
+          <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+            Skip Google sign-in next time — unlock instantly with {bioLabel}.
+          </p>
+        </div>
+
+        {status === 'done' && (
+          <p className="text-sm font-bold" style={{ color: 'var(--color-accent-text)' }}>
+            All set! {bioLabel.charAt(0).toUpperCase() + bioLabel.slice(1)} enabled.
+          </p>
+        )}
+        {status === 'failed' && (
+          <p className="text-sm" style={{ color: 'var(--color-danger)' }}>
+            Registration failed — you can try again later in Settings.
+          </p>
+        )}
+
+        {status !== 'done' && (
+          <button
+            onClick={handleAccept}
+            disabled={status === 'registering'}
+            className="w-full py-3.5 rounded-2xl text-sm font-black text-white transition-all active:scale-[0.97] disabled:opacity-60"
+            style={{ background: 'var(--color-accent)' }}
+          >
+            {status === 'registering' ? 'Registering…' : `Enable ${bioLabel}`}
+          </button>
+        )}
+
+        <button
+          onClick={onDismiss}
+          className="w-full py-2 text-sm transition-colors"
+          style={{ color: 'var(--color-text-muted)' }}
+        >
+          {status === 'failed' ? 'Dismiss' : 'Not now'}
+        </button>
       </div>
     </div>
   );
