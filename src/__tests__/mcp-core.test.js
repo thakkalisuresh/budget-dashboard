@@ -9,12 +9,12 @@ const sheets = vi.hoisted(() => ({
   appendExpense:          vi.fn(),
   deleteExpenseByUUID:    vi.fn(),
 }));
-vi.mock('../../netlify/functions/_sheets.mjs', () => sheets);
-vi.mock('../../netlify/functions/_extraction.mjs', () => ({
+vi.mock('../../functions/lib/_sheets.mjs', () => sheets);
+vi.mock('../../functions/lib/_extraction.mjs', () => ({
   CATEGORIES: ['Grocery', 'Eating Out', 'Misc'],
 }));
 
-const { handleRpc, SERVER_INFO, TOOLS } = await import('../../netlify/functions/_mcp.mjs');
+const { handleRpc, SERVER_INFO, TOOLS } = await import('../../functions/lib/_mcp.mjs');
 
 const rpc = (method, params, id = 1) => ({ jsonrpc: '2.0', id, method, params });
 

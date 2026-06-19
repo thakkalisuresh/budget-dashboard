@@ -19,6 +19,14 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    // The endpoint-handler tests import the Cloud Functions (functions/*.mjs),
+    // whose firebase-functions deps aren't installed in the root test env. Alias
+    // the two subpaths they touch to lightweight stubs so the handler logic can
+    // be tested without the functions runtime. See test-stubs/.
+    alias: {
+      'firebase-functions/v2/https': new URL('./test-stubs/firebase-functions-https.mjs', import.meta.url).pathname,
+      'firebase-functions/params':   new URL('./test-stubs/firebase-functions-params.mjs', import.meta.url).pathname,
+    },
   },
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),

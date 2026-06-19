@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildRewardsLine, getBestCard, calculateRewards, cardEarnsRewards,
-} from '../../netlify/functions/_card-rewards.mjs';
+} from '../../functions/lib/_card-rewards.mjs';
 
 // Sanity: server mirror matches the client logic we already tested in cardRewards.test.js
 describe('_card-rewards.mjs parity', () => {
