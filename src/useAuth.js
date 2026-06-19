@@ -433,38 +433,48 @@ export function useAuth() {
     }
   });
 
-  // Biometric login for mobile cold-starts. Biometric verification and the silent
-  // Google token refresh run in parallel (refresh was started at screen mount).
+  // Biometric login for mobile cold-starts.
   // Returns { ok: true } on success, or { ok: false, reason } on failure where
   // reason='biometric' means Face ID/fingerprint failed, reason='token' means
   // biometric passed but no valid token exists (go straight to Google auth).
+  //
+  // Path priority — the persisted token is the PRIMARY route and resolves
+  // instantly; the GIS silent refresh is only a background upgrade (it cannot
+  // succeed at all in an iOS standalone PWA, whose WebView has no Google session
+  // cookie to refresh from). Never block the dashboard on the refresh.
   const triggerMobileLogin = async () => {
-    const [ok, refreshed] = await Promise.all([
-      verifyLoginBiometric(),
-      silentRefreshRef.current ?? Promise.resolve(false),
-    ]);
-    silentRefreshRef.current = null;
-
-    if (!ok) return { ok: false, reason: 'biometric' };
-
-    if (refreshed) {
-      // onGoogleSuccess already called inside attemptSilentRefreshAsync — full session ready
-      setPendingMobileLogin(false);
-      return { ok: true };
+    const ok = await verifyLoginBiometric();
+    if (!ok) {
+      silentRefreshRef.current = null;
+      return { ok: false, reason: 'biometric' };
     }
 
-    // Silent refresh failed — try restoring a not-yet-expired token from localStorage
+    // 1. Instant restore from the persisted token if it's still valid.
     const stored = loadMobileToken();
     if (stored) {
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
       setSessionExpired(false);
       setUser(stored);
       setPendingMobileLogin(false);
-      setTimeout(attemptSilentRefresh, 1000); // proactive background refresh
+      // Background: let the in-flight refresh swap in a fresh token if it can,
+      // otherwise kick a fresh attempt so an active session extends the window.
+      const inFlight = silentRefreshRef.current;
+      silentRefreshRef.current = null;
+      if (inFlight) inFlight.then(r => { if (!r) attemptSilentRefresh(); });
+      else attemptSilentRefresh();
       return { ok: true };
     }
 
-    // No valid token — biometric passed but session is expired, go straight to Google auth
+    // 2. No valid persisted token — last resort: wait on the in-flight refresh
+    //    (works on Android Chrome PWAs that share the browser's Google session).
+    const refreshed = await (silentRefreshRef.current ?? Promise.resolve(false));
+    silentRefreshRef.current = null;
+    if (refreshed) {
+      setPendingMobileLogin(false);
+      return { ok: true };
+    }
+
+    // 3. Nothing worked — token expired and no silent session. Must Google auth.
     setPendingMobileLogin(false);
     return { ok: false, reason: 'token' };
   };
