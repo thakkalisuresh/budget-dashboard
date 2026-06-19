@@ -10,6 +10,7 @@
       { "source": "/api/push-unsubscribe", "function": "pushUnsubscribe" },
       { "source": "/api/push-alert", "function": "pushAlert" },
       { "source": "/api/mcp", "function": "mcp" },
+      { "source": "/api/wallet", "function": "walletWebhook" },
       {
         "source": "**",
         "destination": "/index.html"
