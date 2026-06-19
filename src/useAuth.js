@@ -16,9 +16,12 @@ function isMobileDevice() {
 
 const DEV_MOCK = import.meta.env.DEV && import.meta.env.VITE_DEV_MOCK === 'true';
 
-const STORAGE_KEY      = 'budget_auth';
-const AUTH_CACHE_KEY   = 'budget_auth_cache';
-const MOBILE_TOKEN_KEY = 'budget_mobile_token';
+const STORAGE_KEY       = 'budget_auth';
+const AUTH_CACHE_KEY    = 'budget_auth_cache';
+// Opaque session token for the mobile refresh-token flow. The matching Google
+// refresh token lives server-side in Firestore (functions/google-token.mjs);
+// this device-side token only identifies the session to /api/google-token.
+const SESSION_TOKEN_KEY = 'budget_session_token';
 
 /** True if a PIN is set AND biometric is NOT — the "encrypt the token" regime.
  *  When biometric is registered we leave plaintext in sessionStorage because
@@ -55,6 +58,10 @@ const VERIFY_URL = import.meta.env.DEV
   ? 'http://localhost:8888/api/verify-user'  // netlify dev port
   : '/api/verify-user';
 
+// OAuth authorization-code broker (mobile biometric login). Behind the Hosting
+// rewrite in production; same relative path works under the firebase emulator.
+const GOOGLE_TOKEN_URL = '/api/google-token';
+
 function loadStored() {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
@@ -83,15 +90,8 @@ function loadOfflineCache() {
   }
 }
 
-function loadMobileToken() {
-  try {
-    const raw = localStorage.getItem(MOBILE_TOKEN_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed.accessToken || !parsed.expiresAt) return null;
-    if (Date.now() > parsed.expiresAt) { localStorage.removeItem(MOBILE_TOKEN_KEY); return null; }
-    return parsed;
-  } catch { return null; }
+function loadSessionToken() {
+  try { return localStorage.getItem(SESSION_TOKEN_KEY) || null; } catch { return null; }
 }
 
 export function useAuth() {
@@ -113,29 +113,20 @@ export function useAuth() {
     return !!localStorage.getItem(BIOMETRIC_KEY);
   });
 
-  // Mobile biometric login — on mobile, if a login credential is registered and
-  // no active session exists, gate the login screen behind biometric instead of
-  // showing Google OAuth immediately. Desktop always stays false.
+  // Mobile biometric login — on mobile, if a login credential AND a server-side
+  // session both exist but there's no active in-memory session, gate the login
+  // screen behind biometric instead of showing Google OAuth. Both are required:
+  // without the session token, biometric can't mint a token, so we'd just fall
+  // back to Google anyway. Desktop always stays false.
   const [pendingMobileLogin, setPendingMobileLogin] = useState(() => {
     if (DEV_MOCK) return false;
     if (loadStored()) return false;
     if (!isMobileDevice()) return false;
-    return isLoginBiometricRegistered();
+    return isLoginBiometricRegistered() && !!loadSessionToken();
   });
 
   // Controls the post-first-login "Enable Face ID / fingerprint?" bottom sheet.
   const [showBiometricSetup, setShowBiometricSetup] = useState(false);
-
-  // Holds the in-flight silent refresh promise started at biometric screen mount.
-  const silentRefreshRef = useRef(null);
-
-  // Start the silent token refresh immediately when the biometric screen is about
-  // to show, so it runs in parallel with Face ID / fingerprint (not after).
-  useEffect(() => {
-    if (!pendingMobileLogin || !navigator.onLine) return;
-    silentRefreshRef.current = attemptSilentRefreshAsync(10000);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // ── Localhost dev bypass ──────────────────────────────────────────────────
   // When VITE_DEV_MOCK=true: skip OAuth entirely — MOCK_USER is pre-set above.
@@ -230,15 +221,6 @@ export function useAuth() {
       // XSS or a malicious extension can read it. Setting a PIN enables AES-GCM
       // encryption via isEncryptingRegime() above. Token expires in ≤1 hour.
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(auth));
-      // Persist token for mobile biometric cold-start restoration (guarded by Face ID / fingerprint)
-      if (isMobileDevice()) {
-        localStorage.setItem(MOBILE_TOKEN_KEY, JSON.stringify({
-          accessToken: auth.accessToken,
-          expiresAt:   auth.expiresAt,
-          email: auth.email, name: auth.name, picture: auth.picture,
-          role: auth.role, allowedEmails: auth.allowedEmails,
-        }));
-      }
       // Cache profile only in localStorage — no access token, no ciphertext
       localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify({
         email: auth.email, name: auth.name, picture: auth.picture,
@@ -264,7 +246,68 @@ export function useAuth() {
     setDenied(true);
   };
 
+  // Mobile auth-code flow success — exchange the code for tokens via the backend
+  // broker, persist the returned opaque session token, then establish the session
+  // through the shared onGoogleSuccess path (which re-verifies + handles PIN/caches).
+  const onGoogleCode = async (codeResponse) => {
+    setLoading(true);
+    setDenied(false);
+    try {
+      const res = await fetch(GOOGLE_TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'exchange', code: codeResponse.code }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.allowed || !data.access_token) {
+        setDenied(true);
+        return;
+      }
+      // needsConsent: Google granted no refresh token (returning grant) — log in
+      // for this 1h token but persist nothing; biometric stays off until re-consent.
+      if (data.sessionToken) localStorage.setItem(SESSION_TOKEN_KEY, data.sessionToken);
+      await onGoogleSuccess({ access_token: data.access_token, expires_in: data.expires_in });
+    } catch {
+      setDenied(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Mint a fresh access token from the server-side refresh token (mobile). Returns
+  // true on success. On an invalid/revoked session the stale session token is
+  // dropped so the next attempt falls back to Google login.
+  const refreshMobileToken = async () => {
+    const sessionToken = loadSessionToken();
+    if (!sessionToken) return false;
+    try {
+      const res = await fetch(GOOGLE_TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'refresh', sessionToken }),
+      });
+      if (res.status === 401) { localStorage.removeItem(SESSION_TOKEN_KEY); return false; }
+      if (!res.ok) return false;
+      const data = await res.json().catch(() => ({}));
+      if (!data.access_token) return false;
+      await onGoogleSuccess({ access_token: data.access_token, expires_in: data.expires_in });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const signOut = async () => {
+    // Revoke the server-side session (deletes the stored refresh token) before
+    // the local sweep below clears the session token. Best-effort, non-blocking.
+    const sessionToken = loadSessionToken();
+    if (sessionToken) {
+      fetch(GOOGLE_TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'revoke', sessionToken }),
+      }).catch(() => { /* non-fatal */ });
+    }
     sessionStorage.removeItem(STORAGE_KEY);
     // Sweep every budget_* key — covers per-sheet data caches, offline queue,
     // smart-rules, custom categories, vendor domains, PIN, biometric markers, etc.
@@ -387,102 +430,25 @@ export function useAuth() {
 
   const cancelOfflineUnlock = () => setPendingOfflineUnlock(false);
 
-  // Promise-based silent refresh with a timeout. Resolves true if a fresh token
-  // was obtained (onGoogleSuccess called), false if it timed out or failed.
-  // Does NOT set sessionExpired — caller decides how to handle failure.
-  // Polls for window.google to handle the async GIS script load by @react-oauth/google.
-  const attemptSilentRefreshAsync = (timeoutMs = 10000) => new Promise(async (resolve) => {
-    const t = setTimeout(() => resolve(false), timeoutMs);
-    try {
-      // GIS script is loaded asynchronously by @react-oauth/google — wait for it
-      const deadline = Date.now() + timeoutMs - 500;
-      while (!window.google?.accounts?.oauth2 && Date.now() < deadline) {
-        await new Promise(r => setTimeout(r, 50));
-      }
-      if (!window.google?.accounts?.oauth2) { clearTimeout(t); resolve(false); return; }
-
-      const client = window.google.accounts.oauth2.initTokenClient({
-        client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
-        scope: [
-          'openid email profile',
-          'https://www.googleapis.com/auth/spreadsheets',
-        ].join(' '),
-        prompt: '',
-        callback: async (tokenResponse) => {
-          clearTimeout(t);
-          if (tokenResponse?.access_token) {
-            // Reject tokens that don't include the Sheets scope — a silent refresh
-            // can return a limited token that passes userinfo but fails Sheets API.
-            const scope = tokenResponse.scope || '';
-            if (scope && !scope.includes('spreadsheets')) {
-              resolve(false);
-              return;
-            }
-            await onGoogleSuccess(tokenResponse);
-            resolve(true);
-          } else {
-            resolve(false);
-          }
-        },
-      });
-      if (!client) { clearTimeout(t); resolve(false); return; }
-      client.requestAccessToken({ prompt: '' });
-    } catch {
-      clearTimeout(t);
-      resolve(false);
-    }
-  });
-
-  // Biometric login for mobile cold-starts.
-  // Returns { ok: true } on success, or { ok: false, reason } on failure where
-  // reason='biometric' means Face ID/fingerprint failed, reason='token' means
-  // biometric passed but no valid token exists (go straight to Google auth).
-  //
-  // Path priority — the persisted token is the PRIMARY route and resolves
-  // instantly; the GIS silent refresh is only a background upgrade (it cannot
-  // succeed at all in an iOS standalone PWA, whose WebView has no Google session
-  // cookie to refresh from). Never block the dashboard on the refresh.
+  // Biometric login for mobile cold-starts. Face ID / fingerprint gates a call to
+  // the server-side refresh-token broker, which mints a fresh access token with no
+  // Google screen — regardless of how long it's been since the last session.
+  // Returns { ok: true } on success, or { ok: false, reason } where
+  // reason='biometric' means Face ID/fingerprint failed, reason='token' means the
+  // session was invalid/revoked (or offline) → fall back to Google login.
   const triggerMobileLogin = async () => {
     const ok = await verifyLoginBiometric();
-    if (!ok) {
-      silentRefreshRef.current = null;
-      return { ok: false, reason: 'biometric' };
-    }
+    if (!ok) return { ok: false, reason: 'biometric' };
 
-    // 1. Instant restore from the persisted token if it's still valid.
-    const stored = loadMobileToken();
-    if (stored) {
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
-      setSessionExpired(false);
-      setUser(stored);
-      setPendingMobileLogin(false);
-      // Background: let the in-flight refresh swap in a fresh token if it can,
-      // otherwise kick a fresh attempt so an active session extends the window.
-      const inFlight = silentRefreshRef.current;
-      silentRefreshRef.current = null;
-      if (inFlight) inFlight.then(r => { if (!r) attemptSilentRefresh(); });
-      else attemptSilentRefresh();
-      return { ok: true };
-    }
-
-    // 2. No valid persisted token — last resort: wait on the in-flight refresh
-    //    (works on Android Chrome PWAs that share the browser's Google session).
-    const refreshed = await (silentRefreshRef.current ?? Promise.resolve(false));
-    silentRefreshRef.current = null;
-    if (refreshed) {
-      setPendingMobileLogin(false);
-      return { ok: true };
-    }
-
-    // 3. Nothing worked — token expired and no silent session. Must Google auth.
+    const refreshed = await refreshMobileToken();
     setPendingMobileLogin(false);
-    return { ok: false, reason: 'token' };
+    return refreshed ? { ok: true } : { ok: false, reason: 'token' };
   };
 
   // Upgrade offline session to full session when internet returns
   useEffect(() => {
     if (!user?.isOfflineSession) return;
-    const upgrade = () => attemptSilentRefresh();
+    const upgrade = () => doScheduledRefresh();
     window.addEventListener('online', upgrade);
     return () => window.removeEventListener('online', upgrade);
   }, [user?.isOfflineSession]);
@@ -493,7 +459,7 @@ export function useAuth() {
     if (DEV_MOCK) return;
     if (!user?.expiresAt || user.isOfflineSession) return;
     const ms = user.expiresAt - Date.now();
-    if (ms <= 0) { attemptSilentRefresh(); return; }
+    if (ms <= 0) { doScheduledRefresh(); return; }
     const t = setTimeout(signOut, ms);
     return () => clearTimeout(t);
   }, [user?.expiresAt, user?.isOfflineSession]);
@@ -521,6 +487,18 @@ export function useAuth() {
     } catch { setSessionExpired(true); }
   };
 
+  // Pick the right scheduled-refresh mechanism. Mobile with a session token uses
+  // the server-side refresh-token broker (the GIS prompt:'' silent refresh can't
+  // work in an iOS standalone PWA). Desktop keeps the implicit-flow silent refresh.
+  const doScheduledRefresh = async () => {
+    if (isMobileDevice() && loadSessionToken()) {
+      const ok = await refreshMobileToken();
+      if (!ok) setSessionExpired(true);
+      return;
+    }
+    attemptSilentRefresh();
+  };
+
   // Silent token refresh — fires 5 min before expiry, or immediately if
   // the window has already passed (e.g. laptop resumed from sleep).
   // Skip for offline sessions: handled by the online event upgrade effect.
@@ -528,14 +506,14 @@ export function useAuth() {
     if (DEV_MOCK) return;
     if (!user?.expiresAt || user.isOfflineSession) return;
     const refreshIn = user.expiresAt - Date.now() - 5 * 60 * 1000;
-    if (refreshIn <= 0) { attemptSilentRefresh(); return; }
+    if (refreshIn <= 0) { doScheduledRefresh(); return; }
 
-    const t = setTimeout(attemptSilentRefresh, refreshIn);
+    const t = setTimeout(doScheduledRefresh, refreshIn);
     return () => clearTimeout(t);
   }, [user?.expiresAt, user?.isOfflineSession]);
 
   return {
-    user, denied, loadingAuth, onGoogleSuccess, onGoogleError, signOut,
+    user, denied, loadingAuth, onGoogleSuccess, onGoogleError, onGoogleCode, signOut,
     sessionExpired, setSessionExpired,
     lockToken, unlockToken, setupEncryption,
     pendingOfflineUnlock, unlockOffline, cancelOfflineUnlock,

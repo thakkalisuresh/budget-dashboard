@@ -3,13 +3,17 @@ import { useGoogleLogin } from '@react-oauth/google';
 import { WifiOff } from 'lucide-react';
 import { registerLoginBiometric } from './biometricLogin.js';
 
-export function LoginScreen({ onSuccess, onError, loading, denied }) {
-  const login = useGoogleLogin({
-    onSuccess,
-    onError,
-    flow: 'implicit',
-    scope: 'openid email profile https://www.googleapis.com/auth/spreadsheets',
-  });
+export function LoginScreen({ onSuccess, onError, onCode, loading, denied }) {
+  const isMobile = /iPhone|iPad|Android/i.test(navigator.userAgent);
+  const scope = 'openid email profile https://www.googleapis.com/auth/spreadsheets';
+  // Mobile uses the authorization-code flow so the backend can obtain a refresh
+  // token (enabling biometric-only re-login forever). Desktop keeps the implicit
+  // flow unchanged. Falls back to implicit if no code handler was provided.
+  const login = useGoogleLogin(
+    isMobile && onCode
+      ? { flow: 'auth-code', scope, onSuccess: onCode, onError }
+      : { flow: 'implicit',  scope, onSuccess,         onError }
+  );
 
   return (
     <div
@@ -81,7 +85,7 @@ export function LoginScreen({ onSuccess, onError, loading, denied }) {
   );
 }
 
-export function MobileLoginScreen({ onBiometricLogin, onSignInInstead, loading, denied, onSuccess, onError }) {
+export function MobileLoginScreen({ onBiometricLogin, onSignInInstead, loading, denied, onSuccess, onError, onCode }) {
   const [status, setStatus] = useState('idle');
   const bioLabel = /iPhone|iPad/.test(navigator.userAgent) ? 'Face ID' : 'Fingerprint';
 
@@ -106,7 +110,7 @@ export function MobileLoginScreen({ onBiometricLogin, onSignInInstead, loading, 
   }, []);
 
   if (status === 'google') {
-    return <LoginScreen onSuccess={onSuccess} onError={onError} loading={loading} denied={denied} />;
+    return <LoginScreen onSuccess={onSuccess} onError={onError} onCode={onCode} loading={loading} denied={denied} />;
   }
 
   return (

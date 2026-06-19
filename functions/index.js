@@ -9,6 +9,9 @@ export const ping = onRequest({ region: 'us-central1' }, (req, res) => {
 export { verifyUser } from './verify-user.mjs';
 export { claude } from './claude.mjs';
 
+// Mobile biometric login — OAuth authorization-code broker (refresh token in Firestore).
+export { googleToken } from './google-token.mjs';
+
 // Phase 4 — Telegram bot webhook (WhatsApp out of scope).
 export { telegramWebhook } from './telegram-webhook.mjs';
 
