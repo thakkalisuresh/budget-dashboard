@@ -33,27 +33,46 @@ const mockStore = {
   },
 };
 
-vi.mock('@netlify/blobs', () => ({
-  getStore: () => mockStore,
-}));
+// The Cloud Functions handler builds its store via createBotStore(getDb()); swap
+// both for the in-memory mockStore (same Blobs-shaped API the bot code expects).
+vi.mock('../../functions/lib/firestore.mjs', () => ({ getDb: () => ({}) }));
+vi.mock('../../functions/lib/bot-store.mjs', () => ({ createBotStore: () => mockStore }));
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-const { default: handler } = await import('../../netlify/functions/telegram-webhook.mjs');
+const { telegramWebhook } = await import('../../functions/telegram-webhook.mjs');
 
-const WEBHOOK_URL = 'https://test.netlify.app/.netlify/functions/telegram-webhook';
+// Wrap the Express onRequest handler so the existing assertions on `res.status`
+// keep working: returns { status, body } after running the handler with a mock res.
+async function handler(req) {
+  let statusCode = 200, body;
+  const res = {
+    status(c) { statusCode = c; return this; },
+    send(b) { body = b; return this; },
+    set() { return this; },
+    end() { return this; },
+  };
+  await telegramWebhook(req, res);
+  return { status: statusCode, body };
+}
+
+const WEBHOOK_URL = 'https://test.netlify.app/api/telegram';
 
 /* ── Request builders ── */
 
+// Express-style request: req.get(header) + pre-parsed req.body (the Cloud Function
+// reads update from req.body, and the secret via req.get('x-telegram-bot-api-secret-token')).
+function expressReq({ method = 'POST', headers = {}, body } = {}) {
+  const lower = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
+  return { method, get: (name) => lower[name.toLowerCase()], body };
+}
+
 function buildRequest(update, secret = 'test-webhook-secret') {
-  return new Request(WEBHOOK_URL, {
+  return expressReq({
     method: 'POST',
-    headers: new Headers({
-      'content-type': 'application/json',
-      'x-telegram-bot-api-secret-token': secret,
-    }),
-    body: JSON.stringify(update),
+    headers: { 'content-type': 'application/json', 'x-telegram-bot-api-secret-token': secret },
+    body: update,
   });
 }
 
@@ -180,16 +199,16 @@ beforeEach(() => {
 
 describe('telegram webhook — validation', () => {
   it('rejects non-POST requests', async () => {
-    const req = new Request(WEBHOOK_URL, { method: 'GET' });
+    const req = expressReq({ method: 'GET' });
     const res = await handler(req);
     expect(res.status).toBe(405);
   });
 
   it('rejects missing webhook secret', async () => {
-    const req = new Request(WEBHOOK_URL, {
+    const req = expressReq({
       method: 'POST',
-      headers: new Headers({ 'content-type': 'application/json' }),
-      body: JSON.stringify(textMessage('hello')),
+      headers: { 'content-type': 'application/json' },
+      body: textMessage('hello'),
     });
     const res = await handler(req);
     expect(res.status).toBe(403);
