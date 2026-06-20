@@ -19,3 +19,6 @@ export { pushAlert } from './push-alert.mjs';
 
 // Phase 6 — MCP server (JSON-RPC; rate-limit state Netlify Blobs → Firestore).
 export { mcp } from './mcp-server.mjs';
+
+// Phase 7 — wallet webhook (iOS Shortcuts / Android MacroDroid).
+export { walletWebhook } from './wallet-webhook.mjs';

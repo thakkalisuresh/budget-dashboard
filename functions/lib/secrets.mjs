@@ -51,6 +51,9 @@ export const TELEGRAM_ALLOWED_USERS  = defineSecret('TELEGRAM_ALLOWED_USERS');
 // ── MCP server (bound in Phase 6) ──────────────────────────────────────────
 export const MCP_API_KEY = defineSecret('MCP_API_KEY');
 
+// ── Wallet webhook (iOS Shortcuts / Android MacroDroid) ──────────────────
+export const WALLET_WEBHOOK_SECRET = defineSecret('WALLET_WEBHOOK_SECRET');
+
 /** Secrets needed by any function that touches the Sheets/Drive data layer. */
 export const SHEETS_DRIVE_SECRETS = [
   GOOGLE_CLIENT_ID,

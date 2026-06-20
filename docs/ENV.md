@@ -36,6 +36,7 @@ Firebase requires a value for **every** declared secret at deploy time.
 | `TELEGRAM_WEBHOOK_SECRET` | Yes | telegram | Shared secret echoed in `x-telegram-bot-api-secret-token` |
 | `TELEGRAM_ALLOWED_USERS` | Yes | telegram | Comma-separated numeric Telegram user IDs |
 | `MCP_API_KEY` | Yes | mcp | Shared bearer key for the MCP server endpoint |
+| `WALLET_WEBHOOK_SECRET` | Yes | wallet | Shared API key for the wallet webhook (`/api/wallet`). Set with `firebase functions:secrets:set WALLET_WEBHOOK_SECRET` |
 
 The five `VITE_*` client values are **not** Secret Manager secrets — in CI they
 come from GitHub repository variables (see below); they are baked into the public
