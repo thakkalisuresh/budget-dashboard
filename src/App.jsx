@@ -55,7 +55,7 @@ import { BottomNav } from './BottomNav.jsx';
 
 function App() {
   const auth = useAuth();
-  const { user, denied, loadingAuth, onGoogleSuccess, onGoogleError,
+  const { user, denied, loadingAuth, onGoogleSuccess, onGoogleError, onGoogleCode,
           pendingOfflineUnlock, unlockOffline, cancelOfflineUnlock,
           pendingMobileLogin, setPendingMobileLogin, triggerMobileLogin } = auth;
 
@@ -72,12 +72,13 @@ function App() {
         denied={denied}
         onSuccess={onGoogleSuccess}
         onError={onGoogleError}
+        onCode={onGoogleCode}
       />
     );
   }
 
   if (!user) {
-    return <LoginScreen onSuccess={onGoogleSuccess} onError={onGoogleError} loading={loadingAuth} denied={denied} />;
+    return <LoginScreen onSuccess={onGoogleSuccess} onError={onGoogleError} onCode={onGoogleCode} loading={loadingAuth} denied={denied} />;
   }
 
   return <Dashboard auth={auth} />;

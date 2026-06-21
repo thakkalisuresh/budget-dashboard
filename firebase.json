@@ -4,6 +4,7 @@
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
       { "source": "/api/verify-user", "function": "verifyUser" },
+      { "source": "/api/google-token", "function": "googleToken" },
       { "source": "/api/claude", "function": "claude" },
       { "source": "/api/telegram", "function": "telegramWebhook" },
       { "source": "/api/push-subscribe", "function": "pushSubscribe" },
