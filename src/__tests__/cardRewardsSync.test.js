@@ -1,18 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import * as client from '../cardRewards.js';
-import * as server from '../../netlify/functions/_card-rewards.mjs';
-import * as fnServer from '../../functions/lib/_card-rewards.mjs';
+import * as server from '../../functions/lib/_card-rewards.mjs';
 
 /**
- * Flag 1 drift-guard: src/cardRewards.js and netlify/functions/_card-rewards.mjs
- * duplicate the reward rates and MCC resolution logic (the bot can't import client modules).
- * This test fails the moment they diverge — change a rate or vendor mapping in one file
- * and forget the other, and CI catches it here.
+ * Flag 1 drift-guard: src/cardRewards.js and functions/lib/_card-rewards.mjs
+ * duplicate the reward rates and MCC resolution logic (the Cloud Functions bot
+ * can't import client modules). This test fails the moment they diverge — change
+ * a rate or vendor mapping in one file and forget the other, and CI catches it here.
  *
- * During the Firebase migration there is a third copy, functions/lib/_card-rewards.mjs
- * (the Cloud Functions bot). The block at the bottom guards it against the netlify
- * copy (which is already pinned to the client above) — transitively pinning all three.
- * At Netlify decommission (Part E), drop the netlify import/assertions and keep this one.
+ * (Pre-Firebase there was a third netlify/functions copy; it was dropped at the
+ * Netlify decommission, leaving these two canonical copies pinned together.)
  */
 
 const CARDS = [
@@ -120,40 +117,5 @@ describe('cardRewards client/server parity', () => {
         expect(server.rewardsDollarValue(card, r)).toBeCloseTo(client.rewardsDollarValue(card, r), 10);
       }
     }
-  });
-});
-
-describe('cardRewards Cloud Functions copy parity (functions/lib)', () => {
-  it('rate tables + point constants match the netlify copy', () => {
-    expect(fnServer.CARD_REWARDS).toEqual(server.CARD_REWARDS);
-    expect(fnServer.UR_POINT_VALUE_CSR).toBe(server.UR_POINT_VALUE_CSR);
-    expect(fnServer.UR_POINT_VALUE_CFU).toBe(server.UR_POINT_VALUE_CFU);
-  });
-
-  it('resolveMCC + calculateRewards agree across the matrix', () => {
-    for (const vendor of VENDORS) {
-      for (const cat of CATEGORIES) {
-        expect(fnServer.resolveMCC(vendor, cat)).toBe(server.resolveMCC(vendor, cat));
-      }
-    }
-    for (const card of CARDS) {
-      for (const mcc of MCCS) {
-        for (const bm of BOOKING_METHODS) {
-          for (const amt of AMOUNTS) {
-            expect(fnServer.calculateRewards(card, mcc, amt, 0, bm))
-              .toEqual(server.calculateRewards(card, mcc, amt, 0, bm));
-          }
-        }
-      }
-    }
-  });
-
-  it('getBestCard + getEffectiveRates agree', () => {
-    for (const cat of CATEGORIES) {
-      for (const vendor of VENDORS) {
-        expect(fnServer.getBestCard(cat, vendor)).toEqual(server.getBestCard(cat, vendor));
-      }
-    }
-    expect(fnServer.getEffectiveRates({})).toEqual(server.getEffectiveRates({}));
   });
 });

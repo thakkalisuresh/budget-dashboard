@@ -9,6 +9,9 @@ export const ping = onRequest({ region: 'us-central1' }, (req, res) => {
 export { verifyUser } from './verify-user.mjs';
 export { claude } from './claude.mjs';
 
+// Mobile biometric login — OAuth authorization-code broker (refresh token in Firestore).
+export { googleToken } from './google-token.mjs';
+
 // Phase 4 — Telegram bot webhook (WhatsApp out of scope).
 export { telegramWebhook } from './telegram-webhook.mjs';
 
@@ -19,3 +22,6 @@ export { pushAlert } from './push-alert.mjs';
 
 // Phase 6 — MCP server (JSON-RPC; rate-limit state Netlify Blobs → Firestore).
 export { mcp } from './mcp-server.mjs';
+
+// Phase 7 — wallet webhook (iOS Shortcuts / Android MacroDroid).
+export { walletWebhook } from './wallet-webhook.mjs';

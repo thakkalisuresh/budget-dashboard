@@ -10,7 +10,7 @@ global.fetch = mockFetch;
 let getAccessToken, findOrCreateFolder, buildFolderPath, uploadFile;
 
 beforeAll(async () => {
-  ({ getAccessToken, findOrCreateFolder, buildFolderPath, uploadFile } = await import('../../netlify/functions/_drive.mjs'));
+  ({ getAccessToken, findOrCreateFolder, buildFolderPath, uploadFile } = await import('../../functions/lib/_drive.mjs'));
 });
 
 beforeEach(() => {

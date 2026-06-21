@@ -8,7 +8,7 @@ vi.stubEnv('VITE_TEMPLATE_SHEET_ID', 'template-sheet-id');
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-const { getCurrentMonthSheetId, appendExpense, getRecentExpenses } = await import('../../netlify/functions/_sheets.mjs');
+const { getCurrentMonthSheetId, appendExpense, getRecentExpenses } = await import('../../functions/lib/_sheets.mjs');
 
 function jsonResponse(data, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: () => Promise.resolve(data) };

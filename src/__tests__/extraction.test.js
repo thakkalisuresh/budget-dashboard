@@ -6,7 +6,7 @@ vi.stubEnv('ANTHROPIC_API_KEY', 'test-anthropic-key');
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-const { sanitizeExtraction, extractReceipt, CATEGORIES } = await import('../../netlify/functions/_extraction.mjs');
+const { sanitizeExtraction, extractReceipt, CATEGORIES } = await import('../../functions/lib/_extraction.mjs');
 
 /* ── Response helpers ── */
 
