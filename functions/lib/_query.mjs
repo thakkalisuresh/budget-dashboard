@@ -15,6 +15,10 @@ const ANTHROPIC_URL     = 'https://api.anthropic.com/v1/messages';
 const HAIKU_MODEL       = 'claude-haiku-4-5';
 const SONNET_MODEL      = 'claude-sonnet-4-6';
 
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GROQ_URL     = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_MODEL   = 'llama-3.3-70b-versatile';
+
 const QUERY_SYSTEM_PROMPT = `You are a budget assistant answering questions about the user's monthly expenses over WhatsApp.
 
 Rules:
@@ -49,8 +53,8 @@ export async function answerQuery(text) {
   const deterministic = await tryDeterministic(cleaned, sheetId, monthName);
   if (deterministic) return deterministic;
 
-  // ── Layer 2/3: Claude fallback with summary + caching ──
-  return await answerWithClaude(cleaned, sheetId, monthName);
+  // ── Layer 2/3: Groq (free) then Claude fallback ──
+  return await answerWithAI(cleaned, sheetId, monthName);
 }
 
 function helpMessage() {
@@ -140,14 +144,50 @@ async function tryDeterministic(cleaned, sheetId, monthName) {
   return null;
 }
 
-async function answerWithClaude(question, sheetId, monthName) {
+async function callGroq(question, summary, monthName) {
+  if (!GROQ_API_KEY) throw new Error('GROQ_API_KEY not configured');
+
+  const res = await fetch(GROQ_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${GROQ_API_KEY}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      max_tokens: 400,
+      messages: [
+        { role: 'system', content: QUERY_SYSTEM_PROMPT },
+        { role: 'user', content: `Current month context (${monthName}):\n${summary}\n\nQuestion: ${question}` },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(`Groq API: ${err?.error?.message || res.status}`);
+  }
+
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content?.trim() || '';
+}
+
+async function answerWithAI(question, sheetId, monthName) {
+  const summary = await buildMonthSummary(sheetId, monthName);
+
+  // Layer 2: Groq (free)
+  try {
+    const answer = await callGroq(question, summary, monthName);
+    if (answer) return answer;
+  } catch (e) {
+    console.warn('query: Groq failed, falling back to Claude:', e.message);
+  }
+
+  // Layer 3: Claude fallback
   if (!ANTHROPIC_API_KEY) {
     return "I can't answer that — AI is not configured. Try: ? budget, ? total, ? last 5";
   }
 
-  const summary = await buildMonthSummary(sheetId, monthName);
-
-  // Use Haiku by default; Sonnet only if explicitly complex (multi-month, "why" questions)
   const isComplex = /\b(why|compare|trend|vs|versus|last month|previous|analyze|reason)\b/i.test(question);
   const model = isComplex ? SONNET_MODEL : HAIKU_MODEL;
 
