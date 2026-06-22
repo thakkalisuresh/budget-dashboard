@@ -28,7 +28,7 @@ import {
 } from './lib/_bot-core.mjs';
 import {
   TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_ALLOWED_USERS,
-  GEMINI_API_KEY, ANTHROPIC_API_KEY, SHEETS_DRIVE_SECRETS,
+  GEMINI_API_KEY, ANTHROPIC_API_KEY, GROQ_API_KEY, SHEETS_DRIVE_SECRETS,
 } from './lib/secrets.mjs';
 
 const UNDO_WINDOW_MS = 10 * 60 * 1000;
@@ -129,7 +129,7 @@ export const telegramWebhook = onRequest(
     region: 'us-central1',
     secrets: [
       TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_ALLOWED_USERS,
-      GEMINI_API_KEY, ANTHROPIC_API_KEY, ...SHEETS_DRIVE_SECRETS,
+      GEMINI_API_KEY, ANTHROPIC_API_KEY, GROQ_API_KEY, ...SHEETS_DRIVE_SECRETS,
     ],
     timeoutSeconds: 120,
     memory: '512MiB',
