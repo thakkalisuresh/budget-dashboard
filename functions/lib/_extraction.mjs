@@ -1,6 +1,6 @@
 /**
  * AI-powered receipt extraction — Gemini primary, Claude fallback.
- * Fallback chain: gemini-2.0-flash → gemini-1.5-pro → gemini-2.5-pro
+ * Fallback chain: gemini-2.5-flash → gemini-2.5-pro
  *               → claude-sonnet-4-6 → claude-haiku-4-5
  * Files starting with "_" are NOT deployed as functions by Netlify.
  */
@@ -11,7 +11,7 @@ const GEMINI_URL        = 'https://generativelanguage.googleapis.com/v1beta/mode
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ANTHROPIC_URL     = 'https://api.anthropic.com/v1/messages';
 
-const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-2.5-pro'];
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro'];  // flash = fast/cheap primary, pro = fallback
 const CLAUDE_MODELS = ['claude-sonnet-4-6', 'claude-haiku-4-5'];
 const PRIMARY_MODEL = GEMINI_MODELS[0];
 const MAX_RETRIES   = 2;
