@@ -7,7 +7,7 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import webpush from 'web-push';
 import { extractTransactionText } from './lib/_extraction.mjs';
-import { appendExpense } from './lib/_sheets.mjs';
+import { appendExpense, getCurrentMonthSheetId } from './lib/_sheets.mjs';
 import { getDb } from './lib/firestore.mjs';
 import { sha256Hex } from './lib/http-common.mjs';
 import {
@@ -56,8 +56,11 @@ export const walletWebhook = onRequest(
       return;
     }
 
-    const { merchant, card, sheetId, email } = req.body || {};
-    const amount = parseFloat(req.body?.amount);
+    const { merchant, card, email } = req.body || {};
+    // Wallet amount may arrive with a currency symbol/grouping (e.g. "$1,234.56"
+    // from the iOS Transaction trigger). Strip everything except digits, dot and
+    // minus before parsing so the Shortcut doesn't need a Replace Text step.
+    const amount = parseFloat(String(req.body?.amount ?? '').replace(/[^\d.-]/g, ''));
     const txDate = req.body?.date || new Date().toISOString().slice(0, 10);
 
     if (!merchant || typeof merchant !== 'string') {
@@ -72,15 +75,24 @@ export const walletWebhook = onRequest(
       res.status(400).json({ ok: false, error: 'Missing or invalid email' });
       return;
     }
-    if (!sheetId || typeof sheetId !== 'string') {
-      res.status(400).json({ ok: false, error: 'Missing sheetId' });
-      return;
-    }
-
     const monthName = new Date(txDate + 'T00:00:00').toLocaleString('en-US', {
       month: 'long',
       year: 'numeric',
     });
+
+    // sheetId is optional: if the automation doesn't send one, resolve the
+    // current month's sheet from the transaction date. This makes the Shortcut
+    // future-proof across month rollovers (e.g. July gets a new sheet) without
+    // any change on the phone.
+    let sheetId = req.body?.sheetId;
+    if (!sheetId || typeof sheetId !== 'string') {
+      try {
+        sheetId = await getCurrentMonthSheetId(monthName);
+      } catch (e) {
+        res.status(422).json({ ok: false, error: 'month_not_found', monthName });
+        return;
+      }
+    }
 
     let category = 'Misc';
     let vendor = merchant.trim();
