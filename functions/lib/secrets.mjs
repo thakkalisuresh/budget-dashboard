@@ -31,6 +31,7 @@ export const VIEWER_EMAILS  = defineSecret('VIEWER_EMAILS');
 // ── AI providers ───────────────────────────────────────────────────────────
 export const ANTHROPIC_API_KEY = defineSecret('ANTHROPIC_API_KEY');
 export const GEMINI_API_KEY    = defineSecret('GEMINI_API_KEY');
+export const GROQ_API_KEY      = defineSecret('GROQ_API_KEY');
 
 // ── Web Push (VAPID) ───────────────────────────────────────────────────────
 export const VAPID_PUBLIC_KEY  = defineSecret('VAPID_PUBLIC_KEY');
