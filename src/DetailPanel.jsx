@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Repeat, Plus, CreditCard } from 'lucide-react';
+import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Repeat, Plus, CreditCard, ChevronRight, ChevronDown } from 'lucide-react';
 import { updateVendorName, updateVendorAmounts, updateTransactionDate, unmarkNonMonthly, renameNonMonthly, markNonMonthly, formatTxDate, todayIso, updatePaymentMethod, updateHistoryPaymentMethod } from './sheetsApi.js';
 
 // ── Vendor logo helpers ───────────────────────────────────────────────────────
@@ -136,6 +136,11 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
   const [noteDialog, setNoteDialog]         = useState(null); // { key, vendor, amount, data }
   const [noteDraft, setNoteDraft]           = useState({ note: '', tags: [] });
   const [noteTagInput, setNoteTagInput]     = useState('');
+  // Vendor grouping (display-only): collapse same-vendor transactions into one card
+  const [openVendor, setOpenVendor]         = useState(null); // expanded group key
+  const [editingGroup, setEditingGroup]     = useState(null); // { key, value }
+  const [deletingGroup, setDeletingGroup]   = useState(null); // group key pending delete
+  const [editingDate, setEditingDate]       = useState(null); // { rowIndex, value }
 
   const txNoteKey = (vendor, amt) =>
     `${sheetId}_${expense}_${(vendor || '').toLowerCase()}_${Number(amt).toFixed(2)}`;
@@ -247,6 +252,297 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
     });
   };
 
+  // ── Vendor grouping (display-only) ───────────────────────────────────────
+  // Collapse multiple same-vendor sheet rows into one collapsible card. Each
+  // member keeps its own rowIndex/uuids, so all per-transaction writes are
+  // unchanged. Single-member groups render exactly like before (renderExpenseCard).
+  const groups = Object.values(
+    (rows || []).reduce((acc, row) => {
+      const key = (row.description || '').trim().toLowerCase();
+      (acc[key] ||= { vendor: row.description, key, members: [] }).members.push(row);
+      return acc;
+    }, {})
+  );
+  const groupTotal = (g) => g.members.reduce((s, r) => s + r.amounts.reduce((a, b) => a + b, 0), 0);
+
+  const isVendorNonMonthly = (name) => nonMonthlyVendors.includes((name || '').toLowerCase());
+
+  // Rename a whole vendor group → fan out across every member row.
+  const saveGroupName = (g) => {
+    const newName = editingGroup?.value?.trim();
+    if (!newName) { setEditingGroup(null); return; }
+    withSave(async () => {
+      if (newName !== g.vendor) {
+        for (const m of g.members) {
+          await updateVendorName(expense, m.rowIndex, newName, accessToken, sheetId, m.description, m._v2);
+        }
+        await renameNonMonthly(sheetId, accessToken, g.vendor, newName);
+        onVendorRenamed?.(g.vendor, newName);
+      }
+      setEditingGroup(null);
+    });
+  };
+
+  // Delete every transaction for a vendor group.
+  const deleteGroup = (g) => {
+    withSave(async () => {
+      for (const m of g.members) {
+        const prevTotal = m.amounts.reduce((a, b) => a + b, 0);
+        await updateVendorAmounts(expense, m.rowIndex, [], accessToken, sheetId, m.description, prevTotal, [], m._v2);
+      }
+      await unmarkNonMonthly(sheetId, accessToken, g.vendor);
+      setDeletingGroup(null);
+    });
+  };
+
+  // Toggle one-time/non-monthly flag for a whole vendor group.
+  const toggleGroupNonMonthly = (g) => {
+    const isNm = isVendorNonMonthly(g.vendor);
+    withSave(async () => {
+      if (isNm) await unmarkNonMonthly(sheetId, accessToken, g.vendor);
+      else      await markNonMonthly(sheetId, accessToken, g.vendor, groupTotal(g));
+      onNonMonthlyChanged?.();
+    });
+  };
+
+  // Edit a single transaction's date (member row inside a group).
+  const saveDate = (row) => {
+    const newDate = editingDate?.value;
+    withSave(async () => {
+      if (newDate && newDate !== row.date) {
+        await updateTransactionDate(expense, row.rowIndex, newDate, accessToken, sheetId);
+      }
+      setEditingDate(null);
+    });
+  };
+
+  // ── Card badge / inline editor for a single transaction (shared by group members) ──
+  const renderCardCell = (row) => {
+    if (!row._v2 || cards.length === 0) {
+      return row.paymentMethod ? (
+        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+          style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
+          💳 {row.paymentMethod}
+        </span>
+      ) : null;
+    }
+    if (editingCardRow?.rowIndex === row.rowIndex) {
+      return (
+        <div className="flex items-center gap-1">
+          <select autoFocus value={cardDraft} onChange={e => setCardDraft(e.target.value)}
+            className="text-[10px] font-bold rounded-lg px-1.5 py-0.5 outline-none"
+            style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-20)', color: 'var(--color-text)' }}>
+            <option value="">— Remove card —</option>
+            {cards.filter(c => !c.toLowerCase().includes('debit') && !c.toLowerCase().includes('bank') && c.toLowerCase() !== 'cash').map(c => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          <button onClick={() => withSave(async () => {
+              const uuid = row.uuids?.[0] || '';
+              await updatePaymentMethod(expense, row.rowIndex, cardDraft, accessToken, sheetId);
+              if (uuid) await updateHistoryPaymentMethod(sheetId, accessToken, uuid, cardDraft);
+              setEditingCardRow(null); onRefresh?.();
+            })} disabled={saving}
+            className="p-0.5 rounded text-white disabled:opacity-40 transition-colors" style={{ background: 'var(--color-accent)' }}>
+            <Check className="w-3 h-3" />
+          </button>
+          <button onClick={() => setEditingCardRow(null)} className="p-0.5 rounded transition-colors" style={{ color: 'var(--color-text-muted)' }}>
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="flex items-center gap-1">
+        {row.paymentMethod ? (
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+            style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
+            💳 {row.paymentMethod}
+          </span>
+        ) : (
+          <span className="text-[10px] italic" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>No card</span>
+        )}
+        <button onClick={() => { setEditingCardRow({ rowIndex: row.rowIndex, uuid: row.uuids?.[0] || '' }); setCardDraft(row.paymentMethod || ''); }}
+          className="p-0.5 rounded transition-colors" title="Edit card" style={{ color: 'var(--color-text-muted)' }}>
+          <CreditCard className="w-3 h-3" />
+        </button>
+      </div>
+    );
+  };
+
+  // ── One transaction line inside an expanded vendor group ──
+  const renderMemberRow = (row) => {
+    const subtotal = row.amounts.reduce((a, b) => a + b, 0);
+    const single   = row.amounts.length === 1;
+    return (
+      <div key={row.rowIndex} style={{ borderTop: '1px solid var(--sur-6)' }}>
+        <div className="flex items-center gap-2 px-4 py-2 group hover:bg-[var(--sur-5)] transition-colors">
+          {/* Date */}
+          {editingDate?.rowIndex === row.rowIndex ? (
+            <>
+              <input type="date" value={editingDate.value}
+                onChange={e => setEditingDate(ed => ({ ...ed, value: e.target.value }))}
+                className="rounded-lg px-2 py-1 text-xs outline-none" style={inputStyle} autoFocus disabled={saving} />
+              <button onClick={() => saveDate(row)} disabled={saving} className="p-1 rounded-lg flex-shrink-0" style={{ color: 'var(--color-success)' }}>
+                <Check className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={() => setEditingDate(null)} className="p-1 rounded-lg flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </>
+          ) : (
+            <button onClick={() => setEditingDate({ rowIndex: row.rowIndex, value: row.date || todayIso() })}
+              className="text-[11px] font-bold flex-shrink-0"
+              style={{ color: row.date ? 'var(--color-text-muted)' : 'var(--color-accent-text)' }}>
+              {row.date ? formatTxDate(row.date) : '— add date'}
+            </button>
+          )}
+          {/* Card */}
+          <div className="min-w-0">{renderCardCell(row)}</div>
+          <div className="flex-1" />
+          {/* Amount + actions (single-amount fast path) */}
+          {single && editingAmount?.rowIndex === row.rowIndex && editingAmount?.amtIndex === 0 ? (
+            <>
+              <span className="text-sm" style={{ color: 'var(--color-text-muted)' }}>{currencySymbol}</span>
+              <input type="number" step="0.01" min="0.01" className={`${inputCls} w-24`} style={inputStyle}
+                value={editingAmount.value}
+                onChange={e => setEditingAmount(ea => ({ ...ea, value: e.target.value }))}
+                onKeyDown={e => e.key === 'Enter' && saveAmount(row)} autoFocus disabled={saving} />
+              <button onClick={() => saveAmount(row)} disabled={saving} className="p-1 rounded-lg flex-shrink-0" style={{ color: 'var(--color-success)' }}>
+                <Check className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={() => setEditingAmount(null)} className="p-1 rounded-lg flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="text-sm font-black tabular-nums" style={{ color: 'var(--color-text)' }}>
+                {currencySymbol}{subtotal.toFixed(2)}
+              </span>
+              {single && (
+                <div className="flex gap-0.5 items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  {(() => {
+                    const key = txNoteKey(row.description, row.amounts[0]);
+                    const data = transactionNotes[key];
+                    const has = data?.note || data?.tags?.length > 0;
+                    return (
+                      <button onClick={() => openNoteDialog(row.description, row.amounts[0])}
+                        className="p-1 rounded-lg transition-colors"
+                        style={{ color: has ? 'var(--color-accent-text)' : 'var(--color-text-muted)' }}
+                        title={has ? 'View/edit note' : 'Add note / tag'}>
+                        <MessageSquare className="w-3.5 h-3.5" />
+                      </button>
+                    );
+                  })()}
+                  <button onClick={() => setEditingAmount({ rowIndex: row.rowIndex, amtIndex: 0, value: String(row.amounts[0]) })}
+                    className="p-1 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }} title="Edit amount">
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => deleteAmount(row, 0)}
+                    className="p-1 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }} title="Delete transaction">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        {/* Defensive: members with >1 amount (rare) list each amount with actions */}
+        {!single && row.amounts.map((amt, amtIndex) => (
+          <div key={amtIndex} className="flex items-center gap-2 px-4 py-1.5 pl-10 group hover:bg-[var(--sur-5)] transition-colors">
+            <span className="text-xs w-4 text-right flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>{amtIndex + 1}.</span>
+            <span className="text-sm font-medium tabular-nums flex-1" style={{ color: 'var(--color-text)' }}>
+              {currencySymbol}{amt.toFixed(2)}
+            </span>
+            <div className="flex gap-0.5 items-center opacity-0 group-hover:opacity-100 transition-opacity">
+              <button onClick={() => openNoteDialog(row.description, amt)} className="p-1 rounded-lg" style={{ color: 'var(--color-text-muted)' }} title="Add note / tag">
+                <MessageSquare className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={() => setEditingAmount({ rowIndex: row.rowIndex, amtIndex, value: String(amt) })} className="p-1 rounded-lg hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}>
+                <Edit2 className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={() => deleteAmount(row, amtIndex)} className="p-1 rounded-lg hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}>
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  // ── A collapsible card for a vendor with multiple transactions ──
+  const renderGroupCard = (g) => {
+    const expanded = openVendor === g.key;
+    const total    = groupTotal(g);
+    const isNm      = isVendorNonMonthly(g.vendor);
+    return (
+      <div key={g.key} className="rounded-2xl overflow-hidden" style={{ background: 'var(--sur-4)', border: '1px solid var(--sur-8)' }}>
+        {deletingGroup === g.key ? (
+          <div className="flex items-center gap-2 px-4 py-2.5"
+            style={{ background: 'oklch(62% 0.22 25 / 12%)', borderBottom: '1px solid oklch(62% 0.22 25 / 20%)' }}>
+            <AlertTriangle className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-danger)' }} />
+            <span className="text-xs font-bold flex-1 min-w-0 truncate" style={{ color: 'var(--color-danger)' }}>
+              Delete <span className="font-black">{g.vendor}</span> + all {g.members.length} transactions?
+            </span>
+            <button onClick={() => setDeletingGroup(null)} disabled={saving}
+              className="px-2.5 py-1 rounded-lg text-xs font-bold transition-colors flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
+              Cancel
+            </button>
+            <button onClick={() => deleteGroup(g)} disabled={saving}
+              className="px-2.5 py-1 rounded-lg text-xs font-black text-white transition-colors flex-shrink-0 disabled:opacity-50" style={{ background: 'var(--color-danger)' }}>
+              {saving ? '…' : 'Delete All'}
+            </button>
+          </div>
+        ) : editingGroup?.key === g.key ? (
+          <div className="flex items-center gap-2 px-4 py-2.5" style={{ borderBottom: '1px solid var(--sur-8)' }}>
+            <input className={inputCls} style={inputStyle} value={editingGroup.value}
+              onChange={e => setEditingGroup(eg => ({ ...eg, value: e.target.value }))}
+              onKeyDown={e => e.key === 'Enter' && saveGroupName(g)} autoFocus disabled={saving} />
+            <button onClick={() => saveGroupName(g)} disabled={saving} className="p-1.5 rounded-lg flex-shrink-0" style={{ color: 'var(--color-success)' }}>
+              <Check className="w-4 h-4" />
+            </button>
+            <button onClick={() => setEditingGroup(null)} className="p-1.5 rounded-lg flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 px-4 py-2.5" style={{ borderBottom: expanded ? '1px solid var(--sur-6)' : 'none' }}>
+            <button onClick={() => setOpenVendor(expanded ? null : g.key)} className="flex items-center gap-2 flex-1 min-w-0 text-left">
+              {expanded ? <ChevronDown className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
+                        : <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />}
+              <VendorLogo name={g.vendor} size={22} onEditDomain={() => setEditingDomain({ vendorName: g.vendor, draft: resolveVendorDomain(g.vendor) || '' })} />
+              <div className="flex-1 min-w-0">
+                <span className="text-sm font-black block truncate" style={{ color: 'var(--color-text)' }}>{g.vendor}</span>
+                <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>{g.members.length} transactions</span>
+              </div>
+            </button>
+            <span className="text-sm font-black tabular-nums ml-2 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
+              {currencySymbol}{total.toFixed(2)}
+            </span>
+            <button onClick={() => toggleGroupNonMonthly(g)} disabled={saving}
+              title={isNm ? 'Remove one-time flag' : 'Mark as one-time expense'}
+              className="p-1.5 rounded-lg transition-colors flex-shrink-0"
+              style={isNm ? { color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)' } : { color: 'var(--color-text-muted)' }}>
+              <Repeat className="w-3.5 h-3.5" />
+            </button>
+            <button onClick={() => setEditingGroup({ key: g.key, value: g.vendor })}
+              className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Rename vendor" style={{ color: 'var(--color-text-muted)' }}>
+              <Edit2 className="w-3.5 h-3.5" />
+            </button>
+            <button onClick={() => setDeletingGroup(g.key)}
+              className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Delete entire vendor" style={{ color: 'var(--color-text-muted)' }}>
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+        {expanded && deletingGroup !== g.key && editingGroup?.key !== g.key &&
+          g.members.map(renderMemberRow)}
+      </div>
+    );
+  };
+
   return (
     <>
       {/* Backdrop */}
@@ -312,7 +608,12 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
             <p className="text-sm text-center py-12" style={{ color: 'var(--color-text-muted)' }}>No transactions found</p>
           )}
 
-          {!loading && rows?.map((row) => (
+          {!loading && groups.map((g) => {
+            // Vendors with multiple transactions render as one collapsible group card.
+            if (g.members.length > 1) return renderGroupCard(g);
+            // Single-transaction vendors render exactly as before.
+            const row = g.members[0];
+            return (
             <div key={row.rowIndex} className="rounded-2xl overflow-hidden"
               style={{ background: 'var(--sur-4)', border: '1px solid var(--sur-8)' }}>
 
@@ -549,7 +850,8 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                 </div>
               ))}
             </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Footer total — padded above home indicator */}
