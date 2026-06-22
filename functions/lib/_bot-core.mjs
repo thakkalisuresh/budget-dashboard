@@ -8,7 +8,7 @@
  */
 
 import crypto from 'node:crypto';
-import { extractReceipt, extractTransactionText, CATEGORIES } from './_extraction.mjs';
+import { extractReceipt, extractReceiptBatch, extractTransactionText, CATEGORIES } from './_extraction.mjs';
 import { uploadReceiptImage, moveFile, buildFolderPath } from './_drive.mjs';
 import {
   getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID,
@@ -196,6 +196,19 @@ export async function handleTextReply(ctx, text) {
     }
 
     const { extraction, driveFileId, year, month } = pending;
+
+    // Transfer item stored in the batch confirm queue — re-route to transfer flow.
+    if (extraction.is_transfer && pending.batchTotal) {
+      await store.delete(key);
+      await store.setJSON(`transfer_pending:${userId}:${pending.id}`, {
+        ...pending,
+        status: undefined,
+        batchIndex: undefined,
+        batchTotal: undefined,
+      });
+      return ctx.send(buildTransferPrompt(extraction, pending.conversionInfo));
+    }
+
     const category      = extraction.reward_category || 'Misc';
     const vendor        = extraction.store_name || 'Unknown';
     const amount        = extraction.total_amount;
@@ -239,6 +252,27 @@ export async function handleTextReply(ctx, text) {
 
     await store.delete(key);
     console.log(`bot-core: receipt ${pending.id} confirmed — ${vendor} $${amount} → ${category}`);
+
+    // Batch: if more transactions are queued, show the next one instead of the full summary.
+    if (pending.batchTotal) {
+      const { blobs: remaining } = await store.list({ prefix: `confirm:${userId}:` });
+      if (remaining?.length > 0) {
+        const nextKey  = remaining.sort((a, b) => a.key.localeCompare(b.key))[0].key;
+        const next     = await store.get(nextKey, { type: 'json' });
+        if (next) {
+          const logged = `✅ ${pending.batchIndex}/${pending.batchTotal} logged: ${vendor} $${amount} → ${category}\n\n`;
+          if (next.extraction?.is_transfer) {
+            return ctx.send(logged + buildTransferPrompt(next.extraction, next.conversionInfo));
+          }
+          return ctx.send(
+            logged + buildConfirmPrompt(next.extraction, next.conversionInfo, { index: next.batchIndex, total: next.batchTotal }),
+            kbYesCancel()
+          );
+        }
+      }
+      // All batch items confirmed.
+      return ctx.send(`✅ All ${pending.batchTotal} transactions logged!`);
+    }
 
     const hints = ['UNDO to reverse'];
     if (!driveFileId) hints.push('ATTACH to add receipt photo');
@@ -597,93 +631,139 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
 
   await incrementRateCount(store, userId);
 
-  const receiptId = crypto.randomUUID();
+  const baseReceiptId = crypto.randomUUID();
+  const now = new Date();
 
-  const extraction = await extractReceipt(base64, mediaType);
+  const extraction = await extractReceiptBatch(base64, mediaType);
 
-  if (!extraction.ok || extraction.data?.total_amount == null) {
-    await store.setJSON(`pending:${receiptId}`, {
-      id: receiptId, userId, mediaType, base64,
-      receivedAt: new Date().toISOString(),
+  if (!extraction.ok || extraction.transactions.length === 0) {
+    await store.setJSON(`pending:${baseReceiptId}`, {
+      id: baseReceiptId, userId, mediaType, base64,
+      receivedAt: now.toISOString(),
       status: 'extraction_failed',
     });
-    const msg = !extraction.ok
-      ? "Couldn't parse receipt clearly. Reply with: Store name, amount, category\n(e.g., 'Walmart 45.23 Grocery')"
-      : "Receipt unclear. Please confirm total amount.\nReply with: Store name, amount, category (e.g., 'Walmart 45.23 Grocery')";
-    return ctx.send(msg);
+    return ctx.send("Couldn't parse receipt clearly. Reply with: Store name, amount, category\n(e.g., 'Walmart 45.23 Grocery')");
   }
 
-  const { data } = extraction;
-  const now = new Date();
-  const year  = data.purchase_date ? new Date(data.purchase_date).getFullYear() : now.getFullYear();
-  const month = data.purchase_date
-    ? new Date(data.purchase_date).toLocaleString('en-US', { month: 'long' })
-    : now.toLocaleString('en-US', { month: 'long' });
+  const { transactions } = extraction;
 
-  const conversionInfo = await maybeConvertCurrency(data);
+  // Single transaction — identical to original flow, no batch metadata stored.
+  if (transactions.length === 1) {
+    const data = transactions[0];
+    const year  = data.purchase_date ? new Date(data.purchase_date).getFullYear() : now.getFullYear();
+    const month = data.purchase_date
+      ? new Date(data.purchase_date).toLocaleString('en-US', { month: 'long' })
+      : now.toLocaleString('en-US', { month: 'long' });
 
-  // Resolve payment method: Vision card → fuzzy match → card rules
-  let cardName = '';
-  try {
-    const settings = await getUserSettings();
-    cardName = resolveCard(data.payment_method, data.store_name, data.reward_category, settings);
-  } catch (e) {
-    console.warn('bot-core: card resolution failed (non-fatal)', e.message);
-  }
-  data.payment_method = cardName;
+    const conversionInfo = await maybeConvertCurrency(data);
 
-  let driveResult = null;
-  try {
-    driveResult = await uploadReceiptImage({
-      year,
-      month,
-      category: null,
-      fileName: `receipt-${receiptId.slice(0, 8)}.${mediaType === 'application/pdf' ? 'pdf' : 'jpg'}`,
-      mimeType: mediaType,
-      base64,
-    });
-  } catch (e) {
-    console.error('bot-core: Drive upload failed', e.message);
-  }
+    try {
+      const settings = await getUserSettings();
+      data.payment_method = resolveCard(data.payment_method, data.store_name, data.reward_category, settings);
+    } catch (e) {
+      console.warn('bot-core: card resolution failed (non-fatal)', e.message);
+    }
 
-  // Transfer detected — ask user to pick category
-  if (data.is_transfer) {
-    await store.setJSON(`transfer_pending:${userId}:${receiptId}`, {
-      id: receiptId,
-      phone: userId,
-      mediaType,
-      base64,
-      extraction: data,
-      conversionInfo,
+    let driveResult = null;
+    try {
+      driveResult = await uploadReceiptImage({
+        year, month, category: null,
+        fileName: `receipt-${baseReceiptId.slice(0, 8)}.${mediaType === 'application/pdf' ? 'pdf' : 'jpg'}`,
+        mimeType: mediaType, base64,
+      });
+    } catch (e) {
+      console.error('bot-core: Drive upload failed', e.message);
+    }
+
+    if (data.is_transfer) {
+      await store.setJSON(`transfer_pending:${userId}:${baseReceiptId}`, {
+        id: baseReceiptId, phone: userId, mediaType, base64,
+        extraction: data, conversionInfo,
+        driveFileId: driveResult?.fileId || null,
+        driveFolderId: driveResult?.folderId || null,
+        driveShareLink: driveResult?.shareLink || null,
+        year, month, receivedAt: now.toISOString(),
+      });
+      return ctx.send(buildTransferPrompt(data, conversionInfo));
+    }
+
+    await store.setJSON(`confirm:${userId}:${baseReceiptId}`, {
+      id: baseReceiptId, phone: userId, mediaType, base64,
+      extraction: data, conversionInfo,
       driveFileId: driveResult?.fileId || null,
       driveFolderId: driveResult?.folderId || null,
       driveShareLink: driveResult?.shareLink || null,
-      year,
-      month,
-      receivedAt: now.toISOString(),
+      year, month, receivedAt: now.toISOString(),
+      status: 'awaiting_confirmation',
     });
-    return ctx.send(buildTransferPrompt(data, conversionInfo));
+
+    console.log(`bot-core: receipt ${baseReceiptId} extracted for ${userId} — ${data.store_name} $${data.total_amount}`);
+    return ctx.send(buildConfirmPrompt(data, conversionInfo), kbYesCancel());
   }
 
-  await store.setJSON(`confirm:${userId}:${receiptId}`, {
-    id: receiptId,
-    phone: userId,
-    mediaType,
-    base64,
-    extraction: data,
-    conversionInfo,
-    driveFileId: driveResult?.fileId || null,
-    driveFolderId: driveResult?.folderId || null,
-    driveShareLink: driveResult?.shareLink || null,
-    year,
-    month,
-    receivedAt: now.toISOString(),
-    status: 'awaiting_confirmation',
-  });
+  // Multiple transactions — upload image once, queue all items as confirm blobs.
+  const batchTotal = transactions.length;
 
-  console.log(`bot-core: receipt ${receiptId} extracted for ${userId} — ${data.store_name} $${data.total_amount}`);
+  let driveResult = null;
+  try {
+    const first = transactions[0];
+    const firstYear  = first.purchase_date ? new Date(first.purchase_date).getFullYear() : now.getFullYear();
+    const firstMonth = first.purchase_date
+      ? new Date(first.purchase_date).toLocaleString('en-US', { month: 'long' })
+      : now.toLocaleString('en-US', { month: 'long' });
+    driveResult = await uploadReceiptImage({
+      year: firstYear, month: firstMonth, category: null,
+      fileName: `receipt-${baseReceiptId.slice(0, 8)}.${mediaType === 'application/pdf' ? 'pdf' : 'jpg'}`,
+      mimeType: mediaType, base64,
+    });
+  } catch (e) {
+    console.error('bot-core: Drive upload failed (batch)', e.message);
+  }
 
-  return ctx.send(buildConfirmPrompt(data, conversionInfo), kbYesCancel());
+  let settings = {};
+  try { settings = await getUserSettings(); } catch { /* non-fatal */ }
+
+  for (let i = 0; i < transactions.length; i++) {
+    const data = transactions[i];
+    const itemId = `${baseReceiptId}_${String(i).padStart(3, '0')}`;
+    const year  = data.purchase_date ? new Date(data.purchase_date).getFullYear() : now.getFullYear();
+    const month = data.purchase_date
+      ? new Date(data.purchase_date).toLocaleString('en-US', { month: 'long' })
+      : now.toLocaleString('en-US', { month: 'long' });
+
+    data.payment_method = resolveCard(data.payment_method, data.store_name, data.reward_category, settings);
+
+    const conversionInfo = await maybeConvertCurrency(data);
+
+    // All items (including transfers) stored in the confirm queue so the batch
+    // can be chained. handleConfirm re-routes transfers to transfer_pending when
+    // it encounters one.
+    await store.setJSON(`confirm:${userId}:${itemId}`, {
+      id: itemId, phone: userId, mediaType, base64,
+      extraction: data, conversionInfo,
+      driveFileId: i === 0 ? (driveResult?.fileId || null) : null,
+      driveFolderId: i === 0 ? (driveResult?.folderId || null) : null,
+      driveShareLink: i === 0 ? (driveResult?.shareLink || null) : null,
+      year, month, receivedAt: now.toISOString(),
+      status: 'awaiting_confirmation',
+      batchIndex: i + 1,
+      batchTotal,
+    });
+  }
+
+  console.log(`bot-core: batch ${baseReceiptId} extracted for ${userId} — ${batchTotal} transactions`);
+
+  const first = transactions[0];
+  const firstConvInfo = await maybeConvertCurrency(first);  // already converted above, idempotent if same currency
+  if (first.is_transfer) {
+    return ctx.send(buildTransferPrompt(first, firstConvInfo));
+  }
+  const firstItemId = `${baseReceiptId}_000`;
+  const firstBlob = await store.get(`confirm:${userId}:${firstItemId}`, { type: 'json' });
+  return ctx.send(
+    buildConfirmPrompt(first, firstBlob?.conversionInfo, { index: 1, total: batchTotal }),
+    kbYesCancel()
+  );
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════
@@ -735,9 +815,10 @@ async function maybeConvertCurrency(data) {
   }
 }
 
-function buildConfirmPrompt(data, conversionInfo) {
+function buildConfirmPrompt(data, conversionInfo, batchInfo) {
+  const header = batchInfo ? `Transaction ${batchInfo.index}/${batchInfo.total}:\n` : '';
   const lines = [
-    'Transaction found:',
+    `${header}Transaction found:`,
     `Store: ${data.store_name || 'Unknown'}`,
     `Date: ${data.purchase_date || 'Unknown'}`,
     `Category: ${data.reward_category || 'Misc'}`,

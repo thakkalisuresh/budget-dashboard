@@ -134,7 +134,7 @@ function parseJSON(text) {
 
 /* ── Gemini API ── */
 
-async function callGemini(model, base64, mediaType) {
+async function callGemini(model, base64, mediaType, userPrompt) {
   if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured');
 
   const url = `${GEMINI_URL}/${model}:generateContent?key=${GEMINI_API_KEY}`;
@@ -145,7 +145,7 @@ async function callGemini(model, base64, mediaType) {
     body: JSON.stringify({
       contents: [{ parts: [
         { inline_data: { mime_type: mediaType, data: base64 } },
-        { text: buildUserPrompt() },
+        { text: userPrompt ?? buildUserPrompt() },
       ] }],
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
       generationConfig: { responseMimeType: 'application/json' },
@@ -191,7 +191,7 @@ async function callGeminiText(model, text) {
 
 /* ── Claude API ── */
 
-async function callClaude(model, base64, mediaType) {
+async function callClaude(model, base64, mediaType, userPrompt) {
   if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not configured');
 
   const contentBlock = mediaType === 'application/pdf'
@@ -207,11 +207,11 @@ async function callClaude(model, base64, mediaType) {
     },
     body: JSON.stringify({
       model,
-      max_tokens: 1024,
+      max_tokens: 2048,
       system: SYSTEM_PROMPT,
       messages: [{
         role: 'user',
-        content: [contentBlock, { type: 'text', text: buildUserPrompt() }],
+        content: [contentBlock, { type: 'text', text: userPrompt ?? buildUserPrompt() }],
       }],
     }),
   });
@@ -298,6 +298,80 @@ export async function extractReceipt(base64, mediaType) {
   }
 
   console.error('extractReceipt: all models exhausted:', lastError?.message);
+  return { ok: false, error: 'illegible', message: lastError?.message };
+}
+
+/* ── Batch extraction (one image → multiple transactions) ── */
+
+function buildBatchUserPrompt() {
+  return `Analyze this image and extract ALL distinct transactions it contains. The image could be:
+- A bank app transaction history or statement screenshot (may show many charges)
+- An Apple Wallet, Google Pay, or Samsung Pay history screen (may show several payments)
+- A single physical receipt photo (one transaction)
+- A single wallet-app confirmation screen (one transaction)
+
+Return EXACTLY this JSON structure — always a "transactions" array, even for a single transaction:
+
+{"transactions":[{"store_name":"Store Name","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":null,"currency":"USD","items":[],"reward_category":"Grocery","is_transfer":false,"payment_method":"Chase Sapphire Reserve"}]}
+
+Rules for each transaction object in the array:
+- store_name: The merchant/vendor name (for transfers, use the recipient name)
+- purchase_date: Date in YYYY-MM-DD format. If unclear, use null
+- total_amount: Final charge/payment amount. Must be a positive number, no currency symbol
+- tax_amount: Tax amount if shown, else null
+- currency: 3-letter ISO code (USD, INR, EUR, GBP, etc.). Default "USD" if not shown
+- items: Array of line items with name and amount. Use [] unless this is a physical receipt with itemized lines
+- reward_category: MUST be exactly one of: ${CATEGORIES.join(', ')}. Pick the closest match. Use "Misc" if none fit. For transfers (is_transfer=true), set to null.
+- is_transfer: true if this is a peer-to-peer payment (Zelle, Venmo, PayPal P2P, bank transfer "sent to" someone). false for merchant purchases.
+- payment_method: Card or account name if visible, else null
+
+If the image is completely unreadable or contains no transactions, return: {"transactions":[]}
+
+Respond with ONLY the JSON object. No other text.`;
+}
+
+function parseBatchJSON(raw) {
+  return Array.isArray(raw?.transactions) ? raw.transactions : [];
+}
+
+export async function extractReceiptBatch(base64, mediaType) {
+  const prompt = buildBatchUserPrompt();
+  let lastError;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const raw = await callGemini(PRIMARY_MODEL, base64, mediaType, prompt);
+      const transactions = parseBatchJSON(raw).map(sanitizeExtraction).filter(t => t.total_amount != null);
+      return { ok: true, transactions, model: PRIMARY_MODEL };
+    } catch (e) {
+      lastError = e;
+      console.warn(`extractReceiptBatch: ${PRIMARY_MODEL} attempt ${attempt + 1} failed:`, e.message);
+    }
+  }
+
+  for (const model of GEMINI_MODELS.slice(1)) {
+    try {
+      const raw = await callGemini(model, base64, mediaType, prompt);
+      const transactions = parseBatchJSON(raw).map(sanitizeExtraction).filter(t => t.total_amount != null);
+      return { ok: true, transactions, model };
+    } catch (e) {
+      lastError = e;
+      console.warn(`extractReceiptBatch: ${model} failed:`, e.message);
+    }
+  }
+
+  for (const model of CLAUDE_MODELS) {
+    try {
+      const raw = await callClaude(model, base64, mediaType, prompt);
+      const transactions = parseBatchJSON(raw).map(sanitizeExtraction).filter(t => t.total_amount != null);
+      return { ok: true, transactions, model };
+    } catch (e) {
+      lastError = e;
+      console.warn(`extractReceiptBatch: ${model} failed:`, e.message);
+    }
+  }
+
+  console.error('extractReceiptBatch: all models exhausted:', lastError?.message);
   return { ok: false, error: 'illegible', message: lastError?.message };
 }
 
