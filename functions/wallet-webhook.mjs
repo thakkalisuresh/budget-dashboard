@@ -174,7 +174,7 @@ export const walletWebhook = onRequest(
             entry.subscription,
             JSON.stringify({
               title: 'Transaction Logged',
-              body: `Logged ₹${amount} at ${vendor} as ${category}`,
+              body: `Logged $${amount} at ${vendor} as ${category}`,
               url: '/',
             })
           );
