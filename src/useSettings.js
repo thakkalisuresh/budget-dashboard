@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { DEFAULT_CARD_OWNERS, DEFAULT_PEOPLE } from './cardOwners.js';
 
 const DEV_MOCK = import.meta.env.DEV && import.meta.env.VITE_DEV_MOCK === 'true';
 
@@ -53,6 +54,7 @@ export const DEFAULT_SETTINGS = {
     'American Express Blue Cash Preferred',
     'Capital One Quicksilver',
     'Chase Freedom Unlimited',
+    'Chase Freedom Rise',
     'Bilt Blue Card',
     'Chase Debit Card - Anu',
     'Chase Debit Card - Sabarish',
@@ -60,6 +62,8 @@ export const DEFAULT_SETTINGS = {
     'Chase Bank Account - Sabarish',
     'Cash',
   ],
+  cardOwners:        DEFAULT_CARD_OWNERS, // { [cardName]: 'me' | 'wife' } — splits spending by person
+  people:            DEFAULT_PEOPLE,      // { me: 'Sabarish', wife: 'Anu' } — display names for the split
   cardRules:               [],  // [{ id, vendorPattern, category, card }]
   cardRewardRates:         null, // null = use hardcoded CARD_REWARDS; set by rate auto-check / Settings
   smartRules:              [],  // [{ id, pattern, category }]

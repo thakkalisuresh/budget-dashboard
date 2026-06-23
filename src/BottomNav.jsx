@@ -1,11 +1,11 @@
-import { LayoutDashboard, BookOpen, Plus, Clock, CreditCard } from 'lucide-react';
+import { LayoutDashboard, BookOpen, Plus, Users, CreditCard } from 'lucide-react';
 
 const NAV_ITEMS = [
-  { id: 'budget',  Icon: LayoutDashboard, label: 'Home'    },
-  { id: 'ledger',  Icon: BookOpen,        label: 'Ledger'  },
-  { id: '_add',    Icon: null,            label: 'Add'     },
-  { id: 'history', Icon: Clock,           label: 'History' },
-  { id: 'cards',   Icon: CreditCard,      label: 'Cards'   },
+  { id: 'budget',  Icon: LayoutDashboard, label: 'Home'   },
+  { id: 'ledger',  Icon: BookOpen,        label: 'Ledger' },
+  { id: '_add',    Icon: null,            label: 'Add'    },
+  { id: 'split',   Icon: Users,           label: 'Split'  },
+  { id: 'cards',   Icon: CreditCard,      label: 'Cards'  },
 ];
 
 // Notch: concave arc at top-center, radius 34px (button radius 28px + 6px clearance)

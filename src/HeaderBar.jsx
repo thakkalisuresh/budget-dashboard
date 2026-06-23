@@ -26,6 +26,7 @@ const TABS = [
   ['ledger',  'Ledger'],
   ['history', 'History'],
   ['cards',   'Cards'],
+  ['split',   'Split'],
 ];
 
 function TabSwitcher({ activeTab, setActiveTab }) {

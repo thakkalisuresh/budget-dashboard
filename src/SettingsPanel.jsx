@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, RotateCcw, Search, Trash2, Pencil, Check, RefreshCw, Plus, Zap, Keyboard, CreditCard, ChevronDown, ChevronRight } from 'lucide-react';
 import { DEFAULT_SETTINGS } from './useSettings.js';
 import { CARD_REWARDS, getEffectiveRates } from './cardRewards.js';
+import { DEFAULT_CARD_OWNERS, DEFAULT_PEOPLE } from './cardOwners.js';
 import { CURRENCIES } from './currency.js';
 import { CATEGORIES, getAllCategoryNames } from './sheetsApi.js';
 import { newRuleId } from './smartRules.js';
@@ -326,6 +327,18 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
   const recurringExpenses = settings.recurringExpenses || [];
   const cards             = settings.cards || DEFAULT_SETTINGS.cards;
   const cardRules         = settings.cardRules || [];
+  const cardOwners        = settings.cardOwners || DEFAULT_CARD_OWNERS;
+  const people            = settings.people || DEFAULT_PEOPLE;
+
+  // Card → owner ('me' | 'wife' | null). Cycles me → wife → unassigned.
+  const setCardOwner = (card, owner) =>
+    updateSettings(prev => {
+      const next = { ...(prev.cardOwners || DEFAULT_CARD_OWNERS) };
+      if (owner) next[card] = owner; else delete next[card];
+      return { ...prev, cardOwners: next };
+    });
+  const setPersonName = (who, name) =>
+    updateSettings(prev => ({ ...prev, people: { ...(prev.people || DEFAULT_PEOPLE), [who]: name } }));
 
   const startEditRec = (i) => {
     const r = recurringExpenses[i];
@@ -1107,6 +1120,67 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                   </button>
                 </div>
               )}
+            </div>
+
+            {/* ── People / Card Owners ──────────────────────────────────── */}
+            <div className="mb-3">
+              <SectionLabel>People &amp; Card Owners</SectionLabel>
+            </div>
+            <p className="text-xs mb-3 -mt-2" style={{ color: 'var(--color-text-muted)' }}>
+              Assign each card to a person to split spending in the Split tab. Cards left unassigned are excluded.
+            </p>
+
+            {/* Person name inputs */}
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              {['me', 'wife'].map(who => (
+                <div key={who} className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>
+                    {who === 'me' ? 'You' : 'Partner'}
+                  </label>
+                  <input
+                    type="text"
+                    value={people[who] || ''}
+                    placeholder={DEFAULT_PEOPLE[who]}
+                    onChange={e => setPersonName(who, e.target.value)}
+                    className={inputCls}
+                  />
+                </div>
+              ))}
+            </div>
+
+            {/* Per-card owner toggle */}
+            <div className="rounded-2xl overflow-hidden mb-4" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+              {cards.map((card, idx) => {
+                const owner = cardOwners[card] || null;
+                const opts = [
+                  { val: 'me',   label: people.me   || DEFAULT_PEOPLE.me   },
+                  { val: 'wife', label: people.wife || DEFAULT_PEOPLE.wife },
+                  { val: null,   label: '—' },
+                ];
+                return (
+                  <div key={idx} className="px-4 py-2.5 flex items-center gap-3"
+                    style={idx > 0 ? { borderTop: '1px solid var(--sur-6)' } : {}}>
+                    <p className="flex-1 text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>{card}</p>
+                    <div className="flex p-0.5 rounded-lg flex-shrink-0" style={{ background: 'var(--sur-8)' }}>
+                      {opts.map(({ val, label }) => {
+                        const active = owner === val;
+                        return (
+                          <button
+                            key={String(val)}
+                            onClick={() => setCardOwner(card, val)}
+                            className="px-2.5 py-1 rounded-md text-[11px] font-bold transition-colors max-w-[88px] truncate"
+                            style={active
+                              ? { background: 'var(--color-accent)', color: 'white' }
+                              : { color: 'var(--color-text-muted)' }}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             {/* Card Rules */}

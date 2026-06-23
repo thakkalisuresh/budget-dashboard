@@ -33,6 +33,7 @@ import { HistoryTab } from './HistoryTab.jsx';
 import { LedgerTab, ledgerCache } from './LedgerTab.jsx';
 const SettingsPanel    = lazy(() => import('./SettingsPanel.jsx').then(m => ({ default: m.SettingsPanel })));
 const CardsTab         = lazy(() => import('./CardsTab.jsx').then(m => ({ default: m.CardsTab })));
+const SplitTab         = lazy(() => import('./SplitTab.jsx').then(m => ({ default: m.SplitTab })));
 const AddCategoryDialog    = lazy(() => import('./AddCategoryDialog.jsx').then(m => ({ default: m.AddCategoryDialog })));
 const ReconcileDialog      = lazy(() => import('./ReconcileDialog.jsx').then(m => ({ default: m.ReconcileDialog })));
 const BulkRecurringDialog  = lazy(() => import('./BulkRecurringDialog.jsx').then(m => ({ default: m.BulkRecurringDialog })));
@@ -500,6 +501,18 @@ function Dashboard({ auth }) {
               accessToken={user.accessToken}
               currencySymbol={currencySymbol}
               cards={settings.cards || []}
+              settings={settings}
+            />
+          </Suspense>
+        )}
+
+        {/* Split tab — spending by person (you vs wife) */}
+        {activeTab === 'split' && (
+          <Suspense fallback={null}>
+            <SplitTab
+              sheetId={selectedSheetId}
+              accessToken={user.accessToken}
+              currencySymbol={currencySymbol}
               settings={settings}
             />
           </Suspense>

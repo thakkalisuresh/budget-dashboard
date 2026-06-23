@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { SHEET_MAP } from './sheetsApi.js';
+import { SHEET_MAP, ensurePersonSplitSheet } from './sheetsApi.js';
 import { requestDriveToken } from './driveAuth.js';
 import { MOCK_MONTHS } from './mockData.js';
 
@@ -274,6 +274,9 @@ export function useMonths(accessToken, allowedEmails = []) {
     await updateMonthColumns(newSheetId, name, accessToken);
     await writeV2Headers(newSheetId, accessToken);
     await clearNotesCell(newSheetId, accessToken);
+    // Seed the "By Person" split tab (default owner map; the Split tab refreshes
+    // it with the live card→owner map on first open). Non-fatal if it fails.
+    ensurePersonSplitSheet(newSheetId, accessToken).catch(() => {});
     // Share with all household members so everyone can access the new month
     await shareSheetWithUsers(newSheetId, allowedEmails, driveToken);
     await appendMonthEntry(name, newSheetId, accessToken);
