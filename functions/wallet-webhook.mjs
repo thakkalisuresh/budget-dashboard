@@ -56,12 +56,39 @@ export const walletWebhook = onRequest(
       return;
     }
 
-    const { merchant, card, email } = req.body || {};
-    // Wallet amount may arrive with a currency symbol/grouping (e.g. "$1,234.56"
-    // from the iOS Transaction trigger). Strip everything except digits, dot and
-    // minus before parsing so the Shortcut doesn't need a Replace Text step.
-    const amount = parseFloat(String(req.body?.amount ?? '').replace(/[^\d.-]/g, ''));
-    const txDate = req.body?.date || new Date().toISOString().slice(0, 10);
+    let { merchant, card, email } = req.body || {};
+    let amountRaw = req.body?.amount;
+    let txDate = req.body?.date || null;
+
+    // Raw-text path (iOS 27 "notification received" trigger, Android notification
+    // reader, or a bank email alert): the automation can forward the raw notification
+    // text and let the backend's LLM parser pull out the fields, instead of doing
+    // fragile per-bank regex on-device. We parse ONCE and reuse the result below for
+    // categorization too, so this costs no extra LLM call.
+    let parsed = null;
+    const rawText = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+    if (rawText) {
+      try {
+        const r = await extractTransactionText(rawText);
+        if (r.ok && r.data) {
+          parsed = r.data;
+          if (!merchant && parsed.store_name) merchant = parsed.store_name;
+          if ((amountRaw === undefined || amountRaw === null || amountRaw === '') &&
+              typeof parsed.total_amount === 'number') {
+            amountRaw = parsed.total_amount;
+          }
+          if (!card && parsed.payment_method) card = parsed.payment_method;
+          if (!txDate && parsed.purchase_date) txDate = parsed.purchase_date;
+        }
+      } catch (e) {
+        console.error('Text parse failed:', e.message);
+      }
+    }
+
+    if (!txDate) txDate = new Date().toISOString().slice(0, 10);
+    // Amount may arrive with a currency symbol/grouping (e.g. "$1,234.56" from the iOS
+    // Transaction trigger). Strip everything except digits, dot and minus before parsing.
+    const amount = parseFloat(String(amountRaw ?? '').replace(/[^\d.-]/g, ''));
 
     if (!merchant || typeof merchant !== 'string') {
       res.status(400).json({ ok: false, error: 'Missing or invalid merchant' });
@@ -96,14 +123,20 @@ export const walletWebhook = onRequest(
 
     let category = 'Misc';
     let vendor = merchant.trim();
-    try {
-      const result = await extractTransactionText(merchant.trim());
-      if (result.ok && result.data) {
-        category = result.data.reward_category ?? 'Misc';
-        vendor = result.data.store_name || vendor;
+    if (parsed) {
+      // Already parsed from raw text above — reuse it (no second LLM call).
+      category = parsed.reward_category ?? 'Misc';
+      vendor = parsed.store_name || vendor;
+    } else {
+      try {
+        const result = await extractTransactionText(merchant.trim());
+        if (result.ok && result.data) {
+          category = result.data.reward_category ?? 'Misc';
+          vendor = result.data.store_name || vendor;
+        }
+      } catch (e) {
+        console.error('Categorization error (falling back to Misc):', e.message);
       }
-    } catch (e) {
-      console.error('Categorization error (falling back to Misc):', e.message);
     }
 
     try {
@@ -141,7 +174,7 @@ export const walletWebhook = onRequest(
             entry.subscription,
             JSON.stringify({
               title: 'Transaction Logged',
-              body: `Logged ₹${amount} at ${vendor} as ${category}`,
+              body: `Logged $${amount} at ${vendor} as ${category}`,
               url: '/',
             })
           );

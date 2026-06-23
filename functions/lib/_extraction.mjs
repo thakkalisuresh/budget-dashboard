@@ -58,7 +58,7 @@ ${text}
 """
 
 Return EXACTLY this JSON structure:
-{"store_name":"...","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":null,"currency":"USD","items":[],"reward_category":"...","is_transfer":false}
+{"store_name":"...","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":null,"currency":"USD","items":[],"reward_category":"...","is_transfer":false,"payment_method":null}
 
 Rules:
 - store_name: Merchant/vendor name from the text (for transfers, use the recipient name)
@@ -69,9 +69,10 @@ Rules:
 - items: Always empty []
 - reward_category: MUST be exactly one of: ${CATEGORIES.join(', ')}. Pick closest match based on merchant. Use "Misc" if unclear. For transfers, set to null.
 - is_transfer: true if this is a peer-to-peer payment (Zelle, Venmo, PayPal P2P, bank transfer "to" someone). false for merchant charges.
+- payment_method: The card or account name if the text names it (e.g. "Chase Sapphire Reserve", "Card ending 1234", "Amex Gold"). Extract it exactly as shown. Use null if no card/account is mentioned.
 
 If the text doesn't look like a transaction notification (e.g., random text, greetings), return:
-{"store_name":null,"purchase_date":null,"total_amount":null,"tax_amount":null,"currency":"USD","items":[],"reward_category":null,"is_transfer":false}
+{"store_name":null,"purchase_date":null,"total_amount":null,"tax_amount":null,"currency":"USD","items":[],"reward_category":null,"is_transfer":false,"payment_method":null}
 
 Respond with ONLY the JSON object. No other text.`;
 }
