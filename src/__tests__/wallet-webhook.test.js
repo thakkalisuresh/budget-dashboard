@@ -3,15 +3,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.stubEnv('WALLET_WEBHOOK_SECRET', 'test-wallet-secret');
 
 // Shared mock state (hoisted so the vi.mock factories can close over it).
-const { extractMock, appendMock, webpushSend, ctl } = vi.hoisted(() => ({
+const { extractMock, appendMock, sheetIdMock, webpushSend, ctl } = vi.hoisted(() => ({
   extractMock: vi.fn(),
   appendMock: vi.fn(),
+  sheetIdMock: vi.fn(),
   webpushSend: vi.fn(),
   ctl: { pushDoc: null, deleted: false },
 }));
 
 vi.mock('../../functions/lib/_extraction.mjs', () => ({ extractTransactionText: extractMock }));
-vi.mock('../../functions/lib/_sheets.mjs', () => ({ appendExpense: appendMock }));
+vi.mock('../../functions/lib/_sheets.mjs', () => ({ appendExpense: appendMock, getCurrentMonthSheetId: sheetIdMock }));
 vi.mock('web-push', () => ({ default: { setVapidDetails: vi.fn(), sendNotification: webpushSend } }));
 vi.mock('../../functions/lib/firestore.mjs', () => ({
   getDb: () => ({
@@ -57,6 +58,7 @@ const validBody = {
 beforeEach(() => {
   extractMock.mockReset().mockResolvedValue({ ok: true, data: { reward_category: 'Grocery', store_name: 'Costco' } });
   appendMock.mockReset().mockResolvedValue(undefined);
+  sheetIdMock.mockReset().mockResolvedValue('resolved-month-sheet');
   webpushSend.mockReset().mockResolvedValue(undefined);
   ctl.pushDoc = null;
   ctl.deleted = false;
@@ -119,10 +121,18 @@ describe('wallet-webhook — validation', () => {
     expect(res.json.error).toMatch(/email/i);
   });
 
-  it('400 on missing sheetId', async () => {
+  it('resolves current-month sheet when sheetId is omitted (200)', async () => {
     const res = await call(req({ body: { ...validBody, sheetId: undefined } }));
-    expect(res.status).toBe(400);
-    expect(res.json.error).toMatch(/sheetId/i);
+    expect(res.status).toBe(200);
+    expect(sheetIdMock).toHaveBeenCalledWith('May 2026');
+    expect(appendMock.mock.calls[0][0].sheetId).toBe('resolved-month-sheet');
+  });
+
+  it('422 month_not_found when the month sheet cannot be resolved', async () => {
+    sheetIdMock.mockRejectedValueOnce(new Error('no such tab'));
+    const res = await call(req({ body: { ...validBody, sheetId: undefined } }));
+    expect(res.status).toBe(422);
+    expect(res.json.error).toBe('month_not_found');
   });
 });
 

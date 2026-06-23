@@ -121,55 +121,42 @@ describe('extractReceipt', () => {
     reward_category: 'Misc',
   });
 
-  it('returns extracted data on first try (gemini-2.0-flash)', async () => {
+  it('returns extracted data on first try (gemini-2.5-flash)', async () => {
     mockFetch.mockResolvedValueOnce(geminiResponse(validJson));
     const result = await extractReceipt('base64data', 'image/jpeg');
     expect(result.ok).toBe(true);
     expect(result.data.store_name).toBe('Target');
     expect(result.data.total_amount).toBe(67.89);
-    expect(result.model).toBe('gemini-2.0-flash');
+    expect(result.model).toBe('gemini-2.5-flash');
   });
 
-  it('retries gemini-2.0-flash up to 2 times then succeeds', async () => {
+  it('retries gemini-2.5-flash up to 2 times then succeeds', async () => {
     mockFetch
       .mockResolvedValueOnce(errorResponse('overloaded', 529))
       .mockResolvedValueOnce(errorResponse('overloaded', 529))
       .mockResolvedValueOnce(geminiResponse(validJson));
     const result = await extractReceipt('base64data', 'image/jpeg');
     expect(result.ok).toBe(true);
-    expect(result.model).toBe('gemini-2.0-flash');
+    expect(result.model).toBe('gemini-2.5-flash');
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
-  it('falls back to gemini-1.5-pro after primary exhausts retries', async () => {
+  it('falls back to gemini-2.5-pro after primary exhausts retries', async () => {
+    // 3 Flash attempts fail, then 2.5-pro succeeds
     mockFetch
       .mockResolvedValueOnce(errorResponse('overloaded', 529))
       .mockResolvedValueOnce(errorResponse('overloaded', 529))
       .mockResolvedValueOnce(errorResponse('overloaded', 529))
-      .mockResolvedValueOnce(geminiResponse(validJson));
-    const result = await extractReceipt('base64data', 'image/jpeg');
-    expect(result.ok).toBe(true);
-    expect(result.model).toBe('gemini-1.5-pro');
-    expect(mockFetch).toHaveBeenCalledTimes(4);
-  });
-
-  it('falls back to gemini-2.5-pro when earlier Gemini models fail', async () => {
-    mockFetch
-      .mockResolvedValueOnce(errorResponse('fail', 500))
-      .mockResolvedValueOnce(errorResponse('fail', 500))
-      .mockResolvedValueOnce(errorResponse('fail', 500))
-      .mockResolvedValueOnce(errorResponse('fail', 500))
       .mockResolvedValueOnce(geminiResponse(validJson));
     const result = await extractReceipt('base64data', 'image/jpeg');
     expect(result.ok).toBe(true);
     expect(result.model).toBe('gemini-2.5-pro');
-    expect(mockFetch).toHaveBeenCalledTimes(5);
+    expect(mockFetch).toHaveBeenCalledTimes(4);
   });
 
   it('falls back to Claude sonnet when all Gemini models fail', async () => {
-    // 3 Flash retries + 1.5-pro + 2.5-pro = 5 fails, then Claude sonnet succeeds
+    // 3 Flash retries + 2.5-pro = 4 fails, then Claude sonnet succeeds
     mockFetch
-      .mockResolvedValueOnce(errorResponse('fail', 500))
       .mockResolvedValueOnce(errorResponse('fail', 500))
       .mockResolvedValueOnce(errorResponse('fail', 500))
       .mockResolvedValueOnce(errorResponse('fail', 500))
@@ -178,13 +165,12 @@ describe('extractReceipt', () => {
     const result = await extractReceipt('base64data', 'image/jpeg');
     expect(result.ok).toBe(true);
     expect(result.model).toBe('claude-sonnet-4-6');
-    expect(mockFetch).toHaveBeenCalledTimes(6);
+    expect(mockFetch).toHaveBeenCalledTimes(5);
   });
 
   it('falls back to Claude haiku as last resort', async () => {
-    // 5 Gemini fails + Claude sonnet fail + Claude haiku succeeds
+    // 4 Gemini fails + Claude sonnet fail + Claude haiku succeeds
     mockFetch
-      .mockResolvedValueOnce(errorResponse('fail', 500))
       .mockResolvedValueOnce(errorResponse('fail', 500))
       .mockResolvedValueOnce(errorResponse('fail', 500))
       .mockResolvedValueOnce(errorResponse('fail', 500))
@@ -194,7 +180,7 @@ describe('extractReceipt', () => {
     const result = await extractReceipt('base64data', 'image/jpeg');
     expect(result.ok).toBe(true);
     expect(result.model).toBe('claude-haiku-4-5');
-    expect(mockFetch).toHaveBeenCalledTimes(7);
+    expect(mockFetch).toHaveBeenCalledTimes(6);
   });
 
   it('returns error when all models fail', async () => {
@@ -202,8 +188,8 @@ describe('extractReceipt', () => {
     const result = await extractReceipt('base64data', 'image/jpeg');
     expect(result.ok).toBe(false);
     expect(result.error).toBe('illegible');
-    // 3 Flash retries + 1.5-pro + 2.5-pro + sonnet + haiku = 7 calls
-    expect(mockFetch).toHaveBeenCalledTimes(7);
+    // 3 Flash retries + 2.5-pro + sonnet + haiku = 6 calls
+    expect(mockFetch).toHaveBeenCalledTimes(6);
   });
 
   it('sends correct Gemini inline_data for images', async () => {
@@ -249,13 +235,12 @@ describe('extractReceipt', () => {
   });
 
   it('handles non-JSON responses from all models', async () => {
-    // All 7 models return non-JSON text
+    // All 6 models return non-JSON text (3 Flash + 2.5-pro + sonnet + haiku)
     mockFetch
       .mockResolvedValueOnce(geminiResponse('I cannot read this'))
       .mockResolvedValueOnce(geminiResponse('Still unclear'))
       .mockResolvedValueOnce(geminiResponse('No luck'))
       .mockResolvedValueOnce(geminiResponse('Cannot parse'))
-      .mockResolvedValueOnce(geminiResponse('Unreadable'))
       .mockResolvedValueOnce(claudeResponse('Sorry'))
       .mockResolvedValueOnce(claudeResponse('Unable to process'));
     const result = await extractReceipt('base64data', 'image/jpeg');

@@ -163,12 +163,13 @@ function setupPhotoMocks(extractionResult) {
     if (url.includes('api.telegram.org/file/')) {
       return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(jpegBytes()) });
     }
-    // Gemini extraction
+    // Gemini extraction (batch: handler calls extractReceiptBatch → expects { transactions: [...] })
     if (url.includes('generativelanguage.googleapis.com')) {
       if (extractionResult === 'fail') {
         return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: { message: 'fail' } }) });
       }
-      return Promise.resolve(geminiResponse(extractionResult));
+      const transactions = Array.isArray(extractionResult) ? extractionResult : [extractionResult];
+      return Promise.resolve(geminiResponse({ transactions }));
     }
     // Google OAuth
     if (url.includes('oauth2.googleapis.com/token')) {
