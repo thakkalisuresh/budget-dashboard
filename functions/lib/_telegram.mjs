@@ -1,8 +1,7 @@
 /**
  * Telegram Bot API transport helpers.
- * Ported from netlify/functions/_telegram.mjs. `validateTelegramWebhook` reads
- * the secret-token header via Express `req.get()` (was Web `req.headers.get()`)
- * and now compares in constant time. BOT_TOKEN/WEBHOOK_SECRET come from
+ * `validateTelegramWebhook` reads the secret-token header via Express
+ * `req.get()` and compares in constant time. BOT_TOKEN/WEBHOOK_SECRET come from
  * process.env (injected by bound defineSecret params at cold start).
  */
 import { createHash, timingSafeEqual } from 'node:crypto';

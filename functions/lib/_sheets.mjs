@@ -1,7 +1,7 @@
 /**
  * Google Sheets utilities for serverless functions.
  * Serverless equivalent of sheetExpenses.js + sheetApi.js.
- * Files starting with "_" are NOT deployed as functions by Netlify.
+ * Files in lib/ are shared modules, not standalone deployed functions.
  */
 import { getAccessToken, copyFile, shareWithEmails } from './_drive.mjs';
 

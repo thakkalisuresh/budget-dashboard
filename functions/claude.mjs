@@ -1,6 +1,5 @@
 /**
  * Cloud Function — Anthropic API proxy.
- * Ported from netlify/edge-functions/claude.js (Deno → Node/Express).
  *
  * Keeps the API key server-side; the browser never sees it. Auth requires
  * Authorization: Bearer <google-access-token>, verified against Google's

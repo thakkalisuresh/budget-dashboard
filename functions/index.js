@@ -5,7 +5,7 @@ export const ping = onRequest({ region: 'us-central1' }, (req, res) => {
   res.json({ ok: true, service: 'fundient-dashboard' });
 });
 
-// Phase 3 — auth + Claude proxy (ported from Netlify edge functions).
+// Phase 3 — auth + Claude proxy.
 export { verifyUser } from './verify-user.mjs';
 export { claude } from './claude.mjs';
 
@@ -15,12 +15,12 @@ export { googleToken } from './google-token.mjs';
 // Phase 4 — Telegram bot webhook (WhatsApp out of scope).
 export { telegramWebhook } from './telegram-webhook.mjs';
 
-// Phase 5 — push notifications (Netlify Blobs → Firestore).
+// Phase 5 — push notifications (subscriptions in Firestore).
 export { pushSubscribe } from './push-subscribe.mjs';
 export { pushUnsubscribe } from './push-unsubscribe.mjs';
 export { pushAlert } from './push-alert.mjs';
 
-// Phase 6 — MCP server (JSON-RPC; rate-limit state Netlify Blobs → Firestore).
+// Phase 6 — MCP server (JSON-RPC; rate-limit state in Firestore).
 export { mcp } from './mcp-server.mjs';
 
 // Phase 7 — wallet webhook (iOS Shortcuts / Android MacroDroid).

@@ -53,9 +53,9 @@ async function clearAllIndexedDB() {
   } catch { /* non-fatal */ }
 }
 
-// Edge function endpoint — email allowlist lives server-side only
+// Cloud Function endpoint — email allowlist lives server-side only
 const VERIFY_URL = import.meta.env.DEV
-  ? 'http://localhost:8888/api/verify-user'  // netlify dev port
+  ? 'http://localhost:8888/api/verify-user'  // TODO: legacy local dev port — update to the Firebase emulator port
   : '/api/verify-user';
 
 // OAuth authorization-code broker (mobile biometric login). Behind the Hosting
@@ -155,7 +155,7 @@ export function useAuth() {
       let email, name, picture, prodRole, prodAllowedEmails;
 
       if (import.meta.env.DEV) {
-        // Dev mode: verify with Google directly — edge function not available without netlify dev
+        // Dev mode: verify with Google directly — the verify-user function isn't running locally
         const profileRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
           headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
         });

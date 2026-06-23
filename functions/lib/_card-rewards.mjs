@@ -1,6 +1,6 @@
 /**
  * Server-side mirror of src/cardRewards.js + src/vendorMCC.js for the bot.
- * Netlify functions cannot import client (src/) modules, so the rates and
+ * Cloud Functions cannot import client (src/) modules, so the rates and
  * calculation logic are duplicated here. Keep in sync with both src/ files.
  */
 

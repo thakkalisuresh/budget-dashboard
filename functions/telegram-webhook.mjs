@@ -1,8 +1,6 @@
 /**
  * Cloud Function — Telegram bot webhook.
- * Ported from netlify/functions/telegram-webhook.mjs (Web Request/Response +
- * Netlify Blobs → Express onRequest + Firestore store). All business logic
- * still lives in lib/_bot-core.mjs, unchanged.
+ * Bot state lives in Firestore; business logic lives in lib/_bot-core.mjs.
  *
  * Secrets are bound so the lib modules' process.env reads resolve at cold start.
  * Synchronous processing is preserved from the original (receipt extraction +

@@ -6,8 +6,8 @@ on:
   pull_request:
     branches: [main, develop]
 
-# Frontend build-time config (Vite VITE_* vars). On Netlify these come from the
-# site's env UI; on GitHub Actions they come from repository variables (Settings
+# Frontend build-time config (Vite VITE_* vars). On GitHub Actions they come
+# from repository variables (Settings
 # → Secrets and variables → Actions → Variables). Non-secret — they are baked
 # into the shipped client bundle. Applied workflow-wide so every `npm run build`
 # (smoke test + the deploy jobs) produces a functional bundle.
@@ -42,9 +42,8 @@ jobs:
       - name: Build
         run: npm run build
 
-  # Live deploy to Firebase on pushes to main/develop. Parallel-run target is the
-  # single project `fundient-dashboard`; Netlify still deploys independently via
-  # its own git integration until Part D cutover. Requires the FIREBASE_SERVICE_ACCOUNT
+  # Live deploy to Firebase on pushes to main/develop. Deploy target is the
+  # single project `fundient-dashboard`. Requires the FIREBASE_SERVICE_ACCOUNT
   # repo secret (a CI service-account JSON key) — until that exists, this job
   # skips gracefully so the `ci` gate stays green.
   deploy-live:

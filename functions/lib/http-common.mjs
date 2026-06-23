@@ -1,7 +1,6 @@
 /**
- * Shared HTTP helpers for the Cloud Functions ported from Netlify edge
- * functions (verify-user, claude proxy). Express-style (req, res) — Firebase
- * 2nd-gen onRequest, not Deno Web Request/Response.
+ * Shared HTTP helpers for the Cloud Functions (verify-user, claude proxy).
+ * Express-style (req, res) — Firebase 2nd-gen onRequest.
  */
 
 // Origins allowed to call the API. Behind Hosting rewrites, /api/* is
