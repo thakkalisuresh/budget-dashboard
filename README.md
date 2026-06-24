@@ -56,9 +56,10 @@ spreadsheet, with an offline-capable PWA on top.
 
 ## Screenshots
 
-> _Dashboard, Split tab, and Cards tab captures will be added here._
-<!-- TODO: drop PNGs into docs/screenshots/ and embed, e.g.:
-<p align="center"><img src="docs/screenshots/dashboard.png" width="80%" /></p> -->
+> _Dashboard, Split, and Cards captures will be added here._
+> Drop images into [`docs/screenshots/`](docs/screenshots/) (see that folder's README for the suggested set + embed snippet).
+<!-- Once captured, embed e.g.:
+<p align="center"><img src="docs/screenshots/dashboard.png" width="80%" alt="Dashboard" /></p> -->
 
 ## Tech Stack
 
