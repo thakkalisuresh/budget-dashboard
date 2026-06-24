@@ -11,6 +11,7 @@ Personal budget dashboard built with React and backed by Google Sheets. Tracks m
 - **AI chat** — ask questions about your budget in plain language
 - **Offline PWA** — biometric unlock (Face ID / fingerprint) restores cached dashboard without internet; expenses queued offline sync automatically on reconnect
 - **Push notifications** — daily/weekly spending digests and over-budget alerts
+- **Split by person** — separates household spending by who owns the card (you vs. partner) in a dedicated Split tab, plus an auto-updating "By Person" Google Sheet tab; owner is derived live from each transaction's card, so no tagging or backfill
 - **Multi-user** — owner + viewer roles, shared access to the same sheet
 - **Dark mode** — full light/dark support with per-user accent colour picker
 - **PIN lock + biometrics** — optional AES-encrypted session with auto-lock on background

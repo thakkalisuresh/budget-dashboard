@@ -25,7 +25,7 @@ When `VITE_DEV_MOCK=true`, the app:
 - Serves fake month list: June 2026, May 2026, April 2026
 - Uses `DEFAULT_SETTINGS` (no sheet reads, onboarding skipped)
 - Blocks all API writes (`saveUserSettings` is a no-op)
-- Ledger, History, and Cards tabs will show empty/error states (they make their own API calls; full mock support is a future phase)
+- Ledger, History, Cards, and Split tabs will show empty/error states (they make their own API calls; full mock support is a future phase)
 
 ## Notes
 
