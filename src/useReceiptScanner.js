@@ -7,11 +7,12 @@ import {
   loadFxCache, saveFxCache, isPlausibleRate,
 } from './receiptHelpers.js';
 import { resolveMCC } from './vendorMCC.js';
+import { categorizeItems, matchesSplitVendor } from './itemCategorizer.js';
 
 const CSR = 'Chase Sapphire Reserve';
 const TRAVEL_MCCS = new Set(['4511', '7011', 'CHASE_PORTAL']);
 
-export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, activeCategories = [], scanTriggerRef, smartRules = [], cards = [], cardRules = [], onSaveRecurring }) {
+export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, activeCategories = [], scanTriggerRef, smartRules = [], cards = [], cardRules = [], onSaveRecurring, splitReceiptVendors = [] }) {
   const [phase, setPhase]         = useState('idle');
   const [scanError, setScanError] = useState('');
   const [processingProgress, setProcessingProgress] = useState(null);
@@ -35,6 +36,14 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
 
   const [stmtTransactions, setStmtTransactions] = useState([]);
   const [stmtSavedCount, setStmtSavedCount]     = useState(0);
+
+  // Split-receipt state (Costco/Amazon → per-category split)
+  const [splitVendor, setSplitVendor]       = useState('');
+  const [splitTotal, setSplitTotal]         = useState(0);
+  const [splitPaymentMethod, setSplitPaymentMethod] = useState('');
+  const [splitGroups, setSplitGroups]       = useState({});   // { category: subtotal } auto-sorted
+  const [splitItems, setSplitItems]         = useState([]);   // [{ name, amount, suggestion, category }]
+  const [splitSavedSummary, setSplitSavedSummary] = useState(null);
 
   const [editingIndex, setEditingIndex]   = useState(null);
   const [editVendor, setEditVendor]       = useState('');
@@ -71,6 +80,21 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
         const checked = await checkDuplicates(validateCategories(withFlags), accessToken, sheetId, activeCategories, monthName);
         setStmtTransactions(checked);
         setPhase('statement-reviewing');
+        return;
+      }
+
+      // Split-receipt vendor (Costco, Amazon…) with itemized lines → split by category
+      if (matchesSplitVendor(result.vendor, splitReceiptVendors) &&
+          Array.isArray(result.items) && result.items.length > 0 && result.amount != null) {
+        const { autoGrouped, uncategorized } = categorizeItems(result.items);
+        const groups = {};
+        for (const g of autoGrouped) groups[g.category] = g.subtotal;
+        setSplitVendor(result.vendor);
+        setSplitTotal(result.amount);
+        setSplitPaymentMethod(resolveCard(result.paymentMethod, result.vendor, result.category || 'Misc'));
+        setSplitGroups(groups);
+        setSplitItems(uncategorized.map(u => ({ ...u, category: u.suggestion || '' })));
+        setPhase('split-reviewing');
         return;
       }
 
@@ -289,6 +313,62 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     setPhase('summary');
   };
 
+  // ── split helpers ────────────────────────────────────────────────────────
+  const setSplitItemCategory = (i, category) =>
+    setSplitItems(prev => prev.map((it, j) => j === i ? { ...it, category } : it));
+
+  // Final per-category totals = auto groups + user-assigned items, with the
+  // tax/fees/discount remainder folded into the largest group so it sums to total.
+  const computeSplitGroups = () => {
+    const groups = { ...splitGroups };
+    for (const it of splitItems) {
+      if (!it.category) continue;
+      groups[it.category] = Math.round(((groups[it.category] || 0) + it.amount) * 100) / 100;
+    }
+    const cats = Object.keys(groups);
+    if (cats.length === 0) return groups;
+    const sum = Math.round(cats.reduce((s, c) => s + groups[c], 0) * 100) / 100;
+    const remainder = Math.round((splitTotal - sum) * 100) / 100;
+    if (Math.abs(remainder) >= 0.01) {
+      const largest = cats.reduce((a, b) => (groups[b] > groups[a] ? b : a), cats[0]);
+      groups[largest] = Math.round((groups[largest] + remainder) * 100) / 100;
+    }
+    return groups;
+  };
+
+  const splitReady = splitItems.every(it => !!it.category);
+
+  const handleSplitSave = async () => {
+    setFormErr('');
+    if (!splitReady) { setFormErr('Pick a category for every item first.'); return; }
+    setPhase('split-saving');
+    try {
+      const groups = computeSplitGroups();
+      const logged = [];
+      for (const [category, amount] of Object.entries(groups)) {
+        if (amount <= 0) continue;
+        await addOrUpdateExpense(category, splitVendor.trim(), amount, accessToken, sheetId, monthName, 'scan', null, splitPaymentMethod, '');
+        logged.push({ category, amount });
+      }
+      setSplitSavedSummary({ vendor: splitVendor, groups: logged });
+      setSavedReceipts(prev => [...prev, ...logged.map(g => ({ vendor: splitVendor.trim(), amount: g.amount, category: g.category }))]);
+      onSuccess?.();
+
+      const nextIndex = queueIndex + 1;
+      if (nextIndex < queue.length) {
+        setQueueIndex(nextIndex);
+        await processReceiptFile(queue[nextIndex]);
+      } else {
+        setQueue([]);
+        setQueueIndex(0);
+        setPhase('summary');
+      }
+    } catch (err) {
+      setFormErr(err.message || 'Failed to save the split. Please try again.');
+      setPhase('split-reviewing');
+    }
+  };
+
   const handleClose = () => {
     setPhase('idle');
     setScanError('');
@@ -304,6 +384,12 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     setUnmatchedLogged([]);
     setForeignCurrency(null);
     setShowCurrencyPrompt(false);
+    setSplitVendor('');
+    setSplitTotal(0);
+    setSplitPaymentMethod('');
+    setSplitGroups({});
+    setSplitItems([]);
+    setSplitSavedSummary(null);
   };
 
   // ── row edit helpers ───────────────────────────────────────────────────────
@@ -340,6 +426,8 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     isRandom, setIsRandom, paymentMethod, setPaymentMethod, bookingMethod, setBookingMethod, tip, setTip, formErr, dupWarning, setDupWarning,
     savedReceipts, foreignCurrency, showCurrencyPrompt,
     stmtTransactions, setStmtTransactions, stmtSavedCount,
+    // Split state
+    splitVendor, splitTotal, splitPaymentMethod, splitGroups, splitItems, splitReady, splitSavedSummary,
     editingIndex, setEditingIndex, editVendor, setEditVendor,
     editAmount, setEditAmount, editCategory, setEditCategory,
     editCard, setEditCard, editErr,
@@ -353,6 +441,7 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     // Handlers
     handleFileChange, handleConfirm, doReceiptSave, handleSkip,
     handleStatementImport, handleClose, openRowEdit, saveRowEdit, setRowCard,
+    setSplitItemCategory, handleSplitSave,
     setScanError,
   };
 }

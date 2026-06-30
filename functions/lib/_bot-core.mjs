@@ -19,7 +19,8 @@ import {
 import { convertToUSD } from './_currency.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
 import { buildRewardsLine, getEffectiveRates } from './_card-rewards.mjs';
-import { kbYesCancel, kbYesSkip, kbConfirmDelete } from './_telegram.mjs';
+import { kbYesCancel, kbYesSkip, kbConfirmDelete, kbSplitCategory } from './_telegram.mjs';
+import { categorizeItems, matchesSplitVendor } from './_item-categorizer.mjs';
 
 const DAILY_LIMIT    = 50;
 const UNDO_WINDOW_MS = 10 * 60 * 1000;
@@ -112,7 +113,10 @@ export async function handleTextReply(ctx, text) {
         if (val) { await store.delete(key); cancelledAny = true; }
       } catch { /* no pending */ }
     }
-    for (const prefix of [`confirm:${userId}:`, `transfer_pending:${userId}:`]) {
+    for (const prefix of [
+      `confirm:${userId}:`, `transfer_pending:${userId}:`,
+      `split_pending:${userId}:`, `split_confirm:${userId}:`,
+    ]) {
       const { blobs } = await store.list({ prefix });
       for (const b of (blobs || [])) {
         await store.delete(b.key);
@@ -121,6 +125,11 @@ export async function handleTextReply(ctx, text) {
     }
     console.log(`bot-core: CANCEL by ${userId} (cleaned ${cancelledAny ? 'pending' : 'nothing'})`);
     return ctx.send(cancelledAny ? 'Cancelled.' : 'Nothing to cancel.');
+  }
+
+  // ── SPLITCAT callback (user picked a category for one split line item) ──
+  if (text.startsWith('SPLITCAT:')) {
+    return await handleSplitCategoryPick(ctx, text);
   }
 
   // ── NEW MONTH wizard (active) ──
@@ -141,8 +150,29 @@ export async function handleTextReply(ctx, text) {
     await store.delete(`delete_pending:${userId}`);
   }
 
+  // ── SKIP a wallet-triggered split: log the original charge as one expense ──
+  if (normalized === 'SKIP') {
+    const { blobs } = await store.list({ prefix: `split_pending:${userId}:` });
+    if (blobs && blobs.length > 0) {
+      return await handleSplitSkip(ctx, blobs[0].key);
+    }
+    // No split awaiting — fall through (SKIP may belong to another flow / be noise)
+  }
+
   // ── YES ──
   if (normalized === 'YES') {
+    // A completed split takes priority over any pending receipt confirm.
+    const { blobs: splitBlobs } = await store.list({ prefix: `split_confirm:${userId}:` });
+    if (splitBlobs && splitBlobs.length > 0) {
+      const splitState = await store.get(splitBlobs[0].key, { type: 'json' });
+      if (splitState) {
+        if (splitState.pendingItems && splitState.pendingItems.length > 0) {
+          return ctx.send('Pick a category for each remaining item first.');
+        }
+        return await finalizeSplit(ctx, splitBlobs[0].key, splitState);
+      }
+    }
+
     // Check salary/budget pending first
     const salaryPending = await store.get(`salary_pending:${userId}`, { type: 'json' }).catch(() => null);
     if (salaryPending) {
@@ -310,6 +340,25 @@ export async function handleTextReply(ctx, text) {
     const elapsed = Date.now() - new Date(lastlog.loggedAt).getTime();
     if (elapsed > UNDO_WINDOW_MS) {
       return ctx.send("Undo window expired (10 min). Edit the entry in the dashboard instead.");
+    }
+
+    // Split entries: delete every per-category row that was logged together.
+    if (lastlog.split && Array.isArray(lastlog.entries)) {
+      let failed = 0;
+      for (const e of lastlog.entries) {
+        try {
+          await deleteExpenseByUUID({ category: e.category, uuid: e.uuid, sheetId: e.sheetId || lastlog.sheetId });
+        } catch (err) {
+          failed++;
+          console.error('bot-core: UNDO split delete failed', err.message);
+        }
+      }
+      await store.delete(`lastlog:${userId}`);
+      console.log(`bot-core: UNDO split — ${lastlog.vendor} (${lastlog.entries.length} rows, ${failed} failed) by ${userId}`);
+      if (failed > 0) {
+        return ctx.send(`Removed ${lastlog.entries.length - failed} of ${lastlog.entries.length} split rows. Check the dashboard for the rest.`);
+      }
+      return ctx.send(`Undone: ${lastlog.vendor} split ($${lastlog.amount} across ${lastlog.entries.length} categories) removed.`);
     }
 
     try {
@@ -657,8 +706,9 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
 
     const conversionInfo = await maybeConvertCurrency(data);
 
+    let settings = {};
     try {
-      const settings = await getUserSettings();
+      settings = await getUserSettings();
       data.payment_method = resolveCard(data.payment_method, data.store_name, data.reward_category, settings);
     } catch (e) {
       console.warn('bot-core: card resolution failed (non-fatal)', e.message);
@@ -673,6 +723,19 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
       });
     } catch (e) {
       console.error('bot-core: Drive upload failed', e.message);
+    }
+
+    // ── Split flow: itemized receipt from a configured split vendor (Costco,
+    // Amazon…) OR a wallet-triggered split awaiting its receipt. Splits the
+    // receipt across categories instead of logging one lump sum.
+    const { blobs: splitPendingBlobs } = await store.list({ prefix: `split_pending:${userId}:` });
+    const hasSplitPending = (splitPendingBlobs || []).length > 0;
+    const isSplitVendor = matchesSplitVendor(data.store_name, settings.splitReceiptVendors || []);
+    if (!data.is_transfer && Array.isArray(data.items) && data.items.length > 0 && (isSplitVendor || hasSplitPending)) {
+      const pendingKey = hasSplitPending ? splitPendingBlobs[0].key : null;
+      return await handleSplitFlow(ctx, {
+        data, year, month, conversionInfo, baseReceiptId, driveResult, pendingKey,
+      });
     }
 
     if (data.is_transfer) {
@@ -798,6 +861,246 @@ export async function handleAttachMedia(ctx, base64, mediaType, attachState) {
   return ctx.send(
     `Receipt attached!\n${vendor} · $${amount} (${category})\nView: ${driveResult.shareLink}`
   );
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Receipt category split (Costco / Amazon …)
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Start (or resume into) a split: classify line items, auto-group the confident
+ * ones, and ask the user category-by-category for the rest. State lives in
+ * `split_confirm:<userId>:<id>`.
+ */
+async function handleSplitFlow(ctx, { data, year, month, conversionInfo, baseReceiptId, driveResult, pendingKey }) {
+  const { store, userId } = ctx;
+
+  const { autoGrouped, uncategorized } = categorizeItems(data.items || []);
+
+  const groups = {};
+  for (const g of autoGrouped) groups[g.category] = g.subtotal;
+
+  const state = {
+    id: baseReceiptId,
+    phone: userId,
+    vendor: data.store_name || 'Unknown',
+    totalAmount: data.total_amount,
+    txDate: data.purchase_date || null,
+    year, month,
+    paymentMethod: data.payment_method || '',
+    conversionInfo: conversionInfo || null,
+    driveFileId: driveResult?.fileId || null,
+    driveFolderId: driveResult?.folderId || null,
+    driveShareLink: driveResult?.shareLink || null,
+    groups,
+    items: uncategorized.map(u => ({ name: u.name, amount: u.amount, suggestion: u.suggestion, category: null })),
+    currentIndex: 0,
+    receivedAt: new Date().toISOString(),
+  };
+
+  // Wallet-triggered splits leave a split_pending marker — consume it now.
+  if (pendingKey) await store.delete(pendingKey).catch(() => {});
+
+  const key = `split_confirm:${userId}:${baseReceiptId}`;
+  await store.setJSON(key, state);
+  console.log(`bot-core: split started for ${userId} — ${state.vendor} $${state.totalAmount} (${autoGrouped.length} auto, ${uncategorized.length} to ask)`);
+
+  return await askNextSplitItem(ctx, key, state);
+}
+
+/** Ask about the next uncategorized item, or show the summary if all are done. */
+async function askNextSplitItem(ctx, key, state) {
+  const { store } = ctx;
+
+  if (state.currentIndex >= state.items.length) {
+    await store.setJSON(key, state);
+    return ctx.send(buildSplitSummary(state), kbYesCancel());
+  }
+
+  const item = state.items[state.currentIndex];
+  const autoLines = Object.entries(state.groups).map(([c, amt]) => `  ${c}: $${amt.toFixed(2)}`);
+  const lines = [
+    `🧾 Splitting ${state.vendor} — $${Number(state.totalAmount).toFixed(2)}`,
+    ...(autoLines.length ? ['', 'Auto-sorted so far:', ...autoLines] : []),
+    '',
+    `Item ${state.currentIndex + 1} of ${state.items.length}: ${item.name} — $${Number(item.amount).toFixed(2)}`,
+    'Which category?',
+  ];
+  await store.setJSON(key, state);
+  return ctx.send(lines.join('\n'), kbSplitCategory(state.currentIndex, CATEGORIES, item.suggestion));
+}
+
+/** Handle a `SPLITCAT:<idx>:<category>` pick from the inline keyboard. */
+async function handleSplitCategoryPick(ctx, text) {
+  const { store, userId } = ctx;
+  const m = text.match(/^SPLITCAT:(\d+):(.+)$/);
+  if (!m) return; // malformed — ignore
+
+  const idx = parseInt(m[1], 10);
+  const category = m[2];
+
+  const { blobs } = await store.list({ prefix: `split_confirm:${userId}:` });
+  if (!blobs || blobs.length === 0) {
+    return ctx.send('No active split. Send a receipt to start one.');
+  }
+  const key = blobs[0].key;
+  const state = await store.get(key, { type: 'json' });
+  if (!state) return ctx.send('No active split.');
+
+  if (!CATEGORIES.includes(category)) {
+    return ctx.send(`Unknown category. Choose from:\n${CATEGORIES.join(', ')}`);
+  }
+
+  // Ignore stale taps (an old item's buttons) — only the current item is live.
+  if (idx !== state.currentIndex) {
+    return ctx.send('That item was already sorted. Use the latest buttons above.');
+  }
+
+  const item = state.items[idx];
+  item.category = category;
+  state.groups[category] = Math.round(((state.groups[category] || 0) + item.amount) * 100) / 100;
+  state.currentIndex += 1;
+
+  return await askNextSplitItem(ctx, key, state);
+}
+
+/** Log every category group as its own expense row, linked for UNDO. */
+async function finalizeSplit(ctx, key, state) {
+  const { store, userId } = ctx;
+  const monthName = `${state.month} ${state.year}`;
+
+  let sheetId;
+  try {
+    sheetId = await getCurrentMonthSheetId(monthName);
+  } catch (e) {
+    console.error('bot-core: split — month sheet missing', e.message);
+    return ctx.send(`Could not find sheet for ${monthName}. Log this via the dashboard.`);
+  }
+
+  // Reconcile the item sum against the actual charged total (tax / fees /
+  // discounts): drop any remainder into the largest group so the split adds up.
+  const groups = { ...state.groups };
+  const cats = Object.keys(groups);
+  if (cats.length === 0) {
+    return ctx.send('Nothing to log — no categories were assigned. CANCEL to discard.');
+  }
+  const groupSum = Math.round(cats.reduce((s, c) => s + groups[c], 0) * 100) / 100;
+  const remainder = Math.round((Number(state.totalAmount) - groupSum) * 100) / 100;
+  if (Math.abs(remainder) >= 0.01) {
+    const largest = cats.reduce((a, b) => (groups[b] > groups[a] ? b : a), cats[0]);
+    groups[largest] = Math.round((groups[largest] + remainder) * 100) / 100;
+  }
+
+  const entries = [];
+  for (const category of Object.keys(groups)) {
+    const amount = groups[category];
+    if (amount <= 0) continue;
+    try {
+      const result = await appendExpense({
+        category, vendor: state.vendor, amount,
+        txDate: state.txDate, sheetId, monthName,
+        paymentMethod: state.paymentMethod || '', channel: ctx.channel,
+      });
+      entries.push({ category, uuid: result.uuid, sheetId, amount });
+    } catch (e) {
+      console.error(`bot-core: split append failed for ${category}`, e.message);
+    }
+  }
+
+  if (entries.length === 0) {
+    return ctx.send('Failed to log the split to the spreadsheet. Try again or use the dashboard.');
+  }
+
+  // Move the receipt into the largest group's Drive folder (best-effort).
+  if (state.driveFileId) {
+    try {
+      const top = entries.reduce((a, b) => (b.amount > a.amount ? b : a), entries[0]);
+      const { folderId } = await buildFolderPath(state.year, state.month, top.category);
+      await moveFile(state.driveFileId, folderId);
+    } catch (e) {
+      console.warn('bot-core: split Drive move failed (non-fatal)', e.message);
+    }
+  }
+
+  await store.setJSON(`lastlog:${userId}`, {
+    split: true,
+    entries,
+    vendor: state.vendor,
+    amount: Math.round(Object.values(groups).reduce((s, a) => s + a, 0) * 100) / 100,
+    sheetId, monthName, year: state.year, month: state.month,
+    driveFileId: state.driveFileId || null,
+    driveShareLink: state.driveShareLink || null,
+    loggedAt: new Date().toISOString(),
+  });
+
+  await store.delete(key);
+  console.log(`bot-core: split logged for ${userId} — ${state.vendor}, ${entries.length} categories`);
+
+  const lines = [
+    `✅ Logged ${state.vendor} split across ${entries.length} categor${entries.length === 1 ? 'y' : 'ies'}:`,
+    ...entries.map(e => `  ${e.category}: $${e.amount.toFixed(2)}`),
+    '',
+    `View Sheet: ${sheetUrl(sheetId)}`,
+    '',
+    'UNDO to reverse the whole split',
+  ];
+  return ctx.send(lines.join('\n'));
+}
+
+/** SKIP a wallet-triggered split — log the original charge as one expense. */
+async function handleSplitSkip(ctx, key) {
+  const { store, userId } = ctx;
+  const pending = await store.get(key, { type: 'json' });
+  if (!pending) return ctx.send('Nothing to skip.');
+
+  const monthName = `${pending.month} ${pending.year}`;
+  let sheetId;
+  try {
+    sheetId = await getCurrentMonthSheetId(monthName);
+  } catch (e) {
+    await store.delete(key);
+    console.error('bot-core: split skip — month sheet missing', e.message);
+    return ctx.send(`Could not find sheet for ${monthName}. Log this via the dashboard.`);
+  }
+
+  const category = pending.category || 'Misc';
+  let result;
+  try {
+    result = await appendExpense({
+      category, vendor: pending.vendor, amount: pending.amount,
+      txDate: pending.txDate, sheetId, monthName,
+      paymentMethod: pending.paymentMethod || '', channel: ctx.channel,
+    });
+  } catch (e) {
+    console.error('bot-core: split skip append failed', e.message);
+    return ctx.send('Failed to log. Try again or use the dashboard.');
+  }
+
+  await store.setJSON(`lastlog:${userId}`, {
+    uuid: result.uuid, category, vendor: pending.vendor, amount: pending.amount,
+    txDate: pending.txDate, paymentMethod: pending.paymentMethod || '',
+    sheetId, monthName, year: pending.year, month: pending.month,
+    driveFileId: null, loggedAt: new Date().toISOString(),
+  });
+  await store.delete(key);
+  console.log(`bot-core: split skipped — logged single ${pending.vendor} $${pending.amount} → ${category}`);
+
+  return ctx.send(`✅ Logged ${pending.vendor} $${Number(pending.amount).toFixed(2)} as ${category} (not split).\n\nUNDO to reverse.`);
+}
+
+function buildSplitSummary(state) {
+  const groups = state.groups || {};
+  const lines = [`🧾 ${state.vendor} — split summary:`, ''];
+  for (const [c, amt] of Object.entries(groups)) {
+    lines.push(`  ${c}: $${Number(amt).toFixed(2)}`);
+  }
+  const sum = Math.round(Object.values(groups).reduce((s, a) => s + a, 0) * 100) / 100;
+  lines.push('', `Items total: $${sum.toFixed(2)} · Charged: $${Number(state.totalAmount).toFixed(2)}`);
+  if (Math.abs(Number(state.totalAmount) - sum) >= 0.01) {
+    lines.push('(tax/fees will be added to the largest category)');
+  }
+  lines.push('', 'Reply YES to log all, or CANCEL.');
+  return lines.join('\n');
 }
 
 /* ── Helpers: currency + prompts ─────────────────────────────────────────── */

@@ -146,6 +146,7 @@ function Dashboard({ auth }) {
   // Stable array references so memoized children (ExpenseTable etc.) can skip re-renders
   const smartRules = useMemo(() => settings.smartRules || [], [settings.smartRules]);
   const cardRules  = useMemo(() => settings.cardRules || [], [settings.cardRules]);
+  const splitReceiptVendors = useMemo(() => settings.splitReceiptVendors || [], [settings.splitReceiptVendors]);
 
   // Theme (dark/light, font size, accent color) — extracted to useTheme hook
   const { isDark, setIsDark } = useTheme(settings, updateSettings);
@@ -678,6 +679,7 @@ function Dashboard({ auth }) {
                 smartRules={smartRules}
                 cards={settings.cards || []}
                 cardRules={cardRules}
+                splitReceiptVendors={splitReceiptVendors}
               />
 
               {/* Insight cards */}
