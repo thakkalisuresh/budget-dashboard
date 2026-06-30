@@ -42,6 +42,12 @@ export const VAPID_EMAIL       = defineSecret('VAPID_EMAIL');
 export const TELEGRAM_BOT_TOKEN      = defineSecret('TELEGRAM_BOT_TOKEN');
 export const TELEGRAM_WEBHOOK_SECRET = defineSecret('TELEGRAM_WEBHOOK_SECRET');
 export const TELEGRAM_ALLOWED_USERS  = defineSecret('TELEGRAM_ALLOWED_USERS');
+// Maps a wallet-webhook requester's email to their Telegram chat id so the
+// wallet path can prompt the right person to split a receipt. Format:
+//   email1@x.com:123456789,email2@y.com:987654321
+// (Telegram private-chat id == user id, so these are the same numbers already
+// listed in TELEGRAM_ALLOWED_USERS, just paired with each person's email.)
+export const TELEGRAM_EMAIL_MAP      = defineSecret('TELEGRAM_EMAIL_MAP');
 
 // NOTE: WhatsApp/Twilio (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
 // WHATSAPP_ALLOWED_PHONES) are intentionally NOT declared — WhatsApp is out of

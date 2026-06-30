@@ -6,16 +6,33 @@
  */
 import { onRequest } from 'firebase-functions/v2/https';
 import webpush from 'web-push';
+import crypto from 'node:crypto';
 import { extractTransactionText } from './lib/_extraction.mjs';
 import { appendExpense, getCurrentMonthSheetId, getUserSettingsByEmail } from './lib/_sheets.mjs';
 import { getDb } from './lib/firestore.mjs';
+import { createBotStore } from './lib/bot-store.mjs';
+import { sendMessage } from './lib/_telegram.mjs';
+import { matchesSplitVendor } from './lib/_item-categorizer.mjs';
 import { sha256Hex } from './lib/http-common.mjs';
 import {
   WALLET_WEBHOOK_SECRET,
   VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_EMAIL,
   ANTHROPIC_API_KEY, GEMINI_API_KEY,
+  TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP,
   SHEETS_DRIVE_SECRETS,
 } from './lib/secrets.mjs';
+
+/** Resolve a requester email → Telegram chat id via the TELEGRAM_EMAIL_MAP secret. */
+function resolveTelegramChatId(email) {
+  const raw = process.env.TELEGRAM_EMAIL_MAP || '';
+  for (const pair of raw.split(',')) {
+    const [mappedEmail, chatId] = pair.split(':').map(s => s.trim());
+    if (mappedEmail && chatId && mappedEmail.toLowerCase() === email.toLowerCase()) {
+      return chatId;
+    }
+  }
+  return null;
+}
 
 async function keyMatches(provided, expected) {
   const [a, b] = await Promise.all([sha256Hex(provided), sha256Hex(expected)]);
@@ -38,6 +55,7 @@ export const walletWebhook = onRequest(
       WALLET_WEBHOOK_SECRET,
       VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_EMAIL,
       ANTHROPIC_API_KEY, GEMINI_API_KEY,
+      TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP,
       ...SHEETS_DRIVE_SECRETS,
     ],
     timeoutSeconds: 30,
@@ -139,8 +157,9 @@ export const walletWebhook = onRequest(
       }
     }
 
+    let userSettings = {};
     try {
-      const userSettings = await getUserSettingsByEmail(email);
+      userSettings = await getUserSettingsByEmail(email);
       const disabledVendors = userSettings.disabledWalletVendors || [];
       const vendorLower = vendor.toLowerCase();
       const isDisabled = disabledVendors.some(v =>
@@ -152,6 +171,41 @@ export const walletWebhook = onRequest(
       }
     } catch (e) {
       console.error('Disabled-vendor check failed (continuing to log):', e.message);
+    }
+
+    // ── Split-receipt vendor (Costco, Amazon…): don't log a lump sum. Stash the
+    // charge and ask the user (via Telegram) to upload the receipt so it can be
+    // split by category. Falls back to normal logging if we can't reach them.
+    if (matchesSplitVendor(vendor, userSettings.splitReceiptVendors || [])) {
+      const chatId = resolveTelegramChatId(email);
+      if (chatId) {
+        try {
+          const store = createBotStore(getDb());
+          const dt = new Date(txDate + 'T00:00:00');
+          const id = crypto.randomUUID();
+          await store.setJSON(`split_pending:${chatId}:${id}`, {
+            id,
+            vendor, amount, category,
+            txDate,
+            year: dt.getFullYear(),
+            month: dt.toLocaleString('en-US', { month: 'long' }),
+            paymentMethod: card ?? '',
+            createdAt: new Date().toISOString(),
+          });
+          await sendMessage(
+            chatId,
+            `🧾 ${vendor} charge of $${amount.toFixed(2)} detected.\n\n` +
+            `Upload the receipt photo to split it by category, or tap SKIP to log it as a single ${category} expense.`,
+            [[{ text: '⏭ SKIP (log as one expense)', callback_data: 'SKIP' }]]
+          );
+          res.status(200).json({ ok: true, split: true, vendor, amount });
+          return;
+        } catch (e) {
+          console.error('Split prompt failed (falling back to normal logging):', e.message);
+        }
+      } else {
+        console.warn(`No Telegram mapping for ${email}; logging split vendor normally.`);
+      }
     }
 
     try {

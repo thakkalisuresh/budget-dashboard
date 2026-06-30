@@ -116,3 +116,23 @@ export function kbConfirmDelete() {
     { text: '❌ CANCEL', callback_data: 'CANCEL' },
   ]];
 }
+
+/**
+ * Inline keyboard for picking the category of one uncategorized split item.
+ * Each button's callback_data is `SPLITCAT:<itemIndex>:<category>` (well under
+ * Telegram's 64-byte limit). Categories are laid out two per row; an optional
+ * AI-suggested category is pinned to the top row, prefixed with a ⭐.
+ */
+export function kbSplitCategory(itemIndex, categories, suggestion = null) {
+  const rows = [];
+  if (suggestion && categories.includes(suggestion)) {
+    rows.push([{ text: `⭐ ${suggestion}`, callback_data: `SPLITCAT:${itemIndex}:${suggestion}` }]);
+  }
+  const rest = categories.filter(c => c !== suggestion);
+  for (let i = 0; i < rest.length; i += 2) {
+    const row = rest.slice(i, i + 2).map(c => ({ text: c, callback_data: `SPLITCAT:${itemIndex}:${c}` }));
+    rows.push(row);
+  }
+  rows.push([{ text: '❌ CANCEL', callback_data: 'CANCEL' }]);
+  return rows;
+}
