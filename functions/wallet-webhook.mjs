@@ -7,7 +7,7 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import webpush from 'web-push';
 import { extractTransactionText } from './lib/_extraction.mjs';
-import { appendExpense, getCurrentMonthSheetId } from './lib/_sheets.mjs';
+import { appendExpense, getCurrentMonthSheetId, getUserSettingsByEmail } from './lib/_sheets.mjs';
 import { getDb } from './lib/firestore.mjs';
 import { sha256Hex } from './lib/http-common.mjs';
 import {
@@ -137,6 +137,21 @@ export const walletWebhook = onRequest(
       } catch (e) {
         console.error('Categorization error (falling back to Misc):', e.message);
       }
+    }
+
+    try {
+      const userSettings = await getUserSettingsByEmail(email);
+      const disabledVendors = userSettings.disabledWalletVendors || [];
+      const vendorLower = vendor.toLowerCase();
+      const isDisabled = disabledVendors.some(v =>
+        (v.patterns || []).some(p => p && vendorLower.includes(p.toLowerCase()))
+      );
+      if (isDisabled) {
+        res.status(200).json({ ok: true, skipped: true, reason: 'vendor_disabled', vendor });
+        return;
+      }
+    } catch (e) {
+      console.error('Disabled-vendor check failed (continuing to log):', e.message);
     }
 
     try {

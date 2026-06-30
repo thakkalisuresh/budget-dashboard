@@ -945,6 +945,8 @@ function Dashboard({ auth }) {
           onSetPin={() => { setShowSettings(false); pinLock.setSetting(true); }}
           onClearPin={pinLock.clearPin}
           pushHook={pushHook}
+          sheetId={selectedSheetId}
+          accessToken={user.accessToken}
         /></Suspense>
       )}
 

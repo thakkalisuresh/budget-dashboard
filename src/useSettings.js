@@ -49,6 +49,7 @@ export const DEFAULT_SETTINGS = {
   recurringExpenses: [],  // [{ category, vendor, amount }]
   nonMonthlyItems:   {},  // { 'April 2026': ['Vendor1', 'Vendor2', ...] }
   transactionNotes:  {},  // { 'sheetId_category_vendor': { note: '', tags: [], location?: {lat,lng} } }
+  disabledWalletVendors: [], // [{ name, patterns: [lowercase strings] }] — skipped by wallet-webhook
   cards: [
     'Chase Sapphire Reserve',
     'American Express Blue Cash Preferred',
@@ -161,6 +162,7 @@ export async function loadUserSettings(userId, accessToken) {
       recurringExpenses: parsed.recurringExpenses || [],
       nonMonthlyItems:   parsed.nonMonthlyItems   || {},
       transactionNotes:  parsed.transactionNotes  || {},
+      disabledWalletVendors: parsed.disabledWalletVendors || [],
       smartRules:              parsed.smartRules              || [],
       cardRewardRates:         parsed.cardRewardRates         || null,
       messages:                parsed.messages                || [],
