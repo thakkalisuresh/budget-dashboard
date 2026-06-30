@@ -50,12 +50,30 @@ describe('sanitizeExtraction', () => {
       total_amount: 45.23,
       tax_amount: 3.50,
       currency: 'USD',
-      items: [{ name: 'Bananas', amount: 2.99 }],
+      items: [{ name: 'Bananas', amount: 2.99, item_category: 'Grocery' }],
       reward_category: 'Grocery',
       is_transfer: false,
     };
     const result = sanitizeExtraction(input);
     expect(result).toEqual(input);
+  });
+
+  it('normalizes a missing/invalid per-item category to null', () => {
+    const result = sanitizeExtraction({
+      store_name: 'Costco',
+      total_amount: 50,
+      currency: 'USD',
+      items: [
+        { name: 'Milk', amount: 3.99 },                              // no hint → null
+        { name: 'Mystery', amount: 9.99, item_category: 'NotReal' }, // invalid → null
+        { name: 'Shirt', amount: 12.0, item_category: 'Misc' },      // valid → kept
+      ],
+      reward_category: 'Grocery',
+      is_transfer: false,
+    });
+    expect(result.items[0].item_category).toBe(null);
+    expect(result.items[1].item_category).toBe(null);
+    expect(result.items[2].item_category).toBe('Misc');
   });
 
   it('sanitizes formula injection in store_name', () => {

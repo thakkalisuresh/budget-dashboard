@@ -465,6 +465,109 @@ function RowEditModal({ s }) {
   );
 }
 
+function SplitReceiptModal({ s }) {
+  if (s.phase !== 'split-reviewing' && s.phase !== 'split-saving') return null;
+  const saving = s.phase === 'split-saving';
+
+  // Live per-category preview = auto groups + chosen item categories.
+  const preview = { ...s.splitGroups };
+  for (const it of s.splitItems) {
+    if (it.category) preview[it.category] = Math.round(((preview[it.category] || 0) + it.amount) * 100) / 100;
+  }
+  const assignedSum = Math.round(Object.values(preview).reduce((a, b) => a + b, 0) * 100) / 100;
+  const remainder = Math.round((s.splitTotal - assignedSum) * 100) / 100;
+
+  return (
+    <>
+      <Backdrop onClick={saving ? undefined : s.handleClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="glass-heavy animate-dialog-enter rounded-3xl w-full max-w-lg overflow-hidden max-h-[80vh] flex flex-col"
+          style={{ border: '1px solid var(--sur-10)' }}>
+
+          <div className="px-6 pt-7 pb-5 flex items-start justify-between flex-shrink-0" style={{ borderBottom: '1px solid var(--sur-8)' }}>
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <FileText className="w-5 h-5" style={{ color: 'var(--color-accent-text)' }} />
+                <p className="text-lg font-black" style={{ color: 'var(--color-text)' }}>Split {s.splitVendor}</p>
+              </div>
+              <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                ${Number(s.splitTotal).toFixed(2)} total · pick a category for each item below
+              </p>
+            </div>
+            <button onClick={saving ? undefined : s.handleClose} className="p-2 rounded-xl transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}>
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
+            {Object.keys(s.splitGroups).length > 0 && (
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: 'var(--color-text-muted)' }}>Auto-sorted</p>
+                <div className="space-y-1.5">
+                  {Object.entries(s.splitGroups).map(([cat, amt]) => (
+                    <div key={cat} className="flex items-center justify-between px-4 py-2.5 rounded-xl" style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-10)' }}>
+                      <span className="text-sm font-bold" style={{ color: 'var(--color-text)' }}>{cat}</span>
+                      <span className="text-sm font-mono" style={{ color: 'var(--color-text-secondary)' }}>${Number(amt).toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {s.splitItems.length > 0 && (
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: 'var(--color-text-muted)' }}>Pick a category</p>
+                <div className="space-y-2">
+                  {s.splitItems.map((it, i) => (
+                    <div key={i} className="flex items-center gap-3 px-4 py-2.5 rounded-xl" style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-10)' }}>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>{it.name}</p>
+                        <p className="text-xs font-mono" style={{ color: 'var(--color-text-muted)' }}>${Number(it.amount).toFixed(2)}</p>
+                      </div>
+                      <select
+                        value={it.category || ''}
+                        disabled={saving}
+                        onChange={e => s.setSplitItemCategory(i, e.target.value)}
+                        className="rounded-xl px-3 py-2 text-sm outline-none flex-shrink-0"
+                        style={inputStyle}
+                      >
+                        <option value="">Choose…</option>
+                        {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between px-4 py-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              <span>Assigned: ${assignedSum.toFixed(2)} of ${Number(s.splitTotal).toFixed(2)}</span>
+              {Math.abs(remainder) >= 0.01 && (
+                <span>tax/fees ${remainder.toFixed(2)} → largest category</span>
+              )}
+            </div>
+          </div>
+
+          <div className="px-6 pb-7 pt-4 flex gap-3 flex-shrink-0" style={{ borderTop: '1px solid var(--sur-8)' }}>
+            <button onClick={s.handleClose} disabled={saving}
+              className="flex-1 py-3 rounded-2xl text-sm font-bold transition-colors disabled:opacity-50"
+              style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}>Cancel</button>
+            <button
+              onClick={s.handleSplitSave}
+              disabled={saving || !s.splitReady}
+              className="flex-1 py-3 rounded-2xl text-sm font-bold text-white transition-all active:scale-[0.98] disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              style={{ background: 'var(--color-accent)' }}
+            >
+              {saving ? <Spinner /> : <CheckCircle className="w-4 h-4" />}
+              {saving ? 'Logging…' : `Log Split (${Object.keys(preview).length})`}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function SummaryModal({ s, monthName }) {
   if (s.phase !== 'summary') return null;
   return (
@@ -605,6 +708,7 @@ export function ReceiptScanButton(props) {
       <ScanErrorModal scanError={s.scanError} onDismiss={() => s.setScanError('')} />
       <ReceiptConfirmModal s={s} />
       <StatementReviewModal s={s} />
+      <SplitReceiptModal s={s} />
       <RowEditModal s={s} />
       <SummaryModal s={s} monthName={props.monthName} />
     </>
