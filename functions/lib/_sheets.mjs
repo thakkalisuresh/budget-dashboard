@@ -559,11 +559,19 @@ export async function getLatestMonthData() {
 
 export async function getUserSettings() {
   if (!TEMPLATE_ID || ALLOWED_EMAILS.length === 0) return {};
-  const userId = ALLOWED_EMAILS[0];
+  return getUserSettingsByEmail(ALLOWED_EMAILS[0]);
+}
+
+// Per-requester settings lookup (e.g. wallet-webhook, where the request carries
+// the email of whichever household member's phone triggered it). Unlike
+// getUserSettings(), this does NOT fall back to ALLOWED_EMAILS[0] — each user's
+// row is isolated, matching how the web app's useSettings(user.email, ...) works.
+export async function getUserSettingsByEmail(email) {
+  if (!TEMPLATE_ID || !email) return {};
   const range = encodeURIComponent("'UserSettings'!A:B");
   const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
   const rows = data.values || [];
-  const row = rows.find(r => r[0] === userId);
+  const row = rows.find(r => r[0] === email);
   if (!row) return {};
   try { return JSON.parse(row[1] || '{}'); } catch { return {}; }
 }
