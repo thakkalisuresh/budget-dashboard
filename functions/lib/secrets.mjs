@@ -14,7 +14,7 @@
  * VITE_ prefix on VITE_TEMPLATE_SHEET_ID) so the lib modules stay byte-identical
  * to their source and behave the same.
  */
-import { defineSecret, defineString } from 'firebase-functions/params';
+import { defineSecret } from 'firebase-functions/params';
 
 // ── Google Sheets / Drive (OAuth refresh-token flow) ───────────────────────
 export const GOOGLE_CLIENT_ID         = defineSecret('GOOGLE_CLIENT_ID');
@@ -42,19 +42,15 @@ export const VAPID_EMAIL       = defineSecret('VAPID_EMAIL');
 export const TELEGRAM_BOT_TOKEN      = defineSecret('TELEGRAM_BOT_TOKEN');
 export const TELEGRAM_WEBHOOK_SECRET = defineSecret('TELEGRAM_WEBHOOK_SECRET');
 export const TELEGRAM_ALLOWED_USERS  = defineSecret('TELEGRAM_ALLOWED_USERS');
-// Maps a wallet-webhook requester's email to their Telegram chat id so the
-// wallet path can prompt the right person to split a receipt. Format:
-//   email1@x.com:123456789,email2@y.com:987654321
-// (Telegram private-chat id == user id, so these are the same numbers already
-// listed in TELEGRAM_ALLOWED_USERS, just paired with each person's email.)
-//
-// Defined as a STRING param (not a secret) with an empty default: these are
-// low-sensitivity routing IDs, and a defaulted param never prompts at deploy
-// time — so an unset value can't block `firebase deploy` the way a bound-but-
-// empty secret would. Read at runtime via TELEGRAM_EMAIL_MAP.value(). Set it
-// with:  firebase functions:config / params  (or leave empty to disable the
-// wallet→split Telegram prompt; split vendors then log normally).
-export const TELEGRAM_EMAIL_MAP      = defineString('TELEGRAM_EMAIL_MAP', { default: '' });
+// NOTE: TELEGRAM_EMAIL_MAP (the wallet-webhook email→Telegram-chat-id routing
+// map) is intentionally NOT declared here. Declaring it as a defineSecret blocks
+// `firebase deploy` until a Secret Manager value exists (the CLI prompts), and
+// declaring it as a non-secret defineString flips deploy into dotenv mode that
+// then demands .env values for every param. Instead the wallet webhook reads
+// process.env.TELEGRAM_EMAIL_MAP directly (undeclared env vars don't gate the
+// deploy). To enable the wallet→split Telegram prompt, set TELEGRAM_EMAIL_MAP
+// in functions/.env.fundient-dashboard (format email1:chatId1,email2:chatId2).
+// Left unset, split vendors simply log normally via the wallet path.
 
 // NOTE: WhatsApp/Twilio (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
 // WHATSAPP_ALLOWED_PHONES) are intentionally NOT declared — WhatsApp is out of
