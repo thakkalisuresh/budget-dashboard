@@ -22,9 +22,9 @@ import {
   SHEETS_DRIVE_SECRETS,
 } from './lib/secrets.mjs';
 
-/** Resolve a requester email → Telegram chat id via the TELEGRAM_EMAIL_MAP secret. */
+/** Resolve a requester email → Telegram chat id via the TELEGRAM_EMAIL_MAP param. */
 function resolveTelegramChatId(email) {
-  const raw = process.env.TELEGRAM_EMAIL_MAP || '';
+  const raw = TELEGRAM_EMAIL_MAP.value() || '';
   for (const pair of raw.split(',')) {
     const [mappedEmail, chatId] = pair.split(':').map(s => s.trim());
     if (mappedEmail && chatId && mappedEmail.toLowerCase() === email.toLowerCase()) {
@@ -55,7 +55,7 @@ export const walletWebhook = onRequest(
       WALLET_WEBHOOK_SECRET,
       VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_EMAIL,
       ANTHROPIC_API_KEY, GEMINI_API_KEY,
-      TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP,
+      TELEGRAM_BOT_TOKEN,
       ...SHEETS_DRIVE_SECRETS,
     ],
     timeoutSeconds: 30,

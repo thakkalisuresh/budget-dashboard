@@ -14,7 +14,7 @@
  * VITE_ prefix on VITE_TEMPLATE_SHEET_ID) so the lib modules stay byte-identical
  * to their source and behave the same.
  */
-import { defineSecret } from 'firebase-functions/params';
+import { defineSecret, defineString } from 'firebase-functions/params';
 
 // ── Google Sheets / Drive (OAuth refresh-token flow) ───────────────────────
 export const GOOGLE_CLIENT_ID         = defineSecret('GOOGLE_CLIENT_ID');
@@ -47,7 +47,14 @@ export const TELEGRAM_ALLOWED_USERS  = defineSecret('TELEGRAM_ALLOWED_USERS');
 //   email1@x.com:123456789,email2@y.com:987654321
 // (Telegram private-chat id == user id, so these are the same numbers already
 // listed in TELEGRAM_ALLOWED_USERS, just paired with each person's email.)
-export const TELEGRAM_EMAIL_MAP      = defineSecret('TELEGRAM_EMAIL_MAP');
+//
+// Defined as a STRING param (not a secret) with an empty default: these are
+// low-sensitivity routing IDs, and a defaulted param never prompts at deploy
+// time — so an unset value can't block `firebase deploy` the way a bound-but-
+// empty secret would. Read at runtime via TELEGRAM_EMAIL_MAP.value(). Set it
+// with:  firebase functions:config / params  (or leave empty to disable the
+// wallet→split Telegram prompt; split vendors then log normally).
+export const TELEGRAM_EMAIL_MAP      = defineString('TELEGRAM_EMAIL_MAP', { default: '' });
 
 // NOTE: WhatsApp/Twilio (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
 // WHATSAPP_ALLOWED_PHONES) are intentionally NOT declared — WhatsApp is out of
