@@ -42,15 +42,17 @@ export const VAPID_EMAIL       = defineSecret('VAPID_EMAIL');
 export const TELEGRAM_BOT_TOKEN      = defineSecret('TELEGRAM_BOT_TOKEN');
 export const TELEGRAM_WEBHOOK_SECRET = defineSecret('TELEGRAM_WEBHOOK_SECRET');
 export const TELEGRAM_ALLOWED_USERS  = defineSecret('TELEGRAM_ALLOWED_USERS');
-// NOTE: TELEGRAM_EMAIL_MAP (the wallet-webhook email→Telegram-chat-id routing
-// map) is intentionally NOT declared here. Declaring it as a defineSecret blocks
-// `firebase deploy` until a Secret Manager value exists (the CLI prompts), and
-// declaring it as a non-secret defineString flips deploy into dotenv mode that
-// then demands .env values for every param. Instead the wallet webhook reads
-// process.env.TELEGRAM_EMAIL_MAP directly (undeclared env vars don't gate the
-// deploy). To enable the wallet→split Telegram prompt, set TELEGRAM_EMAIL_MAP
-// in functions/.env.fundient-dashboard (format email1:chatId1,email2:chatId2).
-// Left unset, split vendors simply log normally via the wallet path.
+// Wallet-webhook email→Telegram-chat-id routing map, so the wallet path can
+// prompt the right person to split a receipt. Format (one Secret Manager value):
+//   email1@x.com:123456789,email2@y.com:987654321
+// (Telegram private-chat id == user id, the same numbers in TELEGRAM_ALLOWED_USERS.)
+//
+// ⚠️ DEPLOY ORDER: a bound-but-value-less secret makes `firebase deploy` prompt
+// interactively and abort CI. Its value MUST exist in Secret Manager before this
+// binding deploys:  firebase functions:secrets:set TELEGRAM_EMAIL_MAP
+// The wallet webhook reads it from process.env (defineSecret injects bound
+// secrets into process.env at cold start).
+export const TELEGRAM_EMAIL_MAP      = defineSecret('TELEGRAM_EMAIL_MAP');
 
 // NOTE: WhatsApp/Twilio (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
 // WHATSAPP_ALLOWED_PHONES) are intentionally NOT declared — WhatsApp is out of
