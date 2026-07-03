@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { RefreshCw, AlertCircle, Sun, Moon, ChevronDown, Settings as SettingsIcon, LogOut } from 'lucide-react';
 import { ThemePicker } from './ThemePicker.jsx';
 import { StackMark } from './StackMark.jsx';
@@ -31,27 +31,51 @@ const TABS = [
 
 function TabSwitcher({ activeTab, setActiveTab }) {
   const tabIdx = TABS.findIndex(([t]) => t === activeTab);
+  const tabRefs = useRef([]);
+  const pillReady = useRef(false); // false until first measure → no slide-in on cold load
+  const [pill, setPill] = useState(null); // { left, width } | null
+
+  // Position the pill from the active tab's real rendered geometry.
+  // Content-width tabs ("Dashboard" ≫ "Split") make equal-fifths math drift, so we measure.
+  useLayoutEffect(() => {
+    const measure = () => {
+      const el = tabRefs.current[tabIdx];
+      if (el) setPill({ left: el.offsetLeft, width: el.offsetWidth });
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    // Geist loads async — remeasure once fonts settle (fixes cold-load misalignment)
+    document.fonts?.ready.then(measure).catch(() => {});
+    return () => window.removeEventListener('resize', measure);
+  }, [tabIdx]);
+
   return (
     <div
       role="tablist"
       className="relative flex p-1 rounded-xl"
       style={{ background: 'var(--sur-8)' }}
     >
-      {/* Sliding pill */}
-      <div
-        aria-hidden="true"
-        className="absolute top-1 bottom-1 left-1 rounded-lg pointer-events-none"
-        style={{
-          background: 'var(--sur-20)',
-          boxShadow: '0 1px 3px oklch(0% 0 0 / 30%)',
-          width: `calc((100% - 8px) / ${TABS.length})`,
-          transform: `translateX(calc(${tabIdx} * 100%))`,
-          transition: 'transform 150ms var(--ease-out)',
-        }}
-      />
-      {TABS.map(([tab, label]) => (
+      {/* Sliding pill — positioned from measured geometry */}
+      {pill && (
+        <div
+          aria-hidden="true"
+          className="absolute top-1 bottom-1 rounded-lg pointer-events-none"
+          style={{
+            background: 'var(--sur-20)',
+            boxShadow: '0 1px 3px oklch(0% 0 0 / 30%)',
+            left: `${pill.left}px`,
+            width: `${pill.width}px`,
+            transition: pillReady.current
+              ? 'left 150ms var(--ease-out), width 150ms var(--ease-out)'
+              : 'none',
+          }}
+          ref={() => { pillReady.current = true; }}
+        />
+      )}
+      {TABS.map(([tab, label], i) => (
         <button
           key={tab}
+          ref={el => (tabRefs.current[i] = el)}
           role="tab"
           aria-selected={activeTab === tab}
           onClick={() => setActiveTab(tab)}
