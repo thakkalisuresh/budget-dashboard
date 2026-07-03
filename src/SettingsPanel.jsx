@@ -287,6 +287,9 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
   const [ruleDraft, setRuleDraft]               = useState({ pattern: '', category: '' });
   const [addingRule, setAddingRule]             = useState(false);
   const [newRuleDraft, setNewRuleDraft]         = useState({ pattern: '', category: '' });
+  const [importingRules, setImportingRules]     = useState(false);
+  const [importText, setImportText]             = useState('');
+  const [importMsg, setImportMsg]               = useState('');
 
   // Cards state
   const [addingCard, setAddingCard]             = useState(false);
@@ -393,6 +396,41 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
       ...prev,
       smartRules: (prev.smartRules || []).filter(r => r.id !== id),
     }));
+
+  // Bulk-import rules from a pasted JSON array of { pattern, category }.
+  // Validates categories, dedupes patterns (case-insensitive), and appends.
+  const importRules = () => {
+    let parsed;
+    try {
+      parsed = JSON.parse(importText);
+    } catch {
+      setImportMsg('Invalid JSON — check the pasted text.');
+      return;
+    }
+    if (!Array.isArray(parsed)) {
+      setImportMsg('Expected a JSON array of { pattern, category }.');
+      return;
+    }
+    const validCats = new Set(allCategories);
+    const existing = new Set((settings.smartRules || []).map(r => r.pattern.toLowerCase().trim()));
+    const toAdd = [];
+    let skipped = 0;
+    parsed.forEach((item, i) => {
+      const pattern  = typeof item?.pattern === 'string' ? item.pattern.trim() : '';
+      const category = typeof item?.category === 'string' ? item.category.trim() : '';
+      const key = pattern.toLowerCase();
+      if (!pattern || !validCats.has(category) || existing.has(key)) { skipped++; return; }
+      existing.add(key);
+      toAdd.push({ id: `${newRuleId()}-${i}`, pattern, category });
+    });
+    if (toAdd.length === 0) {
+      setImportMsg(`Nothing imported — ${skipped} skipped (duplicates, invalid category, or empty).`);
+      return;
+    }
+    updateSettings(prev => ({ ...prev, smartRules: [...(prev.smartRules || []), ...toAdd] }));
+    setImportMsg(`Imported ${toAdd.length} rule${toAdd.length === 1 ? '' : 's'}${skipped ? `, skipped ${skipped}` : ''}.`);
+    setImportText('');
+  };
 
   // Card list helpers
   const saveNewCard = () => {
@@ -941,14 +979,49 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
           <div>
             <div className="flex items-center justify-between mb-3">
               <SectionLabel>Smart Rules</SectionLabel>
-              <button
-                onClick={() => { setAddingRule(true); setNewRuleDraft({ pattern: '', category: allCategories[0] || '' }); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors" style={{ color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}
-              >
-                <Plus className="w-3 h-3" /> Add rule
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { setImportingRules(v => !v); setImportMsg(''); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)', background: 'var(--sur-8)', border: '1px solid var(--sur-12)' }}
+                >
+                  Import
+                </button>
+                <button
+                  onClick={() => { setAddingRule(true); setNewRuleDraft({ pattern: '', category: allCategories[0] || '' }); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors" style={{ color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}
+                >
+                  <Plus className="w-3 h-3" /> Add rule
+                </button>
+              </div>
             </div>
             <p className="text-xs mb-3 -mt-2" style={{ color: 'var(--color-text-muted)' }}>Auto-fill category when vendor name matches. Most specific rule wins.</p>
+
+            {/* Bulk import form */}
+            {importingRules && (
+              <div className="rounded-2xl p-4 mb-3 space-y-3" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+                <label className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>Paste rules JSON</label>
+                <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>An array of {'{ "pattern", "category" }'}. Duplicates and unknown categories are skipped.</p>
+                <textarea
+                  autoFocus
+                  rows={6}
+                  placeholder='[{"pattern":"safeway","category":"Grocery"}]'
+                  value={importText}
+                  onChange={e => { setImportText(e.target.value); setImportMsg(''); }}
+                  className={inputCls + ' font-mono text-[11px]'}
+                />
+                {importMsg && <p className="text-xs font-bold" style={{ color: 'var(--color-accent-text)' }}>{importMsg}</p>}
+                <div className="flex gap-2">
+                  <button onClick={importRules} disabled={!importText.trim()}
+                    className="flex-1 py-2 rounded-xl text-xs font-bold text-white transition-colors disabled:opacity-40" style={{ background: 'var(--color-accent)' }}>
+                    Import rules
+                  </button>
+                  <button onClick={() => { setImportingRules(false); setImportText(''); setImportMsg(''); }}
+                    className="flex-1 py-2 rounded-xl text-xs font-bold transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)', background: 'var(--sur-8)', border: '1px solid var(--sur-12)' }}>
+                    Close
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Add new rule form */}
             {addingRule && (
