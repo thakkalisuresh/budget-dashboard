@@ -544,7 +544,7 @@ function SummaryModal({ s, monthName }) {
             <button onClick={s.handleClose} className="flex-1 py-3 rounded-2xl text-sm font-bold transition-colors"
               style={{ background: 'var(--sur-8)', color: 'var(--color-text)' }}>Done</button>
             <button
-              onClick={() => { s.handleClose(); setTimeout(() => s.fileInputRef.current?.click(), 50); }}
+              onClick={() => { s.warmup(); s.handleClose(); setTimeout(() => s.fileInputRef.current?.click(), 50); }}
               className="flex-1 py-3 rounded-2xl text-sm font-bold text-white transition-all active:scale-[0.98] flex items-center justify-center gap-2"
               style={{ background: 'var(--color-accent)' }}
             >
@@ -575,7 +575,9 @@ export function ReceiptScanButton(props) {
       />
 
       <button
-        onClick={() => s.fileInputRef.current?.click()}
+        onClick={() => { s.warmup(); s.fileInputRef.current?.click(); }}
+        onPointerEnter={s.warmup}
+        onFocus={s.warmup}
         disabled={s.phase === 'processing'}
         title="Scan receipt or import bank statement"
         className="flex-shrink-0 flex items-center gap-2 px-4 py-2 sm:px-5 sm:py-2.5 rounded-2xl text-sm font-bold transition-all active:scale-95 disabled:opacity-50"

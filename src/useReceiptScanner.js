@@ -1,12 +1,18 @@
-import { useState, useRef, useEffect } from 'react';
-import { CATEGORIES, checkExistingExpense, fuzzyNamesMatch, fetchAllLoggedTransactions, markNonMonthly, normalizeStatementDate, todayIso } from './sheetsApi.js';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { checkExistingExpense, fuzzyNamesMatch, fetchAllLoggedTransactions, fetchDetailRows, markNonMonthly, normalizeStatementDate, todayIso } from './sheetsApi.js';
 import { addOrUpdateExpense } from './useExpense.js';
 import { applySmartRules, applyCardRules } from './smartRules.js';
 import {
   extractFromFile, validateCategories, checkDuplicates, resolveCardName,
-  loadFxCache, saveFxCache, isPlausibleRate,
+  loadFxCache, saveFxCache, isPlausibleRate, warmClaudeProxy,
 } from './receiptHelpers.js';
+import { startScanTiming } from './scanTiming.js';
 import { resolveMCC } from './vendorMCC.js';
+
+// How many receipt/statement images to extract at once when several files are
+// selected. The Vision proxy allows 20 req/min per user, so 4 in flight stays
+// well under the limit while cutting a multi-file scan to ~1/4 of the serial time.
+const EXTRACT_CONCURRENCY = 4;
 
 const CSR = 'Chase Sapphire Reserve';
 const TRAVEL_MCCS = new Set(['4511', '7011', 'CHASE_PORTAL']);
@@ -49,9 +55,26 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
 
   const fileInputRef = useRef(null);
 
+  // Boot the Vision proxy (kills Firebase cold start) and pre-warm the
+  // duplicate-check cache. Called the instant the user shows scan intent —
+  // clicking the button / opening the picker — so the ~4s cold start overlaps
+  // with them choosing a file instead of being felt on the real request.
+  const warmup = useCallback(() => {
+    warmClaudeProxy();
+    if (accessToken && sheetId) {
+      for (const cat of activeCategories) {
+        fetchDetailRows(cat, accessToken, sheetId, monthName).catch(() => {});
+      }
+    }
+  }, [accessToken, sheetId, monthName, activeCategories]);
+
   useEffect(() => {
-    if (scanTriggerRef) scanTriggerRef.current = () => fileInputRef.current?.click();
-  }, [scanTriggerRef]);
+    if (!scanTriggerRef) return;
+    scanTriggerRef.current = () => {
+      warmup();
+      fileInputRef.current?.click();
+    };
+  }, [scanTriggerRef, warmup]);
 
   // ── process a single receipt file ──────────────────────────────────────────
   const processReceiptFile = async (file) => {
@@ -142,27 +165,41 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     setPhase('processing');
     setProcessingProgress({ current: 0, total: files.length });
 
+    // Extract all files concurrently (bounded pool) instead of one-at-a-time.
+    // Results are collected by index so the receipt queue keeps its file order.
+    const results = new Array(files.length);
+    let completed = 0;
+    let cursor = 0;
+    const runWorker = async () => {
+      while (cursor < files.length) {
+        const i = cursor++;
+        try {
+          results[i] = await extractFromFile(files[i], accessToken, cards);
+        } catch {
+          results[i] = null; // treat as a receipt fallback below
+        }
+        completed++;
+        setProcessingProgress({ current: completed, total: files.length });
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(EXTRACT_CONCURRENCY, files.length) }, runWorker)
+    );
+
     const receiptFiles = [];
     let allStmtTransactions = [];
-
-    for (let i = 0; i < files.length; i++) {
-      setProcessingProgress({ current: i + 1, total: files.length });
-      try {
-        const result = await extractFromFile(files[i], accessToken, cards);
-        if (result.type === 'statement' && result.transactions?.length) {
-          const stmtCard = resolveCardName(result.paymentMethod, cards);
-          const debits = result.transactions.filter(t => t.txType !== 'credit').map(t => ({
-            ...t, isNonMonthly: false, isRecurring: false,
-            card: stmtCard || applyCardRules(t.vendor, t.category, cardRules) || '',
-          }));
-          allStmtTransactions = [...allStmtTransactions, ...debits];
-        } else {
-          receiptFiles.push(files[i]);
-        }
-      } catch {
+    results.forEach((result, i) => {
+      if (result?.type === 'statement' && result.transactions?.length) {
+        const stmtCard = resolveCardName(result.paymentMethod, cards);
+        const debits = result.transactions.filter(t => t.txType !== 'credit').map(t => ({
+          ...t, isNonMonthly: false, isRecurring: false,
+          card: stmtCard || applyCardRules(t.vendor, t.category, cardRules) || '',
+        }));
+        allStmtTransactions = [...allStmtTransactions, ...debits];
+      } else {
         receiptFiles.push(files[i]);
       }
-    }
+    });
 
     setProcessingProgress(null);
 
@@ -247,6 +284,7 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     const toImport = stmtTransactions.filter(t => t.selected);
     if (!toImport.length) { handleClose(); return; }
 
+    const timing = startScanTiming('import');
     setPhase('statement-importing');
     let count = 0;
     for (const t of toImport) {
@@ -265,6 +303,7 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
         count++;
       } catch { /* skip failures silently */ }
     }
+    timing.mark('write');
     setStmtSavedCount(count);
     onSuccess?.();
 
@@ -280,6 +319,8 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
         setUnmatchedLogged(unmatched);
       } catch { /* non-critical */ }
     }
+    timing.mark('reconcile');
+    timing.end({ imported: count, total: toImport.length });
 
     if (queue.length > 0) {
       await processReceiptFile(queue[0]);
@@ -351,6 +392,7 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     selectedCount: stmtTransactions.filter(t => t.selected).length,
     duplicateCount: stmtTransactions.filter(t => t.isDuplicate).length,
     // Handlers
+    warmup,
     handleFileChange, handleConfirm, doReceiptSave, handleSkip,
     handleStatementImport, handleClose, openRowEdit, saveRowEdit, setRowCard,
     setScanError,
