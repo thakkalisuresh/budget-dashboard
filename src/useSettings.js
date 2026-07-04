@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { DEFAULT_CARD_OWNERS, DEFAULT_PEOPLE } from './cardOwners.js';
+import { DEFAULT_SPLIT_VENDORS } from './itemCategorizer.js';
 
 const DEV_MOCK = import.meta.env.DEV && import.meta.env.VITE_DEV_MOCK === 'true';
 
@@ -49,6 +50,8 @@ export const DEFAULT_SETTINGS = {
   recurringExpenses: [],  // [{ category, vendor, amount }]
   nonMonthlyItems:   {},  // { 'April 2026': ['Vendor1', 'Vendor2', ...] }
   transactionNotes:  {},  // { 'sheetId_category_vendor': { note: '', tags: [], location?: {lat,lng} } }
+  disabledWalletVendors: [], // [{ name, patterns: [lowercase strings] }] — skipped by wallet-webhook
+  splitReceiptVendors: DEFAULT_SPLIT_VENDORS, // [{ name, patterns }] — receipts split per-category (Costco, Amazon)
   cards: [
     'Chase Sapphire Reserve',
     'American Express Blue Cash Preferred',
@@ -161,6 +164,8 @@ export async function loadUserSettings(userId, accessToken) {
       recurringExpenses: parsed.recurringExpenses || [],
       nonMonthlyItems:   parsed.nonMonthlyItems   || {},
       transactionNotes:  parsed.transactionNotes  || {},
+      disabledWalletVendors: parsed.disabledWalletVendors || [],
+      splitReceiptVendors:   parsed.splitReceiptVendors   || DEFAULT_SPLIT_VENDORS,
       smartRules:              parsed.smartRules              || [],
       cardRewardRates:         parsed.cardRewardRates         || null,
       messages:                parsed.messages                || [],

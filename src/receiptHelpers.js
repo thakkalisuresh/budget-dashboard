@@ -153,7 +153,7 @@ export async function extractFromFile(file, accessToken, cards = []) {
 2. A BANK STATEMENT or transaction list — multiple rows of transactions from different merchants
 
 If it is a RECEIPT, return exactly this JSON:
-{"type":"receipt","vendor":"Store Name","amount":45.23,"category":"Grocery","currency":"USD","paymentMethod":"Chase Sapphire Reserve"}
+{"type":"receipt","vendor":"Store Name","amount":45.23,"category":"Grocery","currency":"USD","paymentMethod":"Chase Sapphire Reserve","items":[{"name":"Item name","amount":5.99,"item_category":"Grocery"}]}
 
 If it is a BANK STATEMENT or transaction list, return exactly this JSON:
 {"type":"statement","paymentMethod":"Chase Sapphire Reserve","transactions":[
@@ -166,6 +166,7 @@ ${cardHint}
 
 Rules:
 - RECEIPT: amount is the final total including tax. currency is the 3-letter ISO code visible on the receipt (e.g. USD, CAD, EUR, GBP). Default to USD if not shown.
+- RECEIPT items: list each line item as {name, amount, item_category}. item_category is your best guess of that single item's budget category (one of the categories above), or null if ambiguous (e.g. clothing/electronics). Use [] if the receipt has no itemized lines. This lets mixed receipts (e.g. Costco) be split by category.
 - STATEMENT: include ONLY debit/purchase transactions where money left the account. For each transaction set txType to "debit" or "credit".
 - CRITICAL: If a transaction has a negative amount, a minus sign, is shown in red, or is labeled as refund/credit/return/reversal/payment, set txType to "credit". Do NOT include credits in the results.
 - Clean up truncated bank merchant names (e.g. "SEATTLEYELLOWCA HOLD" → "Seattle Yellow Cab", "WF SUPERMARKET" → "Whole Foods")
@@ -173,7 +174,7 @@ Rules:
 - category must be exactly one value from the list, or null if none fit
 - date: use the date shown in the statement as-is, or null if not visible
 - paymentMethod: if this is an Apple Wallet / mobile wallet screenshot, the card name appears prominently near the top — extract it. For statements, use the card/account shown in the header. Match to the known cards list when one is provided. Use null if no card is visible.
-- If the image is unreadable, return {"type":"receipt","vendor":null,"amount":null,"category":null,"currency":"USD","paymentMethod":null}
+- If the image is unreadable, return {"type":"receipt","vendor":null,"amount":null,"category":null,"currency":"USD","paymentMethod":null,"items":[]}
 - Respond with ONLY valid JSON — no extra text`;
 
   const headers = { 'content-type': 'application/json' };

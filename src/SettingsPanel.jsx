@@ -6,6 +6,7 @@ import { DEFAULT_CARD_OWNERS, DEFAULT_PEOPLE } from './cardOwners.js';
 import { CURRENCIES } from './currency.js';
 import { CATEGORIES, getAllCategoryNames } from './sheetsApi.js';
 import { newRuleId } from './smartRules.js';
+import { fetchHistory } from './sheetHistory.js';
 import { schemeTableau10 } from 'd3-scale-chromatic';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -275,7 +276,7 @@ function ShortcutRow({ actionKey, label, desc, value, onSave, onReset, defaultVa
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export function SettingsPanel({ settings, updateSettings, expenses, onClose, currencySymbol, pinHash, onSetPin, onClearPin, pushHook }) {
+export function SettingsPanel({ settings, updateSettings, expenses, onClose, currencySymbol, pinHash, onSetPin, onClearPin, pushHook, sheetId, accessToken }) {
   const allCategories = getAllCategoryNames();
   const vis = settings.visibility;
   const [currencySearch, setCurrencySearch]     = useState('');
@@ -299,6 +300,26 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
   const [newCardRuleDraft, setNewCardRuleDraft] = useState({ vendorPattern: '', category: '', card: '' });
   const [editingCardRuleId, setEditingCardRuleId] = useState(null);
   const [cardRuleDraft, setCardRuleDraft]       = useState({ vendorPattern: '', category: '', card: '' });
+
+  // Blocked Wallet Vendors state
+  const [knownVendors, setKnownVendors]         = useState([]); // distinct vendor names from History
+  const [vendorSearch, setVendorSearch]         = useState('');
+  const [newVendorName, setNewVendorName]       = useState('');
+
+  // Split Receipt Vendors state
+  const [newSplitVendorName, setNewSplitVendorName] = useState('');
+
+  useEffect(() => {
+    if (!sheetId || !accessToken) return;
+    let cancelled = false;
+    fetchHistory(sheetId, accessToken).then(rows => {
+      if (cancelled) return;
+      const names = [...new Set(rows.map(r => (r.vendor || '').trim()).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b));
+      setKnownVendors(names);
+    });
+    return () => { cancelled = true; };
+  }, [sheetId, accessToken]);
 
   // Reward Rates state
   const [openRateCard, setOpenRateCard]         = useState(null); // which card is expanded
@@ -329,6 +350,59 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
   const cardRules         = settings.cardRules || [];
   const cardOwners        = settings.cardOwners || DEFAULT_CARD_OWNERS;
   const people            = settings.people || DEFAULT_PEOPLE;
+  const disabledWalletVendors = settings.disabledWalletVendors || [];
+
+  const isVendorBlocked = (name) =>
+    disabledWalletVendors.some(v => (v.patterns || []).some(p => name.toLowerCase().includes(p)));
+
+  const toggleVendorBlock = (name) => {
+    const blocked = isVendorBlocked(name);
+    updateSettings(prev => {
+      const list = prev.disabledWalletVendors || [];
+      if (blocked) {
+        return { ...prev, disabledWalletVendors: list.filter(v => !(v.patterns || []).some(p => name.toLowerCase().includes(p))) };
+      }
+      return { ...prev, disabledWalletVendors: [...list, { name, patterns: [name.toLowerCase()] }] };
+    });
+  };
+
+  const addManualVendor = () => {
+    const name = newVendorName.trim();
+    if (!name || isVendorBlocked(name)) return;
+    updateSettings(prev => ({
+      ...prev,
+      disabledWalletVendors: [...(prev.disabledWalletVendors || []), { name, patterns: [name.toLowerCase()] }],
+    }));
+    setNewVendorName('');
+  };
+
+  const visibleVendors = [...new Set([
+    ...knownVendors,
+    ...disabledWalletVendors.map(v => v.name),
+  ])]
+    .sort((a, b) => a.localeCompare(b))
+    .filter(name => name.toLowerCase().includes(vendorSearch.trim().toLowerCase()));
+
+  // Split Receipt Vendors (Costco, Amazon… → split a receipt across categories)
+  const splitReceiptVendors = settings.splitReceiptVendors || [];
+
+  const addSplitVendor = () => {
+    const name = newSplitVendorName.trim();
+    if (!name) return;
+    const lower = name.toLowerCase();
+    if (splitReceiptVendors.some(v => v.name.toLowerCase() === lower)) { setNewSplitVendorName(''); return; }
+    updateSettings(prev => ({
+      ...prev,
+      splitReceiptVendors: [...(prev.splitReceiptVendors || []), { name, patterns: [lower] }],
+    }));
+    setNewSplitVendorName('');
+  };
+
+  const removeSplitVendor = (name) =>
+    updateSettings(prev => ({
+      ...prev,
+      splitReceiptVendors: (prev.splitReceiptVendors || []).filter(v => v.name !== name),
+    }));
 
   // Card → owner ('me' | 'wife' | null). Cycles me → wife → unassigned.
   const setCardOwner = (card, owner) =>
@@ -1307,6 +1381,107 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                 ))}
               </div>
             )}
+          </div>
+
+          {/* ── Blocked Wallet Vendors ──────────────────────────────────── */}
+          <div>
+            <SectionLabel>Blocked Wallet Vendors</SectionLabel>
+            <p className="text-xs mb-3 -mt-2" style={{ color: 'var(--color-text-muted)' }}>
+              Turn a vendor off to silently skip it when a wallet notification triggers — nothing gets logged. This only affects your own wallet logging, not other household members.
+            </p>
+
+            <div className="relative mb-3">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--color-text-muted)' }} />
+              <input
+                type="text"
+                placeholder="Search vendors…"
+                value={vendorSearch}
+                onChange={e => setVendorSearch(e.target.value)}
+                className={inputCls}
+                style={{ paddingLeft: '2rem' }}
+              />
+            </div>
+
+            {visibleVendors.length > 0 ? (
+              <div className="space-y-2 mb-3">
+                {visibleVendors.map(name => (
+                  <Toggle
+                    key={name}
+                    on={!isVendorBlocked(name)}
+                    onToggle={() => toggleVendorBlock(name)}
+                    label={name}
+                    desc={isVendorBlocked(name) ? 'Blocked — wallet transactions skipped' : 'Wallet transactions logged'}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-2xl px-4 py-6 text-center mb-3" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+                <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  {vendorSearch ? 'No vendors match your search.' : 'No vendors found yet — they\'ll appear here after your first transaction.'}
+                </p>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Add a vendor not in the list…"
+                value={newVendorName}
+                onChange={e => setNewVendorName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addManualVendor()}
+                className={inputCls}
+              />
+              <button
+                onClick={addManualVendor}
+                disabled={!newVendorName.trim()}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors disabled:opacity-40"
+                style={{ color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}
+              >
+                <Plus className="w-3 h-3" /> Block
+              </button>
+            </div>
+          </div>
+
+          {/* ── Split Receipt Vendors ───────────────────────────────────── */}
+          <div>
+            <SectionLabel>Split Receipt Vendors</SectionLabel>
+            <p className="text-xs mb-3 -mt-2" style={{ color: 'var(--color-text-muted)' }}>
+              Receipts from these vendors are split line-by-line across categories instead of logged as one amount. Works when scanning a receipt here, sending one to the Telegram bot, or after a wallet charge.
+            </p>
+
+            {splitReceiptVendors.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-3">
+                {splitReceiptVendors.map(v => (
+                  <span key={v.name} className="inline-flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-xl text-xs font-bold"
+                    style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}>
+                    {v.name}
+                    <button onClick={() => removeSplitVendor(v.name)} title="Remove"
+                      className="p-0.5 rounded-lg transition-colors hover:bg-[var(--sur-10)]" style={{ color: 'var(--color-text-muted)' }}>
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Add a vendor to split (e.g. Walmart)…"
+                value={newSplitVendorName}
+                onChange={e => setNewSplitVendorName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addSplitVendor()}
+                className={inputCls}
+              />
+              <button
+                onClick={addSplitVendor}
+                disabled={!newSplitVendorName.trim()}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-colors disabled:opacity-40"
+                style={{ color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}
+              >
+                <Plus className="w-3 h-3" /> Add
+              </button>
+            </div>
           </div>
 
           {/* ── Reward Rates ────────────────────────────────────────────── */}

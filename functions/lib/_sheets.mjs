@@ -578,22 +578,31 @@ export async function getLatestMonthData() {
 }
 
 export async function getUserSettings() {
+  // R3: cache the default-household lookup (the bot's hot path); leave the
+  // per-email variant below uncached since it's keyed by arbitrary emails.
   if (_settingsCache && _settingsCache.expiresAt > Date.now()) return _settingsCache.value;
 
   let value = {};
   if (TEMPLATE_ID && ALLOWED_EMAILS.length > 0) {
-    const userId = ALLOWED_EMAILS[0];
-    const range = encodeURIComponent("'UserSettings'!A:B");
-    const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
-    const rows = data.values || [];
-    const row = rows.find(r => r[0] === userId);
-    if (row) {
-      try { value = JSON.parse(row[1] || '{}'); } catch { value = {}; }
-    }
+    value = await getUserSettingsByEmail(ALLOWED_EMAILS[0]);
   }
 
   _settingsCache = { value, expiresAt: Date.now() + SETTINGS_TTL_MS };
   return value;
+}
+
+// Per-requester settings lookup (e.g. wallet-webhook, where the request carries
+// the email of whichever household member's phone triggered it). Unlike
+// getUserSettings(), this does NOT fall back to ALLOWED_EMAILS[0] — each user's
+// row is isolated, matching how the web app's useSettings(user.email, ...) works.
+export async function getUserSettingsByEmail(email) {
+  if (!TEMPLATE_ID || !email) return {};
+  const range = encodeURIComponent("'UserSettings'!A:B");
+  const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
+  const rows = data.values || [];
+  const row = rows.find(r => r[0] === email);
+  if (!row) return {};
+  try { return JSON.parse(row[1] || '{}'); } catch { return {}; }
 }
 
 export async function createMonth({ monthName, salary, budgetChanges }) {
