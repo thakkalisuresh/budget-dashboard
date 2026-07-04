@@ -205,6 +205,14 @@ New sheet tab for assets vs liabilities. Running net worth over time.
 ### 9. PDF Export
 Monthly report as PDF. CSV already done — PDF adds formatted layout with charts.
 
+### 10. Self-Hosted / AI-Minimization (future state)
+Reduce/eliminate external AI API calls (Groq/Gemini/Claude) for cost + privacy.
+- **Phase 1 — categorization:** extend the existing Smart Rules engine with a learned merchant→category map (seed from historical sheets — done for Oct 2025→Jul 2026; ~61 rules imported). Known vendors resolve with zero AI; only unseen merchants hit AI, then get learned.
+- **Phase 2 — NL Q&A:** self-host a 7–8B model (Qwen2.5 / Llama-3.1) on an Ollama/vLLM OpenAI-compatible endpoint; insert as Layer-1 in `functions/lib/_query.mjs`, keep Groq/Claude as fallback.
+- **Phase 3 — receipt vision:** hardest. Shadow-test a local VLM (Qwen2-VL / Llama-3.2-Vision) against Gemini in `functions/lib/_extraction.mjs`; promote only if it clears an accuracy bar. Keep cloud vision until then.
+- **Hosting:** Firebase Functions can't hold a GPU model — needs a separate always-on endpoint (home GPU or GPU VPS). Benchmark on per-hour GPU VPS, then decide. "Self-hosted" is still an API call, just to your own box; only Phase 1 becomes truly call-free.
+- Full plan discussed in session 2026-07-02.
+
 ---
 
 ## 🟢 Lower Priority / Quality of Life
