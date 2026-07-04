@@ -51,13 +51,51 @@ export function createBotStore(db) {
       await col.doc(key).delete();
     },
 
-    async list({ prefix = '' } = {}) {
+    async list({ prefix = '', limit } = {}) {
       let q = col.orderBy(FieldPath.documentId());
       if (prefix) {
         q = q.startAt(prefix).endAt(prefix + PREFIX_END);
       }
+      // R6: callers that only read blobs[0] pass limit:1 to avoid scanning the
+      // whole prefix range.
+      if (limit != null) q = q.limit(limit);
       const snap = await q.get();
       return { blobs: snap.docs.map(d => ({ key: d.id })) };
+    },
+
+    /**
+     * R1 (idempotency): atomically claim a key exactly once. Returns true the
+     * first time it's seen, false on any subsequent call — used to dedupe
+     * Telegram webhook retries by `update_id`. The claim marker lives in the
+     * same collection under a `seen:` prefix.
+     * ponytail: markers are never cleaned up in code — configure a Firestore TTL
+     * policy on the `bot_state` collection (or a scheduled purge) if they grow.
+     */
+    async claimOnce(key) {
+      const ref = col.doc(key);
+      return db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        if (snap.exists) return false;
+        tx.set(ref, { v: { ts: Date.now() } });
+        return true;
+      });
+    },
+
+    /**
+     * R4 (rate limiting): atomically increment a counter iff it is still below
+     * `limit`, returning { allowed, count }. Replaces the old read-then-write
+     * pair, closing the race where two quick messages both read N and both write
+     * N+1.
+     */
+    async incrementIfBelow(key, limit) {
+      const ref = col.doc(key);
+      return db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const count = snap.exists ? (snap.data()?.v?.count || 0) : 0;
+        if (count >= limit) return { allowed: false, count };
+        tx.set(ref, { v: { count: count + 1 } });
+        return { allowed: true, count: count + 1 };
+      });
     },
   };
 }

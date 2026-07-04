@@ -116,3 +116,87 @@ export function kbConfirmDelete() {
     { text: '❌ CANCEL', callback_data: 'CANCEL' },
   ]];
 }
+
+/* ── R10: button-driven expense editing ──
+   callback_data is capped at 64 bytes and category/card names contain spaces, so
+   pickers encode the choice as an INDEX into the caller-supplied list. */
+
+/** Receipt confirmation keyboard — YES / CANCEL plus an Edit button. */
+export function kbConfirmReceipt() {
+  return [
+    [
+      { text: '✅ YES', callback_data: 'YES' },
+      { text: '❌ CANCEL', callback_data: 'CANCEL' },
+    ],
+    [{ text: '✏️ Edit', callback_data: 'edit:menu' }],
+  ];
+}
+
+/** Field picker for a pending (unconfirmed) receipt. */
+export function kbEditMenu() {
+  return [
+    [
+      { text: 'Category', callback_data: 'edit:f:cat' },
+      { text: 'Amount',   callback_data: 'edit:f:amt' },
+    ],
+    [
+      { text: 'Store', callback_data: 'edit:f:store' },
+      { text: 'Date',  callback_data: 'edit:f:date' },
+    ],
+    [
+      { text: 'Card', callback_data: 'edit:f:card' },
+      { text: 'Tip',  callback_data: 'edit:f:tip' },
+    ],
+    [{ text: '⬅️ Back', callback_data: 'edit:back' }],
+  ];
+}
+
+/** Category picker. `prefix` is e.g. 'edit:setcat' (pending) or 'edit:lastcat' (logged). */
+export function kbCategoryPicker(categories, prefix) {
+  const rows = [];
+  for (let i = 0; i < categories.length; i += 2) {
+    const row = [{ text: categories[i], callback_data: `${prefix}:${i}` }];
+    if (i + 1 < categories.length) {
+      row.push({ text: categories[i + 1], callback_data: `${prefix}:${i + 1}` });
+    }
+    rows.push(row);
+  }
+  rows.push([{ text: '⬅️ Back', callback_data: 'edit:back' }]);
+  return rows;
+}
+
+/** Card picker (index -1 = clear/None). `prefix` is e.g. 'edit:setcard'. */
+export function kbCardPicker(cards, prefix) {
+  const rows = [];
+  for (let i = 0; i < cards.length; i += 2) {
+    const row = [{ text: cards[i], callback_data: `${prefix}:${i}` }];
+    if (i + 1 < cards.length) {
+      row.push({ text: cards[i + 1], callback_data: `${prefix}:${i + 1}` });
+    }
+    rows.push(row);
+  }
+  rows.push([
+    { text: 'None', callback_data: `${prefix}:-1` },
+    { text: '⬅️ Back', callback_data: 'edit:back' },
+  ]);
+  return rows;
+}
+
+/** Actions shown under a freshly-logged expense. */
+export function kbLoggedActions() {
+  return [[
+    { text: '✏️ Edit', callback_data: 'edit:last' },
+    { text: '↩️ Undo', callback_data: 'UNDO' },
+  ]];
+}
+
+/** Field picker for an already-logged expense (category / amount only). */
+export function kbEditLoggedMenu() {
+  return [
+    [
+      { text: 'Category', callback_data: 'edit:lf:cat' },
+      { text: 'Amount',   callback_data: 'edit:lf:amt' },
+    ],
+    [{ text: '❌ Cancel', callback_data: 'CANCEL' }],
+  ];
+}
