@@ -112,6 +112,13 @@ jobs:
     needs: ci
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # action-hosting-deploy creates a check run and posts the preview URL as a PR
+    # comment via GITHUB_TOKEN; without these scopes it fails at createCheck with
+    # "Resource not accessible by integration". contents:read is needed for checkout.
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
 
     steps:
       - name: Check deploy secret
