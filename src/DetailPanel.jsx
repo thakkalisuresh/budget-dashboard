@@ -76,6 +76,15 @@ function resolveVendorDomain(name) {
   return vendorDomain(name);
 }
 
+/**
+ * Favicon URL for a domain. Uses Google's gstatic faviconV2 endpoint — the
+ * older www.google.com/s2/favicons path now 301-redirects to HTML, so <img>
+ * loads from it fail. faviconV2 returns a real PNG (and honours the size).
+ */
+function faviconUrl(domain, size = 64) {
+  return `https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=${size}`;
+}
+
 function VendorLogo({ name, size = 22, onEditDomain }) {
   const [failed, setFailed] = useState(false);
   const domain = resolveVendorDomain(name);
@@ -104,7 +113,7 @@ function VendorLogo({ name, size = 22, onEditDomain }) {
 
   return (
     <img
-      src={`https://www.google.com/s2/favicons?domain=${domain}&sz=64`}
+      src={faviconUrl(domain)}
       alt={name}
       onError={() => setFailed(true)}
       onClick={onEditDomain}
@@ -956,7 +965,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                 {editingDomain.draft && (
                   <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
                     <span>Preview:</span>
-                    <img src={`https://www.google.com/s2/favicons?domain=${editingDomain.draft}&sz=64`} alt=""
+                    <img src={faviconUrl(editingDomain.draft)} alt=""
                       className="w-5 h-5 rounded object-contain" onError={e => e.target.style.display = 'none'} />
                     <span>{editingDomain.draft}</span>
                   </div>
