@@ -265,27 +265,45 @@ export async function getRecentExpenses(sheetId, limit = 10) {
   return deduped.slice(0, limit);
 }
 
+// Find the 0-indexed row holding the UUID in one tab. The UUID column has
+// moved over time (legacy 6-col schema: F; current: G; Travel/Holiday: H),
+// so match F–H. UUIDs are 'tx_…' strings — no collision with card names (F)
+// or booking methods (G on Travel/Holiday).
+async function findRowByUUID(sheetId, sheetTab, uuid) {
+  const range = encodeURIComponent(`'${sheetTab}'!F:H`);
+  const data = await sheetsRequest(sheetId, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
+  const rows = data.values || [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || [];
+    if (r[0] === uuid || r[1] === uuid || r[2] === uuid) return i;
+  }
+  return -1;
+}
+
 export async function deleteExpenseByUUID({ category, uuid, sheetId }) {
   const config = SHEET_MAP[category];
   if (!config) throw new Error(`Unknown category: ${category}`);
 
-  const range = encodeURIComponent(`'${config.sheet}'!F:F`);
-  const data = await sheetsRequest(sheetId, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
-  const rows = data.values || [];
+  // Expected tab first…
+  let sheetTab = config.sheet;
+  let rowIndex = await findRowByUUID(sheetId, sheetTab, uuid);
 
-  let rowIndex = -1;
-  for (let i = 0; i < rows.length; i++) {
-    if (rows[i][0] === uuid) {
-      rowIndex = i;
-      break;
+  // …then every other tab: the dashboard's "move to category" keeps the UUID
+  // but relocates the row, so a bot-logged expense may live elsewhere by now.
+  if (rowIndex === -1) {
+    const otherTabs = [...new Set(Object.values(SHEET_MAP).map(c => c.sheet))]
+      .filter(t => t !== config.sheet);
+    for (const tab of otherTabs) {
+      rowIndex = await findRowByUUID(sheetId, tab, uuid);
+      if (rowIndex !== -1) { sheetTab = tab; break; }
     }
   }
 
   if (rowIndex === -1) throw new Error(`Row with UUID ${uuid} not found`);
 
   const meta = await sheetsRequest(sheetId, '?fields=sheets.properties');
-  const sheet = meta.sheets.find(s => s.properties.title === config.sheet);
-  if (!sheet) throw new Error(`Sheet tab not found: ${config.sheet}`);
+  const sheet = meta.sheets.find(s => s.properties.title === sheetTab);
+  if (!sheet) throw new Error(`Sheet tab not found: ${sheetTab}`);
 
   await sheetsRequest(sheetId, ':batchUpdate', {
     method: 'POST',
