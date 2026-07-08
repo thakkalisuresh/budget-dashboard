@@ -8,7 +8,7 @@ vi.stubEnv('VITE_TEMPLATE_SHEET_ID', 'template-sheet-id');
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-const { getCurrentMonthSheetId, appendExpense, getRecentExpenses } = await import('../../functions/lib/_sheets.mjs');
+const { getCurrentMonthSheetId, appendExpense, getRecentExpenses, deleteExpenseByUUID } = await import('../../functions/lib/_sheets.mjs');
 
 function jsonResponse(data, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: () => Promise.resolve(data) };
@@ -335,5 +335,81 @@ describe('getRecentExpenses', () => {
   it('returns empty array when only the header row exists', async () => {
     mockTokenThenApi(jsonResponse({ values: [HEADER] }));
     expect(await getRecentExpenses('sheet', 10)).toEqual([]);
+  });
+});
+
+describe('deleteExpenseByUUID', () => {
+  // URL-routed mock: F:H reads per tab, sheet metadata, and the batchUpdate
+  // delete. `uuidTab` is the tab that actually contains the uuid, `col`
+  // selects which of F/G/H holds it (0=F legacy, 1=G current, 2=H travel).
+  function routeDelete({ uuid, uuidTab, col = 1, rowIdx = 3 }) {
+    const batchUpdates = [];
+    mockFetch.mockImplementation((url, options = {}) => {
+      if (url.includes('oauth2')) {
+        return Promise.resolve(jsonResponse({ access_token: 'test-token', expires_in: 3600 }));
+      }
+      const u = decodeURIComponent(url);
+      if (u.includes('!F:H')) {
+        const tab = u.match(/'([^']+)'!F:H/)?.[1];
+        if (tab === uuidTab) {
+          const rows = Array.from({ length: rowIdx + 1 }, () => ['', '', '']);
+          rows[rowIdx][col] = uuid;
+          return Promise.resolve(jsonResponse({ values: rows }));
+        }
+        return Promise.resolve(jsonResponse({ values: [['Payment Method', 'UUID', '']] }));
+      }
+      if (u.includes('?fields=sheets.properties')) {
+        return Promise.resolve(jsonResponse({
+          sheets: ['Grocery', 'Misc', 'Eating Out', 'Travel', 'Holiday'].map((t, i) => ({
+            properties: { title: t, sheetId: 100 + i },
+          })),
+        }));
+      }
+      if (u.includes(':batchUpdate')) {
+        batchUpdates.push(JSON.parse(options.body));
+        return Promise.resolve(jsonResponse({}));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    return batchUpdates;
+  }
+
+  it('deletes from the named tab when the uuid is there (col G, current schema)', async () => {
+    const updates = routeDelete({ uuid: 'tx_100_aa', uuidTab: 'Misc', col: 1, rowIdx: 4 });
+    await deleteExpenseByUUID({ category: 'Misc', uuid: 'tx_100_aa', sheetId: 'sheet' });
+    expect(updates).toHaveLength(1);
+    const del = updates[0].requests[0].deleteDimension.range;
+    expect(del.sheetId).toBe(101); // Misc
+    expect(del.startIndex).toBe(4);
+    expect(del.endIndex).toBe(5);
+  });
+
+  it('still finds legacy rows with the uuid at col F', async () => {
+    const updates = routeDelete({ uuid: 'tx_200_bb', uuidTab: 'Grocery', col: 0 });
+    await deleteExpenseByUUID({ category: 'Grocery', uuid: 'tx_200_bb', sheetId: 'sheet' });
+    expect(updates).toHaveLength(1);
+  });
+
+  it('finds Travel rows with the uuid at col H', async () => {
+    const updates = routeDelete({ uuid: 'tx_300_cc', uuidTab: 'Travel', col: 2 });
+    await deleteExpenseByUUID({ category: 'Travel', uuid: 'tx_300_cc', sheetId: 'sheet' });
+    expect(updates).toHaveLength(1);
+  });
+
+  it('falls back to other tabs when the row was moved to a different category', async () => {
+    // Logged by the bot under Misc, later moved to Grocery in the dashboard
+    const updates = routeDelete({ uuid: 'tx_400_dd', uuidTab: 'Grocery', col: 1, rowIdx: 2 });
+    await deleteExpenseByUUID({ category: 'Misc', uuid: 'tx_400_dd', sheetId: 'sheet' });
+    expect(updates).toHaveLength(1);
+    const del = updates[0].requests[0].deleteDimension.range;
+    expect(del.sheetId).toBe(100); // Grocery, not Misc
+    expect(del.startIndex).toBe(2);
+  });
+
+  it('throws when the uuid is nowhere', async () => {
+    routeDelete({ uuid: 'tx_500_ee', uuidTab: 'NONEXISTENT-TAB' });
+    await expect(
+      deleteExpenseByUUID({ category: 'Misc', uuid: 'tx_500_ee', sheetId: 'sheet' })
+    ).rejects.toThrow('Row with UUID tx_500_ee not found');
   });
 });
