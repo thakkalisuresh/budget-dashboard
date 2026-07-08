@@ -60,6 +60,7 @@ export {
   updateVendorName,
   updateVendorAmounts,
   updatePaymentMethod,
+  moveTransactionCategory,
 } from './sheetExpenses.js';
 
 // ─── Non-monthly expenses ────────────────────────────────────────────────────

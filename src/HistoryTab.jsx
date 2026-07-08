@@ -9,6 +9,7 @@ const ACTION_STYLE = {
   'Edited':           { background: 'oklch(78% 0.16 75 / 12%)',  color: 'oklch(78% 0.16 75)',         border: '1px solid oklch(78% 0.16 75 / 25%)'  },
   'Deleted':          { background: 'oklch(62% 0.22 25 / 12%)',  color: 'var(--color-danger)',         border: '1px solid oklch(62% 0.22 25 / 25%)'  },
   'Renamed':          { background: 'oklch(62% 0.20 295 / 12%)', color: 'oklch(72% 0.18 295)',        border: '1px solid oklch(62% 0.20 295 / 25%)' },
+  'Moved':            { background: 'oklch(68% 0.15 175 / 12%)', color: 'oklch(72% 0.13 175)',        border: '1px solid oklch(68% 0.15 175 / 25%)' },
   'Undo':             { background: 'var(--sur-8)',      color: 'var(--color-text-muted)',     border: '1px solid var(--sur-12)'     },
   'Category Added':   { background: 'oklch(68% 0.15 175 / 12%)', color: 'oklch(72% 0.13 175)',        border: '1px solid oklch(68% 0.15 175 / 25%)' },
   'Category Deleted': { background: 'oklch(62% 0.22 25 / 12%)',  color: 'var(--color-danger)',         border: '1px solid oklch(62% 0.22 25 / 25%)'  },
