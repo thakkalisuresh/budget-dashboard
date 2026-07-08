@@ -758,7 +758,7 @@ describe('telegram webhook — R10 button editing', () => {
       if (url.includes('fields=sheets.properties')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ sheets: [{ properties: { title: 'Grocery', sheetId: 0 } }] }) });
       }
-      if (url.includes('sheets.googleapis.com') && (url.includes('F:F') || url.includes('F%3AF'))) {
+      if (url.includes('sheets.googleapis.com') && (url.includes('F:H') || url.includes('F%3AH'))) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['UUID'], ['uuid-x']] }) });
       }
       if (url.includes('sheets.googleapis.com')) {
