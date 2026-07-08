@@ -354,7 +354,7 @@ export async function updateVendorAmounts(
   const uuidCol      = v2 ? (isTravelCat ? 7 : 6) : uuidStart(config);
 
   if (amounts.length === 0) {
-    await clearRowRange(sheetId, config.sheet, rowIndex, uuidCol + 19, accessToken);
+    await clearRowRange(sheetId, config.sheet, rowIndex, Math.min(uuidCol + 19, 25), accessToken);
     await appendHistoryEntry(sheetId, accessToken, {
       action: 'Deleted', category: categoryName, vendor: vendorName,
       amount: previousTotal,
