@@ -42,6 +42,17 @@ export const VAPID_EMAIL       = defineSecret('VAPID_EMAIL');
 export const TELEGRAM_BOT_TOKEN      = defineSecret('TELEGRAM_BOT_TOKEN');
 export const TELEGRAM_WEBHOOK_SECRET = defineSecret('TELEGRAM_WEBHOOK_SECRET');
 export const TELEGRAM_ALLOWED_USERS  = defineSecret('TELEGRAM_ALLOWED_USERS');
+// Wallet-webhook email→Telegram-chat-id routing map, so the wallet path can
+// prompt the right person to split a receipt. Format (one Secret Manager value):
+//   email1@x.com:123456789,email2@y.com:987654321
+// (Telegram private-chat id == user id, the same numbers in TELEGRAM_ALLOWED_USERS.)
+//
+// ⚠️ DEPLOY ORDER: a bound-but-value-less secret makes `firebase deploy` prompt
+// interactively and abort CI. Its value MUST exist in Secret Manager before this
+// binding deploys:  firebase functions:secrets:set TELEGRAM_EMAIL_MAP
+// The wallet webhook reads it from process.env (defineSecret injects bound
+// secrets into process.env at cold start).
+export const TELEGRAM_EMAIL_MAP      = defineSecret('TELEGRAM_EMAIL_MAP');
 
 // NOTE: WhatsApp/Twilio (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
 // WHATSAPP_ALLOWED_PHONES) are intentionally NOT declared — WhatsApp is out of

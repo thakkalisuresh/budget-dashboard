@@ -19,7 +19,13 @@ import {
 import { convertToUSD } from './_currency.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
 import { buildRewardsLine, getEffectiveRates } from './_card-rewards.mjs';
-import { kbYesCancel, kbYesSkip, kbConfirmDelete } from './_telegram.mjs';
+import {
+  kbYesCancel, kbYesSkip, kbConfirmDelete, kbSplitCategory,
+  kbConfirmReceipt, kbEditMenu, kbCategoryPicker, kbCardPicker,
+  kbLoggedActions, kbEditLoggedMenu,
+} from './_telegram.mjs';
+import { categorizeItems, matchesSplitVendor } from './_item-categorizer.mjs';
+import { runToolLoop } from './_agent.mjs';
 
 const DAILY_LIMIT    = 50;
 const UNDO_WINDOW_MS = 10 * 60 * 1000;
@@ -78,16 +84,6 @@ async function getRateCount(store, userId) {
   } catch { return 0; }
 }
 
-async function incrementRateCount(store, userId) {
-  const key = `rate:${userId}:${new Date().toISOString().slice(0, 10)}`;
-  let count = 0;
-  try {
-    const val = await store.get(key, { type: 'json' });
-    count = val?.count || 0;
-  } catch { /* new entry */ }
-  await store.setJSON(key, { count: count + 1 });
-}
-
 /* ══════════════════════════════════════════════════════════════════════════════
    PUBLIC: handleTextReply
    ══════════════════════════════════════════════════════════════════════════════ */
@@ -95,10 +91,23 @@ async function incrementRateCount(store, userId) {
 export async function handleTextReply(ctx, text) {
   const { store, userId } = ctx;
 
-  // Any text message clears an awaiting ATTACH state
-  await store.delete(`awaiting_attach:${userId}`).catch(() => {});
+  // ── R10: inline-keyboard edit callbacks (callback_data arrives here as text) ──
+  if (text.startsWith('edit:')) {
+    return await handleEditCallback(ctx, text.slice('edit:'.length));
+  }
 
   const normalized = text.trim().toUpperCase();
+
+  // ── R10: capturing a typed value for a button-driven field edit ──
+  if (normalized !== 'CANCEL') {
+    const awaitingEdit = await store.get(`awaiting_edit:${userId}`, { type: 'json' }).catch(() => null);
+    if (awaitingEdit) {
+      return await applyAwaitingEdit(ctx, text, awaitingEdit);
+    }
+  }
+
+  // Any other text message clears an awaiting ATTACH state
+  await store.delete(`awaiting_attach:${userId}`).catch(() => {});
 
   // ── CANCEL ──
   if (normalized === 'CANCEL') {
@@ -106,13 +115,17 @@ export async function handleTextReply(ctx, text) {
     for (const key of [
       `salary_pending:${userId}`, `budget_pending:${userId}`,
       `new_month_wizard:${userId}`, `delete_pending:${userId}`,
+      `awaiting_edit:${userId}`, `awaiting_attach:${userId}`,
     ]) {
       try {
         const val = await store.get(key, { type: 'json' });
         if (val) { await store.delete(key); cancelledAny = true; }
       } catch { /* no pending */ }
     }
-    for (const prefix of [`confirm:${userId}:`, `transfer_pending:${userId}:`]) {
+    for (const prefix of [
+      `confirm:${userId}:`, `transfer_pending:${userId}:`,
+      `split_pending:${userId}:`, `split_confirm:${userId}:`,
+    ]) {
       const { blobs } = await store.list({ prefix });
       for (const b of (blobs || [])) {
         await store.delete(b.key);
@@ -123,8 +136,18 @@ export async function handleTextReply(ctx, text) {
     return ctx.send(cancelledAny ? 'Cancelled.' : 'Nothing to cancel.');
   }
 
-  // ── NEW MONTH wizard (active) ──
-  const wizardState = await store.get(`new_month_wizard:${userId}`, { type: 'json' }).catch(() => null);
+  // ── SPLITCAT callback (user picked a category for one split line item) ──
+  if (text.startsWith('SPLITCAT:')) {
+    return await handleSplitCategoryPick(ctx, text);
+  }
+
+  // ── NEW MONTH wizard / DELETE pending (R5: probe the two independent
+  //    state keys in parallel to shave a Firestore round-trip) ──
+  const [wizardState, deletePending] = await Promise.all([
+    store.get(`new_month_wizard:${userId}`, { type: 'json' }).catch(() => null),
+    store.get(`delete_pending:${userId}`, { type: 'json' }).catch(() => null),
+  ]);
+
   if (wizardState) {
     if (new Date(wizardState.expires) > new Date()) {
       return await handleNewMonthWizard(ctx, text, wizardState);
@@ -132,8 +155,6 @@ export async function handleTextReply(ctx, text) {
     await store.delete(`new_month_wizard:${userId}`);
   }
 
-  // ── DELETE pending (3-layer security) ──
-  const deletePending = await store.get(`delete_pending:${userId}`, { type: 'json' }).catch(() => null);
   if (deletePending) {
     if (new Date(deletePending.expires) > new Date()) {
       return await handleDeletePending(ctx, text, deletePending);
@@ -141,10 +162,34 @@ export async function handleTextReply(ctx, text) {
     await store.delete(`delete_pending:${userId}`);
   }
 
+  // ── SKIP a wallet-triggered split: log the original charge as one expense ──
+  if (normalized === 'SKIP') {
+    const { blobs } = await store.list({ prefix: `split_pending:${userId}:` });
+    if (blobs && blobs.length > 0) {
+      return await handleSplitSkip(ctx, blobs[0].key);
+    }
+    // No split awaiting — fall through (SKIP may belong to another flow / be noise)
+  }
+
   // ── YES ──
   if (normalized === 'YES') {
-    // Check salary/budget pending first
-    const salaryPending = await store.get(`salary_pending:${userId}`, { type: 'json' }).catch(() => null);
+    // A completed split takes priority over any pending receipt confirm.
+    const { blobs: splitBlobs } = await store.list({ prefix: `split_confirm:${userId}:` });
+    if (splitBlobs && splitBlobs.length > 0) {
+      const splitState = await store.get(splitBlobs[0].key, { type: 'json' });
+      if (splitState) {
+        if (splitState.pendingItems && splitState.pendingItems.length > 0) {
+          return ctx.send('Pick a category for each remaining item first.');
+        }
+        return await finalizeSplit(ctx, splitBlobs[0].key, splitState);
+      }
+    }
+
+    // R5: the salary/budget pending keys are independent — probe both at once.
+    const [salaryPending, budgetPending] = await Promise.all([
+      store.get(`salary_pending:${userId}`, { type: 'json' }).catch(() => null),
+      store.get(`budget_pending:${userId}`, { type: 'json' }).catch(() => null),
+    ]);
     if (salaryPending) {
       try {
         await writeSalaryAmount(salaryPending.sheetId, salaryPending.amount);
@@ -160,7 +205,6 @@ export async function handleTextReply(ctx, text) {
       );
     }
 
-    const budgetPending = await store.get(`budget_pending:${userId}`, { type: 'json' }).catch(() => null);
     if (budgetPending) {
       try {
         await writeBudgetAmount(budgetPending.sheetId, budgetPending.category, budgetPending.amount);
@@ -266,7 +310,7 @@ export async function handleTextReply(ctx, text) {
           }
           return ctx.send(
             logged + buildConfirmPrompt(next.extraction, next.conversionInfo, { index: next.batchIndex, total: next.batchTotal }),
-            kbYesCancel()
+            kbConfirmReceipt()
           );
         }
       }
@@ -297,7 +341,8 @@ export async function handleTextReply(ctx, text) {
       hints.join(' · '),
     ].join('\n');
 
-    return ctx.send(summary);
+    // R10: expose Edit / Undo as buttons alongside the text hints.
+    return ctx.send(summary, kbLoggedActions());
   }
 
   // ── UNDO ──
@@ -310,6 +355,25 @@ export async function handleTextReply(ctx, text) {
     const elapsed = Date.now() - new Date(lastlog.loggedAt).getTime();
     if (elapsed > UNDO_WINDOW_MS) {
       return ctx.send("Undo window expired (10 min). Edit the entry in the dashboard instead.");
+    }
+
+    // Split entries: delete every per-category row that was logged together.
+    if (lastlog.split && Array.isArray(lastlog.entries)) {
+      let failed = 0;
+      for (const e of lastlog.entries) {
+        try {
+          await deleteExpenseByUUID({ category: e.category, uuid: e.uuid, sheetId: e.sheetId || lastlog.sheetId });
+        } catch (err) {
+          failed++;
+          console.error('bot-core: UNDO split delete failed', err.message);
+        }
+      }
+      await store.delete(`lastlog:${userId}`);
+      console.log(`bot-core: UNDO split — ${lastlog.vendor} (${lastlog.entries.length} rows, ${failed} failed) by ${userId}`);
+      if (failed > 0) {
+        return ctx.send(`Removed ${lastlog.entries.length - failed} of ${lastlog.entries.length} split rows. Check the dashboard for the rest.`);
+      }
+      return ctx.send(`Undone: ${lastlog.vendor} split ($${lastlog.amount} across ${lastlog.entries.length} categories) removed.`);
     }
 
     try {
@@ -378,8 +442,8 @@ export async function handleTextReply(ctx, text) {
     return await handleDelete(ctx, arg.replace('#', ''));
   }
 
-  // ── GUIDE / HELP ──
-  if (/^(guide|help)$/i.test(text.trim())) {
+  // ── GUIDE / HELP (R9: broadened phrasings, still deterministic) ──
+  if (/^(guide|help|commands?|menu|what can (you|u) do\??|how do (i|you) work\??)$/i.test(text.trim())) {
     return ctx.send(buildGuideMessage());
   }
 
@@ -417,92 +481,28 @@ export async function handleTextReply(ctx, text) {
           lines.push(`(Converted from ${pending.conversionInfo.originalCurrency} ${pending.conversionInfo.original} · rate ${pending.conversionInfo.rate.toFixed(4)})`);
         }
         lines.push('', 'Reply YES to log, or CANCEL');
-        return ctx.send(lines.join('\n'), kbYesCancel());
+        return ctx.send(lines.join('\n'), kbConfirmReceipt());
       }
     }
   }
 
-  // ── Field edit: "category: X", "amount: X", "store: X", "date: X", "card: X" ──
+  // ── Field edit (typed): "category: X", "amount: X", "store: X", "date: X", "card: X" ──
   const editMatch = text.trim().match(/^(category|amount|store|date|card|booking|tip)\s*:\s*(.+)$/i);
   if (editMatch) {
-    const { blobs } = await store.list({ prefix: `confirm:${userId}:` });
+    const { blobs } = await store.list({ prefix: `confirm:${userId}:`, limit: 1 });
     if (!blobs || blobs.length === 0) {
       return ctx.send("No pending receipt to edit. Send a receipt image first.");
     }
-
     const key     = blobs[0].key;
     const pending = await store.get(key, { type: 'json' });
-    if (!pending) {
-      return ctx.send("No pending receipt to edit.");
-    }
+    if (!pending) return ctx.send("No pending receipt to edit.");
 
-    const field = editMatch[1].toLowerCase();
-    const value = editMatch[2].trim();
-
-    if (field === 'category') {
-      const matched = CATEGORIES.find(c => c.toLowerCase() === value.toLowerCase());
-      if (!matched) {
-        return ctx.send(`Unknown category. Choose from:\n${CATEGORIES.join(', ')}`);
-      }
-      pending.extraction.reward_category = matched;
-    } else if (field === 'amount') {
-      const num = parseFloat(value);
-      if (isNaN(num) || num <= 0) {
-        return ctx.send("Invalid amount. Use a positive number (e.g., 'amount: 52.10')");
-      }
-      pending.extraction.total_amount = num;
-    } else if (field === 'store') {
-      pending.extraction.store_name = value;
-    } else if (field === 'date') {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-        return ctx.send("Date must be YYYY-MM-DD (e.g., 'date: 2026-05-20')");
-      }
-      pending.extraction.purchase_date = value;
-      pending.year = new Date(value).getFullYear();
-      pending.month = new Date(value).toLocaleString('en-US', { month: 'long' });
-    } else if (field === 'card') {
-      let settings = {};
-      try { settings = await getUserSettings(); } catch { /* no settings */ }
-      const cards = settings.cards || [];
-      const matched = resolveCardName(value, cards) || cards.find(c => c.toLowerCase() === value.toLowerCase());
-      if (!matched) {
-        return ctx.send(cards.length
-          ? `Unknown card. Choose from:\n${cards.join(', ')}`
-          : 'No cards configured. Add cards in the dashboard settings first.');
-      }
-      pending.extraction.payment_method = matched;
-    } else if (field === 'booking') {
-      const method = value.toLowerCase();
-      if (method !== 'portal' && method !== 'direct') {
-        return ctx.send("Booking must be 'portal' (8x UR) or 'direct' (4x UR).");
-      }
-      pending.extraction.booking_method = method === 'direct' ? 'direct' : '';
-    } else if (field === 'tip') {
-      const num = parseFloat(value);
-      if (isNaN(num) || num <= 0) {
-        return ctx.send("Invalid tip. Use a positive number (e.g., 'tip: 5.00')");
-      }
-      // Remove any previous tip before adding the new one
-      const prevTip = pending.extraction.tip || 0;
-      pending.extraction.tip = num;
-      pending.extraction.total_amount = Math.round(((pending.extraction.total_amount || 0) - prevTip + num) * 100) / 100;
-    }
+    // Shared with the button-driven edit flow (R10).
+    const res = await applyExtractionField(pending, editMatch[1].toLowerCase(), editMatch[2].trim());
+    if (!res.ok) return ctx.send(res.error);
 
     await store.setJSON(key, pending);
-
-    const e = pending.extraction;
-    const tipLine = e.tip ? ` (incl. $${e.tip.toFixed(2)} tip)` : '';
-    const lines = [
-      'Updated!',
-      `Store: ${e.store_name || 'Unknown'}`,
-      `Date: ${e.purchase_date || 'Unknown'}`,
-      `Category: ${e.reward_category || 'Misc'}`,
-      `Total: $${e.total_amount ?? '?'}${tipLine}`,
-    ];
-    if (e.payment_method) lines.push(`Card: ${e.payment_method}`);
-    if (e.booking_method) lines.push(`Booking: Direct (4x UR)`);
-    lines.push('', 'Reply YES to log, or CANCEL');
-    return ctx.send(lines.join('\n'), kbYesCancel());
+    return ctx.send(buildUpdatedPrompt(pending), kbConfirmReceipt());
   }
 
   // ── Manual entry: "Walmart 45.23 Grocery" ──
@@ -558,7 +558,7 @@ export async function handleTextReply(ctx, text) {
     const lines = [`Got it:`, `Store: ${vendor.trim()}`, `Category: ${matchedCat}`, `Total: $${amount}`];
     if (cardName) lines.push(`Card: ${cardName}`);
     lines.push('', 'Reply YES to log, or CANCEL');
-    return ctx.send(lines.join('\n'), kbYesCancel());
+    return ctx.send(lines.join('\n'), kbConfirmReceipt());
   }
 
   // ── Transaction text parsing (bank SMS / payment notification) ──
@@ -602,13 +602,26 @@ export async function handleTextReply(ctx, text) {
         month,
         status: 'awaiting_confirmation',
       });
-      return ctx.send(buildConfirmPrompt(data, conversionInfo), kbYesCancel());
+      return ctx.send(buildConfirmPrompt(data, conversionInfo), kbConfirmReceipt());
     }
     // Fall through to help if extraction didn't yield useful data
   }
 
-  // ── Help ──
+  // ── R9: greetings / thanks — canned reply, zero AI ──
+  if (looksLikeGreeting(text)) {
+    return ctx.send(greetingReply());
+  }
+
+  // ── R8: conversational agent fallback ──
+  // Everything deterministic has been tried above; only genuinely freeform text
+  // reaches the agent. If the agent is unavailable or declines, fall back to the
+  // canned help so the bot never hard-depends on AI (R9).
   if (text.trim().length > 0) {
+    try {
+      if (await runBotAgent(ctx, text)) return;
+    } catch (e) {
+      console.warn('bot-core: agent fallback failed', e.message);
+    }
     return ctx.send(
       'Send a receipt photo, bank screenshot, or paste a transaction SMS.\nManual: "Walmart 45.23 Grocery"\n\nType GUIDE for full command list.'
     );
@@ -624,12 +637,13 @@ export async function handleTextReply(ctx, text) {
 export async function handleMediaMessage(ctx, base64, mediaType) {
   const { store, userId } = ctx;
 
-  const rateCount = await getRateCount(store, userId);
-  if (rateCount >= DAILY_LIMIT) {
+  // R4: single atomic check-and-increment (replaces the old read → read →
+  // read+write sequence and its race).
+  const rateKey = `rate:${userId}:${new Date().toISOString().slice(0, 10)}`;
+  const rate = await store.incrementIfBelow(rateKey, DAILY_LIMIT);
+  if (!rate.allowed) {
     return ctx.send("You've reached 50 receipts today. Try again tomorrow.");
   }
-
-  await incrementRateCount(store, userId);
 
   const baseReceiptId = crypto.randomUUID();
   const now = new Date();
@@ -657,8 +671,9 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
 
     const conversionInfo = await maybeConvertCurrency(data);
 
+    let settings = {};
     try {
-      const settings = await getUserSettings();
+      settings = await getUserSettings();
       data.payment_method = resolveCard(data.payment_method, data.store_name, data.reward_category, settings);
     } catch (e) {
       console.warn('bot-core: card resolution failed (non-fatal)', e.message);
@@ -673,6 +688,19 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
       });
     } catch (e) {
       console.error('bot-core: Drive upload failed', e.message);
+    }
+
+    // ── Split flow: itemized receipt from a configured split vendor (Costco,
+    // Amazon…) OR a wallet-triggered split awaiting its receipt. Splits the
+    // receipt across categories instead of logging one lump sum.
+    const { blobs: splitPendingBlobs } = await store.list({ prefix: `split_pending:${userId}:` });
+    const hasSplitPending = (splitPendingBlobs || []).length > 0;
+    const isSplitVendor = matchesSplitVendor(data.store_name, settings.splitReceiptVendors || []);
+    if (!data.is_transfer && Array.isArray(data.items) && data.items.length > 0 && (isSplitVendor || hasSplitPending)) {
+      const pendingKey = hasSplitPending ? splitPendingBlobs[0].key : null;
+      return await handleSplitFlow(ctx, {
+        data, year, month, conversionInfo, baseReceiptId, driveResult, pendingKey,
+      });
     }
 
     if (data.is_transfer) {
@@ -753,16 +781,19 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
 
   console.log(`bot-core: batch ${baseReceiptId} extracted for ${userId} — ${batchTotal} transactions`);
 
+  // R2: reuse the conversionInfo already computed + stored for item 0 instead of
+  // re-running maybeConvertCurrency (which double-converted foreign currencies
+  // and fired a redundant FX call).
   const first = transactions[0];
-  const firstConvInfo = await maybeConvertCurrency(first);  // already converted above, idempotent if same currency
+  const firstItemId = `${baseReceiptId}_000`;
+  const firstBlob = await store.get(`confirm:${userId}:${firstItemId}`, { type: 'json' });
+  const firstConvInfo = firstBlob?.conversionInfo || null;
   if (first.is_transfer) {
     return ctx.send(buildTransferPrompt(first, firstConvInfo));
   }
-  const firstItemId = `${baseReceiptId}_000`;
-  const firstBlob = await store.get(`confirm:${userId}:${firstItemId}`, { type: 'json' });
   return ctx.send(
-    buildConfirmPrompt(first, firstBlob?.conversionInfo, { index: 1, total: batchTotal }),
-    kbYesCancel()
+    buildConfirmPrompt(first, firstConvInfo, { index: 1, total: batchTotal }),
+    kbConfirmReceipt()
   );
 }
 
@@ -800,6 +831,246 @@ export async function handleAttachMedia(ctx, base64, mediaType, attachState) {
   );
 }
 
+/* ══════════════════════════════════════════════════════════════════════════════
+   Receipt category split (Costco / Amazon …)
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Start (or resume into) a split: classify line items, auto-group the confident
+ * ones, and ask the user category-by-category for the rest. State lives in
+ * `split_confirm:<userId>:<id>`.
+ */
+async function handleSplitFlow(ctx, { data, year, month, conversionInfo, baseReceiptId, driveResult, pendingKey }) {
+  const { store, userId } = ctx;
+
+  const { autoGrouped, uncategorized } = categorizeItems(data.items || []);
+
+  const groups = {};
+  for (const g of autoGrouped) groups[g.category] = g.subtotal;
+
+  const state = {
+    id: baseReceiptId,
+    phone: userId,
+    vendor: data.store_name || 'Unknown',
+    totalAmount: data.total_amount,
+    txDate: data.purchase_date || null,
+    year, month,
+    paymentMethod: data.payment_method || '',
+    conversionInfo: conversionInfo || null,
+    driveFileId: driveResult?.fileId || null,
+    driveFolderId: driveResult?.folderId || null,
+    driveShareLink: driveResult?.shareLink || null,
+    groups,
+    items: uncategorized.map(u => ({ name: u.name, amount: u.amount, suggestion: u.suggestion, category: null })),
+    currentIndex: 0,
+    receivedAt: new Date().toISOString(),
+  };
+
+  // Wallet-triggered splits leave a split_pending marker — consume it now.
+  if (pendingKey) await store.delete(pendingKey).catch(() => {});
+
+  const key = `split_confirm:${userId}:${baseReceiptId}`;
+  await store.setJSON(key, state);
+  console.log(`bot-core: split started for ${userId} — ${state.vendor} $${state.totalAmount} (${autoGrouped.length} auto, ${uncategorized.length} to ask)`);
+
+  return await askNextSplitItem(ctx, key, state);
+}
+
+/** Ask about the next uncategorized item, or show the summary if all are done. */
+async function askNextSplitItem(ctx, key, state) {
+  const { store } = ctx;
+
+  if (state.currentIndex >= state.items.length) {
+    await store.setJSON(key, state);
+    return ctx.send(buildSplitSummary(state), kbYesCancel());
+  }
+
+  const item = state.items[state.currentIndex];
+  const autoLines = Object.entries(state.groups).map(([c, amt]) => `  ${c}: $${amt.toFixed(2)}`);
+  const lines = [
+    `🧾 Splitting ${state.vendor} — $${Number(state.totalAmount).toFixed(2)}`,
+    ...(autoLines.length ? ['', 'Auto-sorted so far:', ...autoLines] : []),
+    '',
+    `Item ${state.currentIndex + 1} of ${state.items.length}: ${item.name} — $${Number(item.amount).toFixed(2)}`,
+    'Which category?',
+  ];
+  await store.setJSON(key, state);
+  return ctx.send(lines.join('\n'), kbSplitCategory(state.currentIndex, CATEGORIES, item.suggestion));
+}
+
+/** Handle a `SPLITCAT:<idx>:<category>` pick from the inline keyboard. */
+async function handleSplitCategoryPick(ctx, text) {
+  const { store, userId } = ctx;
+  const m = text.match(/^SPLITCAT:(\d+):(.+)$/);
+  if (!m) return; // malformed — ignore
+
+  const idx = parseInt(m[1], 10);
+  const category = m[2];
+
+  const { blobs } = await store.list({ prefix: `split_confirm:${userId}:` });
+  if (!blobs || blobs.length === 0) {
+    return ctx.send('No active split. Send a receipt to start one.');
+  }
+  const key = blobs[0].key;
+  const state = await store.get(key, { type: 'json' });
+  if (!state) return ctx.send('No active split.');
+
+  if (!CATEGORIES.includes(category)) {
+    return ctx.send(`Unknown category. Choose from:\n${CATEGORIES.join(', ')}`);
+  }
+
+  // Ignore stale taps (an old item's buttons) — only the current item is live.
+  if (idx !== state.currentIndex) {
+    return ctx.send('That item was already sorted. Use the latest buttons above.');
+  }
+
+  const item = state.items[idx];
+  item.category = category;
+  state.groups[category] = Math.round(((state.groups[category] || 0) + item.amount) * 100) / 100;
+  state.currentIndex += 1;
+
+  return await askNextSplitItem(ctx, key, state);
+}
+
+/** Log every category group as its own expense row, linked for UNDO. */
+async function finalizeSplit(ctx, key, state) {
+  const { store, userId } = ctx;
+  const monthName = `${state.month} ${state.year}`;
+
+  let sheetId;
+  try {
+    sheetId = await getCurrentMonthSheetId(monthName);
+  } catch (e) {
+    console.error('bot-core: split — month sheet missing', e.message);
+    return ctx.send(`Could not find sheet for ${monthName}. Log this via the dashboard.`);
+  }
+
+  // Reconcile the item sum against the actual charged total (tax / fees /
+  // discounts): drop any remainder into the largest group so the split adds up.
+  const groups = { ...state.groups };
+  const cats = Object.keys(groups);
+  if (cats.length === 0) {
+    return ctx.send('Nothing to log — no categories were assigned. CANCEL to discard.');
+  }
+  const groupSum = Math.round(cats.reduce((s, c) => s + groups[c], 0) * 100) / 100;
+  const remainder = Math.round((Number(state.totalAmount) - groupSum) * 100) / 100;
+  if (Math.abs(remainder) >= 0.01) {
+    const largest = cats.reduce((a, b) => (groups[b] > groups[a] ? b : a), cats[0]);
+    groups[largest] = Math.round((groups[largest] + remainder) * 100) / 100;
+  }
+
+  const entries = [];
+  for (const category of Object.keys(groups)) {
+    const amount = groups[category];
+    if (amount <= 0) continue;
+    try {
+      const result = await appendExpense({
+        category, vendor: state.vendor, amount,
+        txDate: state.txDate, sheetId, monthName,
+        paymentMethod: state.paymentMethod || '', channel: ctx.channel,
+      });
+      entries.push({ category, uuid: result.uuid, sheetId, amount });
+    } catch (e) {
+      console.error(`bot-core: split append failed for ${category}`, e.message);
+    }
+  }
+
+  if (entries.length === 0) {
+    return ctx.send('Failed to log the split to the spreadsheet. Try again or use the dashboard.');
+  }
+
+  // Move the receipt into the largest group's Drive folder (best-effort).
+  if (state.driveFileId) {
+    try {
+      const top = entries.reduce((a, b) => (b.amount > a.amount ? b : a), entries[0]);
+      const { folderId } = await buildFolderPath(state.year, state.month, top.category);
+      await moveFile(state.driveFileId, folderId);
+    } catch (e) {
+      console.warn('bot-core: split Drive move failed (non-fatal)', e.message);
+    }
+  }
+
+  await store.setJSON(`lastlog:${userId}`, {
+    split: true,
+    entries,
+    vendor: state.vendor,
+    amount: Math.round(Object.values(groups).reduce((s, a) => s + a, 0) * 100) / 100,
+    sheetId, monthName, year: state.year, month: state.month,
+    driveFileId: state.driveFileId || null,
+    driveShareLink: state.driveShareLink || null,
+    loggedAt: new Date().toISOString(),
+  });
+
+  await store.delete(key);
+  console.log(`bot-core: split logged for ${userId} — ${state.vendor}, ${entries.length} categories`);
+
+  const lines = [
+    `✅ Logged ${state.vendor} split across ${entries.length} categor${entries.length === 1 ? 'y' : 'ies'}:`,
+    ...entries.map(e => `  ${e.category}: $${e.amount.toFixed(2)}`),
+    '',
+    `View Sheet: ${sheetUrl(sheetId)}`,
+    '',
+    'UNDO to reverse the whole split',
+  ];
+  return ctx.send(lines.join('\n'));
+}
+
+/** SKIP a wallet-triggered split — log the original charge as one expense. */
+async function handleSplitSkip(ctx, key) {
+  const { store, userId } = ctx;
+  const pending = await store.get(key, { type: 'json' });
+  if (!pending) return ctx.send('Nothing to skip.');
+
+  const monthName = `${pending.month} ${pending.year}`;
+  let sheetId;
+  try {
+    sheetId = await getCurrentMonthSheetId(monthName);
+  } catch (e) {
+    await store.delete(key);
+    console.error('bot-core: split skip — month sheet missing', e.message);
+    return ctx.send(`Could not find sheet for ${monthName}. Log this via the dashboard.`);
+  }
+
+  const category = pending.category || 'Misc';
+  let result;
+  try {
+    result = await appendExpense({
+      category, vendor: pending.vendor, amount: pending.amount,
+      txDate: pending.txDate, sheetId, monthName,
+      paymentMethod: pending.paymentMethod || '', channel: ctx.channel,
+    });
+  } catch (e) {
+    console.error('bot-core: split skip append failed', e.message);
+    return ctx.send('Failed to log. Try again or use the dashboard.');
+  }
+
+  await store.setJSON(`lastlog:${userId}`, {
+    uuid: result.uuid, category, vendor: pending.vendor, amount: pending.amount,
+    txDate: pending.txDate, paymentMethod: pending.paymentMethod || '',
+    sheetId, monthName, year: pending.year, month: pending.month,
+    driveFileId: null, loggedAt: new Date().toISOString(),
+  });
+  await store.delete(key);
+  console.log(`bot-core: split skipped — logged single ${pending.vendor} $${pending.amount} → ${category}`);
+
+  return ctx.send(`✅ Logged ${pending.vendor} $${Number(pending.amount).toFixed(2)} as ${category} (not split).\n\nUNDO to reverse.`);
+}
+
+function buildSplitSummary(state) {
+  const groups = state.groups || {};
+  const lines = [`🧾 ${state.vendor} — split summary:`, ''];
+  for (const [c, amt] of Object.entries(groups)) {
+    lines.push(`  ${c}: $${Number(amt).toFixed(2)}`);
+  }
+  const sum = Math.round(Object.values(groups).reduce((s, a) => s + a, 0) * 100) / 100;
+  lines.push('', `Items total: $${sum.toFixed(2)} · Charged: $${Number(state.totalAmount).toFixed(2)}`);
+  if (Math.abs(Number(state.totalAmount) - sum) >= 0.01) {
+    lines.push('(tax/fees will be added to the largest category)');
+  }
+  lines.push('', 'Reply YES to log all, or CANCEL.');
+  return lines.join('\n');
+}
+
 /* ── Helpers: currency + prompts ─────────────────────────────────────────── */
 
 async function maybeConvertCurrency(data) {
@@ -808,6 +1079,9 @@ async function maybeConvertCurrency(data) {
   try {
     const info = await convertToUSD(data.total_amount, data.currency);
     data.total_amount = info.amount;
+    // R2: mark as converted so a second call on the same object is a no-op
+    // (the original currency is preserved in the returned conversionInfo).
+    data.currency = 'USD';
     return info;
   } catch (e) {
     console.warn('bot-core: currency conversion failed', e.message);
@@ -1377,6 +1651,313 @@ async function findFailedPending(store, blobs, userId) {
     } catch { /* skip */ }
   }
   return null;
+}
+
+/* ── R9: greetings / small talk (deterministic, no AI) ────────────────────── */
+
+function looksLikeGreeting(text) {
+  const t = (text || '').trim().toLowerCase().replace(/[!.,?]+$/, '');
+  return /^(hi+|hey+|hello+|holla|yo|sup|howdy|hiya|good\s+(morning|afternoon|evening|night)|thanks?|thank\s*you|thankyou|thx|ty|cheers|gm|gn)$/i.test(t);
+}
+
+function greetingReply() {
+  return [
+    "Hey! 👋 I'm your budget bot.",
+    '',
+    'Send a receipt photo, or type an expense like "Walmart 45.23 Grocery".',
+    'Ask me things like "how much on groceries?" or "am I over budget?"',
+    'Type GUIDE for the full command list.',
+  ].join('\n');
+}
+
+/* ── R10: shared field-edit logic + button-driven edit flows ──────────────── */
+
+/** Apply a single field edit to a pending receipt's extraction. Returns
+ *  { ok } or { ok: false, error }. Shared by typed edits ("amount: X") and the
+ *  button flow. Async because `card` needs user settings. */
+async function applyExtractionField(pending, field, value) {
+  const ex = pending.extraction;
+  if (field === 'category') {
+    const matched = CATEGORIES.find(c => c.toLowerCase() === value.toLowerCase());
+    if (!matched) return { ok: false, error: `Unknown category. Choose from:\n${CATEGORIES.join(', ')}` };
+    ex.reward_category = matched;
+  } else if (field === 'amount') {
+    const num = parseFloat(value);
+    if (isNaN(num) || num <= 0) return { ok: false, error: "Invalid amount. Use a positive number (e.g., 'amount: 52.10')" };
+    ex.total_amount = num;
+  } else if (field === 'store') {
+    ex.store_name = value;
+  } else if (field === 'date') {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return { ok: false, error: "Date must be YYYY-MM-DD (e.g., 'date: 2026-05-20')" };
+    ex.purchase_date = value;
+    pending.year = new Date(value).getFullYear();
+    pending.month = new Date(value).toLocaleString('en-US', { month: 'long' });
+  } else if (field === 'card') {
+    let settings = {};
+    try { settings = await getUserSettings(); } catch { /* none */ }
+    const cards = settings.cards || [];
+    const matched = resolveCardName(value, cards) || cards.find(c => c.toLowerCase() === value.toLowerCase());
+    if (!matched) return { ok: false, error: cards.length ? `Unknown card. Choose from:\n${cards.join(', ')}` : 'No cards configured. Add cards in the dashboard settings first.' };
+    ex.payment_method = matched;
+  } else if (field === 'booking') {
+    const method = value.toLowerCase();
+    if (method !== 'portal' && method !== 'direct') return { ok: false, error: "Booking must be 'portal' (8x UR) or 'direct' (4x UR)." };
+    ex.booking_method = method === 'direct' ? 'direct' : '';
+  } else if (field === 'tip') {
+    const num = parseFloat(value);
+    if (isNaN(num) || num <= 0) return { ok: false, error: "Invalid tip. Use a positive number (e.g., 'tip: 5.00')" };
+    const prevTip = ex.tip || 0;
+    ex.tip = num;
+    ex.total_amount = Math.round(((ex.total_amount || 0) - prevTip + num) * 100) / 100;
+  } else {
+    return { ok: false, error: 'Unknown field.' };
+  }
+  return { ok: true };
+}
+
+function buildUpdatedPrompt(pending) {
+  const e = pending.extraction;
+  const tipLine = e.tip ? ` (incl. $${e.tip.toFixed(2)} tip)` : '';
+  const lines = [
+    'Updated!',
+    `Store: ${e.store_name || 'Unknown'}`,
+    `Date: ${e.purchase_date || 'Unknown'}`,
+    `Category: ${e.reward_category || 'Misc'}`,
+    `Total: $${e.total_amount ?? '?'}${tipLine}`,
+  ];
+  if (e.payment_method) lines.push(`Card: ${e.payment_method}`);
+  if (e.booking_method) lines.push(`Booking: Direct (4x UR)`);
+  lines.push('', 'Reply YES to log, or CANCEL');
+  return lines.join('\n');
+}
+
+async function getCurrentPending(store, userId) {
+  const { blobs } = await store.list({ prefix: `confirm:${userId}:`, limit: 1 });
+  if (!blobs || blobs.length === 0) return null;
+  const key = blobs[0].key;
+  const pending = await store.get(key, { type: 'json' });
+  if (!pending) return null;
+  return { key, pending };
+}
+
+function renderPendingConfirm(ctx, pending) {
+  const batchInfo = pending.batchTotal ? { index: pending.batchIndex, total: pending.batchTotal } : undefined;
+  return ctx.send(buildConfirmPrompt(pending.extraction, pending.conversionInfo, batchInfo), kbConfirmReceipt());
+}
+
+/** Routes an `edit:*` inline-keyboard callback (the `edit:` prefix is stripped). */
+async function handleEditCallback(ctx, rest) {
+  const { store, userId } = ctx;
+
+  // ── Logged-expense edits (operate on lastlog) ──
+  if (rest === 'last') {
+    const lastlog = await store.get(`lastlog:${userId}`, { type: 'json' }).catch(() => null);
+    if (!lastlog || !lastlog.uuid) return ctx.send('No recent entry to edit.');
+    return ctx.send(
+      `Edit last entry:\n${lastlog.vendor} · $${lastlog.amount} (${lastlog.category})\n\nWhat do you want to change?`,
+      kbEditLoggedMenu()
+    );
+  }
+  if (rest === 'lf:cat') return ctx.send('Pick a category:', kbCategoryPicker(CATEGORIES, 'edit:lastcat'));
+  if (rest === 'lf:amt') {
+    await store.setJSON(`awaiting_edit:${userId}`, { scope: 'logged', field: 'amount' });
+    return ctx.send('Send the new amount (e.g. 52.10):');
+  }
+  if (rest.startsWith('lastcat:')) {
+    const category = CATEGORIES[parseInt(rest.slice('lastcat:'.length), 10)];
+    if (!category) return ctx.send('Unknown category.');
+    return await editLoggedExpense(ctx, { category });
+  }
+
+  // ── Pending-receipt edits (operate on the current confirm blob) ──
+  const current = await getCurrentPending(store, userId);
+  if (!current) return ctx.send('No pending receipt to edit. Send a receipt image first.');
+  const { key, pending } = current;
+
+  if (rest === 'menu') return ctx.send('What do you want to edit?', kbEditMenu());
+  if (rest === 'back') return renderPendingConfirm(ctx, pending);
+  if (rest === 'f:cat') return ctx.send('Pick a category:', kbCategoryPicker(CATEGORIES, 'edit:setcat'));
+  if (rest === 'f:card') {
+    let settings = {};
+    try { settings = await getUserSettings(); } catch { /* none */ }
+    const cards = settings.cards || [];
+    if (!cards.length) return ctx.send('No cards configured. Add cards in the dashboard settings first.');
+    return ctx.send('Pick a card:', kbCardPicker(cards, 'edit:setcard'));
+  }
+  if (['f:amt', 'f:store', 'f:date', 'f:tip'].includes(rest)) {
+    const field = { 'f:amt': 'amount', 'f:store': 'store', 'f:date': 'date', 'f:tip': 'tip' }[rest];
+    await store.setJSON(`awaiting_edit:${userId}`, { scope: 'pending', field });
+    const prompts = {
+      amount: 'Send the new amount (e.g. 52.10):',
+      store:  'Send the new store/vendor name:',
+      date:   'Send the new date (YYYY-MM-DD):',
+      tip:    'Send the tip amount (e.g. 5.00):',
+    };
+    return ctx.send(prompts[field]);
+  }
+  if (rest.startsWith('setcat:')) {
+    const category = CATEGORIES[parseInt(rest.slice('setcat:'.length), 10)];
+    if (!category) return ctx.send('Unknown category.');
+    pending.extraction.reward_category = category;
+    await store.setJSON(key, pending);
+    return ctx.send(buildUpdatedPrompt(pending), kbConfirmReceipt());
+  }
+  if (rest.startsWith('setcard:')) {
+    const idx = parseInt(rest.slice('setcard:'.length), 10);
+    if (idx === -1) {
+      pending.extraction.payment_method = '';
+    } else {
+      let settings = {};
+      try { settings = await getUserSettings(); } catch { /* none */ }
+      const card = (settings.cards || [])[idx];
+      if (!card) return ctx.send('Unknown card.');
+      pending.extraction.payment_method = card;
+    }
+    await store.setJSON(key, pending);
+    return ctx.send(buildUpdatedPrompt(pending), kbConfirmReceipt());
+  }
+
+  return ctx.send('Unknown edit action.');
+}
+
+/** Applies a typed value captured for a button-driven field edit. */
+async function applyAwaitingEdit(ctx, text, state) {
+  const { store, userId } = ctx;
+  await store.delete(`awaiting_edit:${userId}`);
+  const value = text.trim();
+
+  if (state.scope === 'logged') {
+    const num = parseFloat(value.replace(/[$,]/g, ''));
+    if (isNaN(num) || num <= 0) {
+      await store.setJSON(`awaiting_edit:${userId}`, state);   // keep waiting
+      return ctx.send('Invalid amount. Send a positive number (e.g. 52.10), or CANCEL.');
+    }
+    return await editLoggedExpense(ctx, { amount: num });
+  }
+
+  const current = await getCurrentPending(store, userId);
+  if (!current) return ctx.send('No pending receipt to edit. Send a receipt image first.');
+  const { key, pending } = current;
+  const res = await applyExtractionField(pending, state.field, value);
+  if (!res.ok) {
+    await store.setJSON(`awaiting_edit:${userId}`, state);     // re-prompt
+    return ctx.send(`${res.error}\n(or CANCEL)`);
+  }
+  await store.setJSON(key, pending);
+  return ctx.send(buildUpdatedPrompt(pending), kbConfirmReceipt());
+}
+
+/** Edits an already-logged expense by delete + re-append (no in-place update
+ *  primitive exists, and a category change moves the row to another sheet tab). */
+async function editLoggedExpense(ctx, changes) {
+  const { store, userId } = ctx;
+  const lastlog = await store.get(`lastlog:${userId}`, { type: 'json' }).catch(() => null);
+  if (!lastlog || !lastlog.uuid) return ctx.send('No recent entry to edit.');
+
+  const newCategory = changes.category ?? lastlog.category;
+  const newAmount   = changes.amount ?? lastlog.amount;
+
+  try {
+    await deleteExpenseByUUID({ category: lastlog.category, uuid: lastlog.uuid, sheetId: lastlog.sheetId });
+  } catch (e) {
+    console.error('bot-core: edit (delete) failed', e.message);
+    return ctx.send('Could not edit — the entry may have changed. Check the dashboard.');
+  }
+
+  let result;
+  try {
+    result = await appendExpense({
+      category: newCategory, vendor: lastlog.vendor, amount: newAmount,
+      txDate: lastlog.txDate, sheetId: lastlog.sheetId, monthName: lastlog.monthName,
+      paymentMethod: lastlog.paymentMethod || '', bookingMethod: lastlog.bookingMethod || '',
+      channel: ctx.channel,
+    });
+  } catch (e) {
+    console.error('bot-core: edit (append) failed', e.message);
+    return ctx.send('Edit failed while saving. Check the dashboard.');
+  }
+
+  await store.setJSON(`lastlog:${userId}`, {
+    ...lastlog, uuid: result.uuid, category: newCategory, amount: newAmount,
+    loggedAt: new Date().toISOString(),
+  });
+
+  console.log(`bot-core: EDIT — ${lastlog.vendor} → ${newCategory} $${newAmount} by ${userId}`);
+  return ctx.send(`✏️ Updated: ${lastlog.vendor} · $${newAmount} (${newCategory})`, kbLoggedActions());
+}
+
+/* ── R8: conversational agent fallback (Haiku, deterministic-first everywhere) ─ */
+
+async function runBotAgent(ctx, text) {
+  const { store, userId } = ctx;
+  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+  const tools = [
+    { name: 'get_month_overview', description: "Get this month's salary, total spent, and per-category budget/spent/remaining.", input_schema: { type: 'object', properties: {} } },
+    { name: 'get_recent_expenses', description: 'List the most recent logged expenses.', input_schema: { type: 'object', properties: { count: { type: 'integer', description: 'How many (max 20)' } } } },
+    { name: 'log_expense', description: 'Propose logging a new expense; the user is shown a confirmation to approve.', input_schema: { type: 'object', properties: { vendor: { type: 'string' }, amount: { type: 'number' }, category: { type: 'string', enum: CATEGORIES }, card: { type: 'string' } }, required: ['vendor', 'amount', 'category'] } },
+    { name: 'set_salary', description: "Set/update this month's salary (asks the user to confirm if one already exists).", input_schema: { type: 'object', properties: { amount: { type: 'number' } }, required: ['amount'] } },
+    { name: 'set_budget', description: 'Set/update a category budget for this month.', input_schema: { type: 'object', properties: { category: { type: 'string' }, amount: { type: 'number' } }, required: ['category', 'amount'] } },
+    { name: 'add_category', description: 'Add a new budget category.', input_schema: { type: 'object', properties: { name: { type: 'string' }, amount: { type: 'number' }, type: { type: 'string', enum: ['need', 'want', 'saving'] } }, required: ['name', 'amount'] } },
+    { name: 'delete_last', description: 'Start deleting the most recently logged expense (secure multi-step confirmation).', input_schema: { type: 'object', properties: {} } },
+  ];
+
+  const execute = async (name, input) => {
+    if (name === 'get_month_overview') {
+      const sheetId = await getCurrentMonthSheetId(monthName);
+      const t = await getTotals(sheetId);
+      const cats = (t.categories || []).map(c => `${c.name}: spent $${(c.spent || 0).toFixed(2)} / budget $${(c.budget || 0).toFixed(2)} (left $${(c.remaining || 0).toFixed(2)})`).join('\n');
+      const totalSpent = (t.categories || []).reduce((s, c) => s + (c.spent || 0), 0);
+      return `Month: ${monthName}\nSalary: ${t.salary != null ? `$${t.salary}` : 'not set'}\nTotal spent: $${totalSpent.toFixed(2)}\n${cats}`;
+    }
+    if (name === 'get_recent_expenses') {
+      const sheetId = await getCurrentMonthSheetId(monthName);
+      const n = Math.min(Math.max(parseInt(input.count) || 5, 1), 20);
+      const recent = await getRecentExpenses(sheetId, n);
+      if (!recent.length) return 'No recent expenses.';
+      return recent.map(r => `${r.txDate || ''} ${r.vendor || 'Unknown'} $${(r.amount || 0).toFixed(2)} (${r.category})`).join('\n');
+    }
+    if (name === 'log_expense') {
+      const category = CATEGORIES.find(c => c.toLowerCase() === String(input.category || '').toLowerCase()) || 'Misc';
+      const amount = parseFloat(input.amount);
+      if (isNaN(amount) || amount <= 0) return 'Invalid amount.';
+      const now = new Date();
+      let cardName = '';
+      if (input.card) { try { const s = await getUserSettings(); cardName = resolveCardName(input.card, s.cards || []) || ''; } catch { /* none */ } }
+      const receiptId = crypto.randomUUID();
+      await store.setJSON(`confirm:${userId}:${receiptId}`, {
+        id: receiptId, phone: userId,
+        extraction: { store_name: String(input.vendor || 'Unknown'), purchase_date: now.toISOString().slice(0, 10), total_amount: amount, tax_amount: null, currency: 'USD', items: [], reward_category: category, payment_method: cardName },
+        year: now.getFullYear(), month: now.toLocaleString('en-US', { month: 'long' }), status: 'awaiting_confirmation',
+      });
+      const lines = ['Got it:', `Store: ${input.vendor}`, `Category: ${category}`, `Total: $${amount}`];
+      if (cardName) lines.push(`Card: ${cardName}`);
+      lines.push('', 'Reply YES to log, or CANCEL');
+      await ctx.send(lines.join('\n'), kbConfirmReceipt());
+      return { result: 'Confirmation shown to user.', userNotified: true };
+    }
+    if (name === 'set_salary')  { await handleSetSalary(ctx, String(input.amount)); return { result: 'Prompted user.', userNotified: true }; }
+    if (name === 'set_budget')  { await handleSetBudget(ctx, String(input.category), String(input.amount)); return { result: 'Prompted user.', userNotified: true }; }
+    if (name === 'add_category'){ await handleAddCategory(ctx, String(input.name), String(input.amount), (input.type || 'want').toLowerCase()); return { result: 'Prompted user.', userNotified: true }; }
+    if (name === 'delete_last') { await handleDelete(ctx, 'last'); return { result: 'Started secure delete.', userNotified: true }; }
+    return 'Unknown tool.';
+  };
+
+  const system = [
+    'You are Fundient, a friendly Telegram assistant for a personal/household budget tracker.',
+    'Be concise and warm. Use tools to read data and to take actions — never invent numbers.',
+    `Expense categories: ${CATEGORIES.join(', ')}.`,
+    'For any money-changing action (log_expense, set_salary, set_budget, add_category, delete_last) the tool already shows the user a confirmation; after calling one, reply with at most a short one-line acknowledgement (or nothing).',
+    'For questions, answer directly using get_month_overview / get_recent_expenses.',
+  ].join('\n');
+
+  const { text: finalText, acted } = await runToolLoop({ userText: text, system, tools, execute });
+
+  if (finalText && finalText.trim()) {
+    await ctx.send(finalText.trim());
+    return true;
+  }
+  return acted;   // a tool already messaged the user → handled; else not handled
 }
 
 export { CATEGORIES, DAILY_LIMIT, getRateCount };

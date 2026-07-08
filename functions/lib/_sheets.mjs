@@ -9,6 +9,21 @@ const SHEETS_API    = 'https://sheets.googleapis.com/v4/spreadsheets';
 const TEMPLATE_ID   = process.env.VITE_TEMPLATE_SHEET_ID;
 const ALLOWED_EMAILS = (process.env.ALLOWED_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
 
+/* ── R3: tiny in-module TTL caches (mirror _drive getAccessToken) ──
+   getUserSettings and getCurrentMonthSheetId are read on nearly every bot
+   message but change rarely, so caching them per warm instance cuts a Sheets
+   round-trip off most messages. Only successful month lookups are cached (a miss
+   throws and is not stored), so a newly created month is never served stale. */
+const SETTINGS_TTL_MS = 60_000;
+const MONTH_TTL_MS     = 5 * 60_000;
+let   _settingsCache   = null;                 // { value, expiresAt }
+const _monthSheetCache = new Map();            // lowerMonthName -> { sheetId, expiresAt }
+
+export function __clearSheetCaches() {
+  _settingsCache = null;
+  _monthSheetCache.clear();
+}
+
 const SHEET_MAP = {
   'Grocery':       { sheet: 'Grocery' },
   'Misc':          { sheet: 'Misc' },
@@ -64,14 +79,19 @@ async function sheetsRequest(sheetId, path, options = {}) {
 export async function getCurrentMonthSheetId(monthName) {
   if (!TEMPLATE_ID) throw new Error('VITE_TEMPLATE_SHEET_ID not configured');
 
+  const target = monthName || new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const cacheKey = target.trim().toLowerCase();
+
+  const cached = _monthSheetCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.sheetId;
+
   const range = encodeURIComponent("'Months'!A2:B50");
   const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
   const rows = data.values || [];
 
-  const target = monthName || new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
-
   for (const row of rows) {
-    if (row[0] && row[1] && row[0].trim().toLowerCase() === target.trim().toLowerCase()) {
+    if (row[0] && row[1] && row[0].trim().toLowerCase() === cacheKey) {
+      _monthSheetCache.set(cacheKey, { sheetId: row[1], expiresAt: Date.now() + MONTH_TTL_MS });
       return row[1];
     }
   }
@@ -576,12 +596,29 @@ export async function getLatestMonthData() {
 }
 
 export async function getUserSettings() {
-  if (!TEMPLATE_ID || ALLOWED_EMAILS.length === 0) return {};
-  const userId = ALLOWED_EMAILS[0];
+  // R3: cache the default-household lookup (the bot's hot path); leave the
+  // per-email variant below uncached since it's keyed by arbitrary emails.
+  if (_settingsCache && _settingsCache.expiresAt > Date.now()) return _settingsCache.value;
+
+  let value = {};
+  if (TEMPLATE_ID && ALLOWED_EMAILS.length > 0) {
+    value = await getUserSettingsByEmail(ALLOWED_EMAILS[0]);
+  }
+
+  _settingsCache = { value, expiresAt: Date.now() + SETTINGS_TTL_MS };
+  return value;
+}
+
+// Per-requester settings lookup (e.g. wallet-webhook, where the request carries
+// the email of whichever household member's phone triggered it). Unlike
+// getUserSettings(), this does NOT fall back to ALLOWED_EMAILS[0] — each user's
+// row is isolated, matching how the web app's useSettings(user.email, ...) works.
+export async function getUserSettingsByEmail(email) {
+  if (!TEMPLATE_ID || !email) return {};
   const range = encodeURIComponent("'UserSettings'!A:B");
   const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
   const rows = data.values || [];
-  const row = rows.find(r => r[0] === userId);
+  const row = rows.find(r => r[0] === email);
   if (!row) return {};
   try { return JSON.parse(row[1] || '{}'); } catch { return {}; }
 }
