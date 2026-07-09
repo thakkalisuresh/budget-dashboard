@@ -1,7 +1,7 @@
 /**
  * Currency conversion via open.er-api.com.
  * Returns USD amount + the rate used so users see the conversion details.
- * Files starting with "_" are NOT deployed as functions by Netlify.
+ * Files in lib/ are shared modules, not standalone deployed functions.
  */
 
 const RATES_URL    = 'https://open.er-api.com/v6/latest/USD';

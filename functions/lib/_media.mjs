@@ -1,8 +1,8 @@
 /**
  * Media validation helpers (image/PDF magic-byte checks).
- * Extracted verbatim from netlify/functions/_whatsapp.mjs — the WhatsApp/Twilio
- * transport code is out of scope, but these two utilities are shared by the
- * Telegram media path, so they live here free of Twilio dependencies.
+ * Split out from the WhatsApp/Twilio transport code (out of scope here);
+ * these two utilities are shared by the Telegram media path and live here
+ * free of Twilio dependencies.
  */
 
 export const ALLOWED_MEDIA_TYPES = new Set([

@@ -6,9 +6,8 @@
  * used — it requires a held-open connection correlated across invocations,
  * which serverless cannot do.
  *
- * Ported verbatim from netlify/functions/_mcp.mjs — this module is
- * runtime-agnostic (no Web Request / Netlify Blobs; only Sheets/extraction
- * libs + pure logic), so it behaves identically under Cloud Functions.
+ * Runtime-agnostic — no platform Request/Response or blob store, only
+ * Sheets/extraction libs + pure logic.
  */
 
 import {

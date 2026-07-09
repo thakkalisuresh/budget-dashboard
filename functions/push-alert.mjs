@@ -1,7 +1,6 @@
 /**
  * Cloud Function — send an instant Web Push alert to the caller's own subscription.
- * Ported from netlify/functions/push-alert.mjs (Deno → Node/Express,
- * @netlify/blobs → Firestore). VAPID keys + web-push unchanged.
+ * Push subscriptions are stored in Firestore; VAPID keys via web-push.
  */
 import { onRequest } from 'firebase-functions/v2/https';
 import webpush from 'web-push';

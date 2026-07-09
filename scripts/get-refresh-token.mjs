@@ -79,7 +79,7 @@ await new Promise((resolve, reject) => {
       res.end('<h2>✅ Done! Refresh token printed in your terminal. You can close this tab.</h2>');
       server.close();
 
-      console.log('\n✅  SUCCESS — copy this token into Netlify:\n');
+      console.log('\n✅  SUCCESS — copy this token into Firebase (Secret Manager):\n');
       console.log('━'.repeat(60));
       console.log('GOOGLE_DRIVE_REFRESH_TOKEN =', tokens.refresh_token);
       console.log('━'.repeat(60));

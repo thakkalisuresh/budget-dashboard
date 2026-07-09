@@ -1709,7 +1709,7 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
               <p className="text-xs leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>
                 Connect Claude (Desktop or Web) to query and log expenses by natural language.
                 Set a secret <code className="font-mono text-[11px] px-1 py-0.5 rounded" style={{ background: 'var(--sur-8)' }}>MCP_API_KEY</code> environment
-                variable in Netlify, then add this to your MCP client config (replace the placeholder with that key):
+                variable in Firebase, then add this to your MCP client config (replace the placeholder with that key):
               </p>
               <pre className="text-[10px] leading-relaxed font-mono rounded-xl p-3 overflow-x-auto whitespace-pre" style={{ background: 'oklch(8% 0.005 var(--accent-hue))', color: 'oklch(90% 0.005 0)' }}>{mcpConfig}</pre>
               <button

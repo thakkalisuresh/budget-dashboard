@@ -2,7 +2,7 @@
  * AI-powered receipt extraction — Gemini primary, Claude fallback.
  * Fallback chain: gemini-2.5-flash → gemini-2.5-pro
  *               → claude-sonnet-4-6 → claude-haiku-4-5
- * Files starting with "_" are NOT deployed as functions by Netlify.
+ * Files in lib/ are shared modules, not standalone deployed functions.
  */
 
 const GEMINI_API_KEY    = process.env.GEMINI_API_KEY;

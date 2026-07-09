@@ -1,7 +1,7 @@
 /**
  * Transport-agnostic bot business logic.
  * Shared by whatsapp-webhook.mjs and telegram-webhook.mjs.
- * Files starting with "_" are NOT deployed as functions by Netlify.
+ * Files in lib/ are shared modules, not standalone deployed functions.
  *
  * All handlers receive a ctx object:
  *   { store, userId, chatId, send(message, markup?) }
