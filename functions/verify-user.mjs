@@ -1,6 +1,5 @@
 /**
  * Cloud Function — server-side email allowlist verification.
- * Ported from netlify/edge-functions/verify-user.js (Deno → Node/Express).
  *
  * Emails never live in the client bundle; checked against Secret Manager.
  * POST { accessToken } → { allowed, email, name, picture, role, allowedEmails }.

@@ -1,7 +1,7 @@
 /**
  * Google Drive utilities for serverless functions.
  * Handles: refresh-token exchange, folder creation, file upload, sharing.
- * Files starting with "_" are NOT deployed as functions by Netlify.
+ * Files in lib/ are shared modules, not standalone deployed functions.
  */
 
 const DRIVE_API   = 'https://www.googleapis.com/drive/v3/files';

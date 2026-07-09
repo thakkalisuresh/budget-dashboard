@@ -32,3 +32,6 @@ firebase-debug.log
 firebase-debug.*.log
 ui-debug.log
 *.cache
+
+# Netlify (legacy — build output, app migrated to Firebase)
+.netlify/

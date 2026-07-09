@@ -1,7 +1,6 @@
 /**
  * Cloud Function — register/update a browser push subscription.
- * Ported from netlify/functions/push-subscribe.mjs (Deno → Node/Express,
- * @netlify/blobs → Firestore).
+ * Subscriptions are stored in Firestore.
  */
 import { onRequest } from 'firebase-functions/v2/https';
 import { ALLOWED_EMAILS } from './lib/secrets.mjs';

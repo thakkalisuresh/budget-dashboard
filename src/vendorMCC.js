@@ -1,3 +1,9 @@
+// ════════════════════════════════════════════════════════════════════════════
+// vendorMCC.js — guess a transaction's "MCC" (Merchant Category Code).
+// An MCC is the 4-digit code card networks assign to a merchant by business type
+// (e.g. 5411 = supermarket, 5541 = gas station). Credit-card reward rates often
+// depend on it, so we map known vendors → MCC, with a per-category fallback.
+// ════════════════════════════════════════════════════════════════════════════
 // Known vendors → MCC. Matched case-insensitively on normalized vendor string.
 // More specific keys (e.g. 'ubereats') must appear before shorter prefixes ('uber')
 // so the longer match wins. Unknown vendors fall back to CATEGORY_DEFAULT_MCC.
@@ -71,6 +77,9 @@ const CATEGORY_DEFAULT_MCC = {
   'Misc':          '5999',
 };
 
+// Resolve a vendor (and its category) to an MCC. First try to find a known vendor
+// as a substring of the cleaned name; if none matches, fall back to the category
+// default, and finally to 5999 (generic "misc") if even that is unknown.
 export function resolveMCC(vendor, category) {
   const v = (vendor || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   for (const [key, mcc] of Object.entries(VENDOR_MCC)) {
