@@ -1,21 +1,67 @@
+<div align="center">
+
+<img src="src/assets/hero.png" alt="Fundient logo" width="110" />
+
 # Fundient Budget Dashboard
 
-Personal budget dashboard built with React and backed by Google Sheets. Tracks monthly spending by category, compares actual vs. budget, surfaces insights, and supports bank reconciliation — all from a live spreadsheet you own.
+**A personal budget dashboard backed by a Google Sheet you own.**
+Track monthly spending by category, compare actual vs. budget, scan receipts with AI,
+reconcile bank statements, and split household spending by person — all from a live
+spreadsheet, with an offline-capable PWA on top.
+
+[![CI](https://github.com/thakkalisuresh/budget-dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/thakkalisuresh/budget-dashboard/actions/workflows/ci.yml)
+&nbsp;![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)
+&nbsp;![Vite](https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white)
+&nbsp;![Tailwind CSS v4](https://img.shields.io/badge/Tailwind_CSS-v4-38BDF8?logo=tailwindcss&logoColor=white)
+&nbsp;![Firebase](https://img.shields.io/badge/Firebase-Functions_%2B_Firestore-FFCA28?logo=firebase&logoColor=black)
+&nbsp;![Google Sheets](https://img.shields.io/badge/data-Google_Sheets-34A853?logo=googlesheets&logoColor=white)
+&nbsp;![Claude](https://img.shields.io/badge/AI-Anthropic_Claude-D97757?logo=anthropic&logoColor=white)
+&nbsp;![PWA](https://img.shields.io/badge/PWA-offline_ready-5A0FC8?logo=pwa&logoColor=white)
+&nbsp;![License: private](https://img.shields.io/badge/license-private-lightgrey)
+
+</div>
+
+---
+
+## Table of Contents
+
+- [Features](#features)
+- [Screenshots](#screenshots)
+- [Tech Stack](#tech-stack)
+- [Quick Start](#quick-start)
+- [Setup](#setup)
+- [Testing](#testing)
+- [Architecture](#architecture)
+- [Deployment](#deployment)
+- [Documentation](#documentation)
+- [Security](#security)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Features
 
-- **Budget vs. actual tracking** — per-category bars with gradient fill (green → amber → red based on % spent)
-- **Spending distribution** — animated donut chart with D3 arc morphing between months
-- **Bank reconciliation** — import CSV/PDF bank statements and match against recorded expenses
-- **Receipt scanning** — photograph a receipt and Claude extracts the amount, vendor, and category
-- **AI chat** — ask questions about your budget in plain language
-- **Offline PWA** — biometric unlock (Face ID / fingerprint) restores cached dashboard without internet; expenses queued offline sync automatically on reconnect
-- **Push notifications** — daily/weekly spending digests and over-budget alerts
-- **Multi-user** — owner + viewer roles, shared access to the same sheet
-- **Dark mode** — full light/dark support with per-user accent colour picker
-- **PIN lock + biometrics** — optional AES-encrypted session with auto-lock on background
+- ✅ **Budget vs. actual tracking** — per-category bars with gradient fill (green → amber → red by % spent)
+- ✅ **Spending distribution** — animated donut chart with D3 arc morphing between months
+- ✅ **Split by person** — separate household spending by who owns the card (you vs. partner) in a dedicated Split tab + an auto-updating "By Person" Google Sheet tab; owner is derived live from each card, so no tagging or backfill
+- ✅ **Receipt scanning** — photograph a receipt and Claude extracts amount, vendor, and category
+- ✅ **Bank reconciliation** — import CSV/PDF statements and match against recorded expenses
+- ✅ **Card rewards engine** — MCC-based rewards per card, best-card-per-category recommendations, and a Cards analytics tab
+- ✅ **AI chat** — ask questions about your budget in plain language
+- ✅ **Mobile wallet capture** — iOS Shortcuts / Android MacroDroid forward payment notifications to a webhook that auto-categorizes and writes to the sheet
+- ✅ **Offline PWA** — biometric unlock (Face ID / fingerprint) restores a cached dashboard with no internet; expenses queued offline sync on reconnect
+- ✅ **Push notifications** — daily/weekly digests and over-budget alerts
+- ✅ **Multi-user** — owner + viewer roles, shared access to the same sheet
+- ✅ **Dark mode** — full light/dark support with a per-user OKLCH accent-colour picker
+- ✅ **PIN lock + biometrics** — optional AES-encrypted session with auto-lock on background
 
-## Stack
+## Screenshots
+
+> _Dashboard, Split, and Cards captures will be added here._
+> Drop images into [`docs/screenshots/`](docs/screenshots/) (see that folder's README for the suggested set + embed snippet).
+<!-- Once captured, embed e.g.:
+<p align="center"><img src="docs/screenshots/dashboard.png" width="80%" alt="Dashboard" /></p> -->
+
+## Tech Stack
 
 | Layer | Technology |
 |---|---|
@@ -41,6 +87,8 @@ For API support (receipt scanning, auth verification, push, bot, MCP):
 ```bash
 firebase emulators:start --only functions,hosting   # runs the /api/* Cloud Functions locally
 ```
+
+> **Tip:** set `VITE_DEV_MOCK=true` in `.env.local` to run the UI against mock data with no Google login (see [ENV.md](ENV.md)).
 
 ## Setup
 
@@ -72,21 +120,55 @@ VITE_TEMPLATE_SHEET_ID=your-template-sheet-id
 VITE_VAPID_PUBLIC_KEY=your-vapid-public-key
 ```
 
-See [docs/ENV.md](docs/ENV.md) for the full list including the server-side secrets (Firebase Secret Manager).
+See [ENV.md](ENV.md) and [docs/ENV.md](docs/ENV.md) for the full list, including the server-side secrets stored in Firebase Secret Manager.
 
 ## Testing
 
 ```bash
-npm test            # run all tests once
+npm test            # run all tests once (vitest)
 npm run test:watch  # watch mode
 ```
 
+## Architecture
+
+A React SPA reads/writes a Google Sheet directly from the client; a small set of Firebase
+Cloud Functions handle anything that needs a server secret (Claude proxy, auth verification,
+push, the Telegram bot, the MCP server, and the wallet webhook). See
+**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the component map, data flow, sheet
+schema, the card-rewards engine, and the offline/animation models.
+
+## Deployment
+
+Pushes to `main`/`develop` deploy to Firebase Hosting + Cloud Functions via GitHub Actions
+(no build-minute billing). See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for Google Cloud
+setup, VAPID keys, and Secret Manager configuration.
+
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md) — component map, data flow, offline model, animation architecture
-- [Environment Variables](docs/ENV.md) — all `VITE_*` and server-side vars
-- [Deployment](docs/DEPLOYMENT.md) — Google Cloud setup, VAPID keys, Firebase config (Secret Manager, CI deploy)
-- [Security Model](docs/SECURITY-MODEL.md) — auth, token encryption, CSP, input validation
-- [Security Notes](SECURITY.md) — known tradeoffs and accepted limitations
-- [Contributing](CONTRIBUTING.md) — dev setup, conventions, PR workflow
-- [Changelog](CHANGELOG.md) — significant changes by milestone
+| Doc | What's in it |
+|---|---|
+| [Architecture](docs/ARCHITECTURE.md) | Component map, data flow, sheet schema, card rewards, offline + animation models |
+| [Environment Variables](docs/ENV.md) · [ENV.md](ENV.md) | All `VITE_*` and server-side vars; dev-mock mode |
+| [Deployment](docs/DEPLOYMENT.md) | Google Cloud, VAPID, Firebase Secret Manager, CI deploy |
+| [Security Model](docs/SECURITY-MODEL.md) | Auth, token encryption, CSP, input validation |
+| [Security Notes](SECURITY.md) | Known tradeoffs and accepted limitations |
+| [Contributing](CONTRIBUTING.md) | Dev setup, conventions, PR workflow |
+| [Changelog](CHANGELOG.md) | Significant changes by milestone |
+
+## Security
+
+Auth uses Google OAuth with an allowlisted email set; access tokens can be AES-encrypted
+behind a PIN/biometric lock. Server endpoints enforce origin + `sec-fetch-site` checks,
+bearer verification, rate limits, and a model allowlist. Report anything sensitive privately
+rather than opening a public issue — see [SECURITY.md](SECURITY.md).
+
+## Contributing
+
+This is a personal/household project, but the workflow is documented in
+[CONTRIBUTING.md](CONTRIBUTING.md) (branch naming, commit conventions, running tests, and the
+client ⇄ server rewards-table sync rule). PRs target `develop`; `main` is the deploy branch.
+
+## License
+
+Personal project — **all rights reserved**. Not currently released under an open-source
+license. If you'd like to reuse any of it, please reach out first.

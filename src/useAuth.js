@@ -53,9 +53,9 @@ async function clearAllIndexedDB() {
   } catch { /* non-fatal */ }
 }
 
-// Cloud Function endpoint — email allowlist lives server-side only
+// Edge function endpoint — email allowlist lives server-side only
 const VERIFY_URL = import.meta.env.DEV
-  ? 'http://localhost:8888/api/verify-user'  // TODO: legacy local dev port — update to the Firebase emulator port
+  ? 'http://localhost:5000/api/verify-user'  // firebase hosting emulator (firebase emulators:start)
   : '/api/verify-user';
 
 // OAuth authorization-code broker (mobile biometric login). Behind the Hosting
@@ -155,14 +155,35 @@ export function useAuth() {
       let email, name, picture, prodRole, prodAllowedEmails;
 
       if (import.meta.env.DEV) {
-        // Dev mode: verify with Google directly — the verify-user function isn't running locally
-        const profileRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-          headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
-        });
-        const profile = await profileRes.json();
-        email   = profile.email?.toLowerCase();
-        name    = profile.given_name || 'User';
-        picture = profile.picture;
+        // Dev mode: prefer the local Firebase emulator's verify-user function
+        // (run `firebase emulators:start --only functions,hosting`) so the real
+        // server-side allowlist path is exercised. Fall back to verifying with
+        // Google directly when the emulator isn't running.
+        let verified = false;
+        try {
+          const res  = await fetch(VERIFY_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accessToken: tokenResponse.access_token }),
+          });
+          const data = await res.json();
+          if (!data.allowed) { setDenied(true); setLoading(false); return; }
+          email   = data.email;
+          name    = data.name || 'User';
+          picture = data.picture;
+          verified = true;
+        } catch {
+          // Emulator not reachable — fall through to direct Google verification.
+        }
+        if (!verified) {
+          const profileRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+            headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+          });
+          const profile = await profileRes.json();
+          email   = profile.email?.toLowerCase();
+          name    = profile.given_name || 'User';
+          picture = profile.picture;
+        }
       } else {
         // Production: verify server-side via edge function — emails never in client bundle
         const res  = await fetch(VERIFY_URL, {

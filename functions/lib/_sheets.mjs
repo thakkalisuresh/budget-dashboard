@@ -9,6 +9,21 @@ const SHEETS_API    = 'https://sheets.googleapis.com/v4/spreadsheets';
 const TEMPLATE_ID   = process.env.VITE_TEMPLATE_SHEET_ID;
 const ALLOWED_EMAILS = (process.env.ALLOWED_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
 
+/* ── R3: tiny in-module TTL caches (mirror _drive getAccessToken) ──
+   getUserSettings and getCurrentMonthSheetId are read on nearly every bot
+   message but change rarely, so caching them per warm instance cuts a Sheets
+   round-trip off most messages. Only successful month lookups are cached (a miss
+   throws and is not stored), so a newly created month is never served stale. */
+const SETTINGS_TTL_MS = 60_000;
+const MONTH_TTL_MS     = 5 * 60_000;
+let   _settingsCache   = null;                 // { value, expiresAt }
+const _monthSheetCache = new Map();            // lowerMonthName -> { sheetId, expiresAt }
+
+export function __clearSheetCaches() {
+  _settingsCache = null;
+  _monthSheetCache.clear();
+}
+
 const SHEET_MAP = {
   'Grocery':       { sheet: 'Grocery' },
   'Misc':          { sheet: 'Misc' },
@@ -64,14 +79,19 @@ async function sheetsRequest(sheetId, path, options = {}) {
 export async function getCurrentMonthSheetId(monthName) {
   if (!TEMPLATE_ID) throw new Error('VITE_TEMPLATE_SHEET_ID not configured');
 
+  const target = monthName || new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const cacheKey = target.trim().toLowerCase();
+
+  const cached = _monthSheetCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.sheetId;
+
   const range = encodeURIComponent("'Months'!A2:B50");
   const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
   const rows = data.values || [];
 
-  const target = monthName || new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
-
   for (const row of rows) {
-    if (row[0] && row[1] && row[0].trim().toLowerCase() === target.trim().toLowerCase()) {
+    if (row[0] && row[1] && row[0].trim().toLowerCase() === cacheKey) {
+      _monthSheetCache.set(cacheKey, { sheetId: row[1], expiresAt: Date.now() + MONTH_TTL_MS });
       return row[1];
     }
   }
@@ -245,27 +265,45 @@ export async function getRecentExpenses(sheetId, limit = 10) {
   return deduped.slice(0, limit);
 }
 
+// Find the 0-indexed row holding the UUID in one tab. The UUID column has
+// moved over time (legacy 6-col schema: F; current: G; Travel/Holiday: H),
+// so match F–H. UUIDs are 'tx_…' strings — no collision with card names (F)
+// or booking methods (G on Travel/Holiday).
+async function findRowByUUID(sheetId, sheetTab, uuid) {
+  const range = encodeURIComponent(`'${sheetTab}'!F:H`);
+  const data = await sheetsRequest(sheetId, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
+  const rows = data.values || [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || [];
+    if (r[0] === uuid || r[1] === uuid || r[2] === uuid) return i;
+  }
+  return -1;
+}
+
 export async function deleteExpenseByUUID({ category, uuid, sheetId }) {
   const config = SHEET_MAP[category];
   if (!config) throw new Error(`Unknown category: ${category}`);
 
-  const range = encodeURIComponent(`'${config.sheet}'!F:F`);
-  const data = await sheetsRequest(sheetId, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
-  const rows = data.values || [];
+  // Expected tab first…
+  let sheetTab = config.sheet;
+  let rowIndex = await findRowByUUID(sheetId, sheetTab, uuid);
 
-  let rowIndex = -1;
-  for (let i = 0; i < rows.length; i++) {
-    if (rows[i][0] === uuid) {
-      rowIndex = i;
-      break;
+  // …then every other tab: the dashboard's "move to category" keeps the UUID
+  // but relocates the row, so a bot-logged expense may live elsewhere by now.
+  if (rowIndex === -1) {
+    const otherTabs = [...new Set(Object.values(SHEET_MAP).map(c => c.sheet))]
+      .filter(t => t !== config.sheet);
+    for (const tab of otherTabs) {
+      rowIndex = await findRowByUUID(sheetId, tab, uuid);
+      if (rowIndex !== -1) { sheetTab = tab; break; }
     }
   }
 
   if (rowIndex === -1) throw new Error(`Row with UUID ${uuid} not found`);
 
   const meta = await sheetsRequest(sheetId, '?fields=sheets.properties');
-  const sheet = meta.sheets.find(s => s.properties.title === config.sheet);
-  if (!sheet) throw new Error(`Sheet tab not found: ${config.sheet}`);
+  const sheet = meta.sheets.find(s => s.properties.title === sheetTab);
+  if (!sheet) throw new Error(`Sheet tab not found: ${sheetTab}`);
 
   await sheetsRequest(sheetId, ':batchUpdate', {
     method: 'POST',
@@ -558,12 +596,29 @@ export async function getLatestMonthData() {
 }
 
 export async function getUserSettings() {
-  if (!TEMPLATE_ID || ALLOWED_EMAILS.length === 0) return {};
-  const userId = ALLOWED_EMAILS[0];
+  // R3: cache the default-household lookup (the bot's hot path); leave the
+  // per-email variant below uncached since it's keyed by arbitrary emails.
+  if (_settingsCache && _settingsCache.expiresAt > Date.now()) return _settingsCache.value;
+
+  let value = {};
+  if (TEMPLATE_ID && ALLOWED_EMAILS.length > 0) {
+    value = await getUserSettingsByEmail(ALLOWED_EMAILS[0]);
+  }
+
+  _settingsCache = { value, expiresAt: Date.now() + SETTINGS_TTL_MS };
+  return value;
+}
+
+// Per-requester settings lookup (e.g. wallet-webhook, where the request carries
+// the email of whichever household member's phone triggered it). Unlike
+// getUserSettings(), this does NOT fall back to ALLOWED_EMAILS[0] — each user's
+// row is isolated, matching how the web app's useSettings(user.email, ...) works.
+export async function getUserSettingsByEmail(email) {
+  if (!TEMPLATE_ID || !email) return {};
   const range = encodeURIComponent("'UserSettings'!A:B");
   const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
   const rows = data.values || [];
-  const row = rows.find(r => r[0] === userId);
+  const row = rows.find(r => r[0] === email);
   if (!row) return {};
   try { return JSON.parse(row[1] || '{}'); } catch { return {}; }
 }

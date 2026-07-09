@@ -146,6 +146,9 @@ All animations respect `prefers-reduced-motion` — the DonutChart tween and Bud
 | `sheetNonMonthly` | Non-monthly expense tracking |
 | `sheetCategories` | Category CRUD |
 | `sheetCards` | `ensureCardsSummarySheet()` — formula-driven Cards Summary tab |
+| `sheetSplit` | `ensurePersonSplitSheet()` — formula-driven "By Person" tab (spending split by card owner) |
+
+`cardOwners.js` (outside the barrel) holds the card→person map and helpers (`ownerForCard`, `cardsForOwner`, `ownerLabel`), shared by the Split tab and the By Person sheet.
 
 ### Payment Methods & Card Rewards
 
@@ -182,10 +185,13 @@ Booking Method is only meaningful for CSR airline/hotel transactions — writing
 
 **Cards Summary tab**: formula-driven (`sheetCards.ensureCardsSummarySheet`), created on first Cards tab visit. A single `QUERY` over `History!A:K` aggregates spend / count / last-date / last-vendor per card — live, no app writes after creation.
 
+**By Person tab** (split by card owner): formula-driven (`sheetSplit.ensurePersonSplitSheet`). Two `QUERY` blocks over `History!A:K` filtered by each person's card set (`K MATCHES '<cards>'`, same delete/edit/undo exclusion as Cards Summary) — left column = you, right = partner — plus a totals comparison. Seeded at month creation (`useMonths.createMonth`) and refreshed on Split-tab open, keyed by an owner-map signature so a changed map or renamed person rewrites the formulas. Owner is **derived live from the card** via `cardOwners.ownerForCard`; cards with no owner (e.g. Cash) are excluded.
+
 **Settings** (`useSettings` → `DEFAULT_SETTINGS`)
 - `cards`: pre-seeded list of card/account names (user-editable in Settings).
 - `cardRules`: `[{ id, vendorPattern, category, card }]` — auto-assigns a card. Category-specific rules beat vendor-only; longer patterns beat shorter.
 - `cardRewardRates`: `null` = use hardcoded `CARD_REWARDS`; set to a custom rate table via the Settings UI. Read via `getEffectiveRates(settings)`.
+- `cardOwners`: `{ [card]: 'me' | 'wife' }` — maps each card to a person for the Split tab / By Person sheet (seeded from `DEFAULT_CARD_OWNERS`, editable in Settings → People & Card Owners). `people`: `{ me, wife }` display names.
 
 **Resolution chain** (used by add-expense, scanner, import, reconcile, bot):
 `Vision-extracted card → resolveCardName() fuzzy match against cards list → applyCardRules(vendor, category) → manual pick`. `resolveCardName` normalizes punctuation/case and guards short names (e.g. "Cash" won't match "…active cash").
@@ -221,6 +227,7 @@ Reward cards and rates:
 | Chase Sapphire Reserve | Points (UR, 1.5¢) | 3x dining, 8x travel portal / 4x direct, 1x default |
 | American Express Blue Cash Preferred | Cashback | 6% supermarkets (cap $6k/yr), 6% streaming, 3% gas, 3% transit, 1% default |
 | Capital One Quicksilver | Cashback | 1.5% flat |
+| Chase Freedom Rise | Cashback | 1.5% flat |
 | Chase Freedom Unlimited | Points (UR, 1¢) | 3x dining + pharmacy, 1.5x default |
 | Bilt Blue Card | Points (Bilt, 1.25¢) | 3x dining, 2x travel, 1x default |
 
@@ -251,6 +258,7 @@ After copying the template, `writeV2Headers` writes the correct V2 header row to
 | `HistoryTab` | Month-over-month trend charts |
 | `LedgerTab` | Full transaction log with search/filter |
 | `CardsTab` | Per-card spend totals, transaction list, rewards analytics |
+| `SplitTab` | Household spending split by card owner (you vs. partner) — totals, comparison bar, per-category breakdown |
 | `AddExpenseDialog` | Add expense form with receipt scanning |
 | `ReconcileDialog` | Bank statement reconciliation (CSV + PDF) |
 | `ChatAgent` | AI budget assistant |
@@ -276,6 +284,11 @@ live in `functions/lib/http-common.mjs`.
 - **verify-user.mjs**: validates Google access tokens against Google's userinfo endpoint. Checks email against `ALLOWED_EMAILS`. Returns `{ allowed, email, name, picture, role }`. Token hashes cached for 5 minutes (500-entry FIFO cap). Failed tokens cached with 30s TTL (50-entry cap, SEC-15). Requires an allowlisted `Origin` + `sec-fetch-site`.
 - **claude.mjs**: Anthropic API proxy. Validates bearer token, enforces model allowlist (`claude-haiku-4-5`), caps `max_tokens` at 4096, enforces 8MB body limit. Dual-layer rate limiting: IP 20 req/min, email 10 req/min. Requires `sec-fetch-site: same-origin`. `maxInstances: 5` keeps the per-instance in-memory rate limits meaningful.
 - **push-subscribe / push-unsubscribe / push-alert**: Web Push. Subscriptions are stored in the Firestore `push_subscriptions` collection (doc id = verified email). All three verify a bearer token and always act on the *verified* email, never a client-supplied one. `push-alert` keeps a 5s-per-email anti-spam cap and prunes dead subscriptions on a 410.
+- **wallet-webhook.mjs** (`POST /api/wallet`): ingest point for mobile wallet automations (iOS Shortcuts, Android MacroDroid) triggered by bank/wallet payment notifications. Auth: `Authorization: Bearer <WALLET_WEBHOOK_SECRET>` (constant-time compared). Two body shapes:
+  - **Structured**: `{ merchant, amount, card, email, date?, sheetId? }`.
+  - **Raw-text**: `{ text, card?, email, ... }` — the notification text is parsed by the LLM (`extractTransactionText`) to fill `merchant` / `amount` / `card` / `date`, so the phone doesn't need per-bank regex.
+
+  `email` is required (routes the confirmation push). `sheetId` is optional — omitted, it resolves the current month's sheet from the transaction date (returns `422 month_not_found` if that month has no sheet yet). Categorizes via Claude, appends to the month sheet, and sends a Web Push confirmation. MacroDroid setup: `POST` to the URL, content-type `application/json`, the `Authorization` header, and a JSON body using the notification's title (card) + text.
 
 ### Persistence (Firestore)
 

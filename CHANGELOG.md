@@ -1,5 +1,22 @@
 # Changelog
 
+## [2026-06-23] — Split spending by person + Chase Freedom Rise
+
+### New feature: Split by person
+
+- **Split dashboard tab** (`SplitTab.jsx`) — shows household spending separated by person (you vs. partner): each person's total + transaction count, a comparison bar, and a side-by-side per-category breakdown. Replaces History on the mobile bottom nav (History stays in the desktop header).
+- **"By Person" Google Sheet tab** (`sheetSplit.ensurePersonSplitSheet`) — formula-driven, mirrors the Cards Summary pattern. Two `QUERY` blocks over `History!A:K` split by the owner's card set (left = you, right = partner) plus a totals comparison. Seeded at month creation (`useMonths.createMonth`) and refreshed on Split-tab open; covers existing months (incl. older ones) on first view — no backfill.
+- **Owner is derived live from the card.** Each card belongs to one person, so "who spent this" comes from the transaction's payment method via `cardOwners.js` (`ownerForCard`, `cardsForOwner`). No per-transaction tagging, no schema change.
+- **Settings → People & Card Owners** — assign each card to a person (Me / Partner / —) and set the two display names. Stored as `settings.cardOwners` (`{ [card]: 'me' | 'wife' }`) and `settings.people`.
+
+### New card
+
+- **Chase Freedom Rise** added to the household's card list and rewards engine: flat **1.5% cash back** on all purchases. Mirrored in `src/cardRewards.js` and `functions/lib/_card-rewards.mjs` (drift-guarded by `cardRewardsSync.test.js`) and seeded into `DEFAULT_SETTINGS.cards`, so it auto-appears for existing users via the settings card-merge.
+
+### Tests
+
+- **ci-test-fixes** — updated `extraction`, `telegram-webhook`, and `wallet-webhook` test mocks to match the current model chain (Gemini 2.5 → Claude fallback, 6 calls), batch Telegram extraction shape, and the now-optional wallet `sheetId`. Unblocks the CI test gate that was failing the Firebase/Netlify deploys.
+
 ## [2026-06-12] — Backend migration: Netlify → Firebase
 
 ### Infrastructure

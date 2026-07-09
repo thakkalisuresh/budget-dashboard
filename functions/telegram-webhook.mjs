@@ -21,8 +21,6 @@ import {
   handleTextReply,
   handleMediaMessage,
   handleAttachMedia,
-  DAILY_LIMIT,
-  getRateCount,
 } from './lib/_bot-core.mjs';
 import {
   TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_ALLOWED_USERS,
@@ -111,12 +109,8 @@ async function handleTelegramMedia(ctx, message) {
     await ctx.store.delete(`awaiting_attach:${ctx.userId}`);
   }
 
-  // Rate limit check
-  const rateCount = await getRateCount(ctx.store, ctx.userId);
-  if (rateCount >= DAILY_LIMIT) {
-    return ctx.send("You've reached 50 receipts today. Try again tomorrow.");
-  }
-
+  // R4: rate limiting is now an atomic check-and-increment inside
+  // handleMediaMessage (removes the redundant pre-read here).
   return await handleMediaMessage(ctx, base64, mediaType);
 }
 
@@ -144,39 +138,61 @@ export const telegramWebhook = onRequest(
       .split(',').map(u => u.trim()).filter(Boolean);
     const store = createBotStore(getDb());
 
-    // ── Callback query (inline keyboard button press) ──
-    if (update.callback_query) {
-      const { id, from, data, message } = update.callback_query;
-      const userId = String(from.id);
-      const chatId = message.chat.id;
-
-      await answerCallback(id);
-
-      if (!isAllowedUser(userId, allowedUsers)) { res.status(200).send('ok'); return; }
-
-      const ctx = makeTelegramCtx(store, userId, chatId);
-      await handleTextReply(ctx, data);
+    // ── R1: idempotency — Telegram re-delivers an update if it doesn't get a
+    //    timely 200. Claim each update_id once so a retry (e.g. after a slow
+    //    cold-start extraction) can't double-process the same update. On a
+    //    processing failure we release the claim below so the retry still runs.
+    const updateId = update.update_id;
+    if (updateId != null && !(await store.claimOnce(`seen:${updateId}`))) {
       res.status(200).send('ok');
       return;
     }
 
-    // ── Message ──
-    if (update.message) {
-      const { from, chat, text, photo, document } = update.message;
-      const userId = String(from.id);
-      const chatId = chat.id;
+    try {
+      // ── Callback query (inline keyboard button press) ──
+      if (update.callback_query) {
+        const { id, from, data, message } = update.callback_query;
+        const userId = String(from.id);
+        const chatId = message.chat.id;
 
-      if (!isAllowedUser(userId, allowedUsers)) { res.status(200).send('ok'); return; }
+        if (!isAllowedUser(userId, allowedUsers)) {
+          await answerCallback(id);
+          res.status(200).send('ok');
+          return;
+        }
 
-      const ctx = makeTelegramCtx(store, userId, chatId);
-
-      if (photo || document) {
-        await handleTelegramMedia(ctx, update.message);
-      } else if (text) {
-        await handleTextReply(ctx, text);
+        const ctx = makeTelegramCtx(store, userId, chatId);
+        // R7: clear the button spinner concurrently with handling the callback.
+        await Promise.all([answerCallback(id), handleTextReply(ctx, data)]);
+        res.status(200).send('ok');
+        return;
       }
 
-      res.status(200).send('ok');
+      // ── Message ──
+      if (update.message) {
+        const { from, chat, text, photo, document } = update.message;
+        const userId = String(from.id);
+        const chatId = chat.id;
+
+        if (!isAllowedUser(userId, allowedUsers)) { res.status(200).send('ok'); return; }
+
+        const ctx = makeTelegramCtx(store, userId, chatId);
+
+        if (photo || document) {
+          await handleTelegramMedia(ctx, update.message);
+        } else if (text) {
+          await handleTextReply(ctx, text);
+        }
+
+        res.status(200).send('ok');
+        return;
+      }
+    } catch (e) {
+      console.error('telegram-webhook: processing failed', e.message);
+      // Release the idempotency claim so Telegram's retry is processed rather
+      // than silently deduped as already-seen.
+      if (updateId != null) await store.delete(`seen:${updateId}`).catch(() => {});
+      res.status(500).send('error');
       return;
     }
 

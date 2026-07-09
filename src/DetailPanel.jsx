@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Repeat, Plus, CreditCard, ChevronRight, ChevronDown } from 'lucide-react';
-import { updateVendorName, updateVendorAmounts, updateTransactionDate, unmarkNonMonthly, renameNonMonthly, markNonMonthly, formatTxDate, todayIso, updatePaymentMethod, updateHistoryPaymentMethod } from './sheetsApi.js';
+import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Repeat, Plus, CreditCard, ChevronRight, ChevronDown, FolderInput } from 'lucide-react';
+import { updateVendorName, updateVendorAmounts, updateTransactionDate, unmarkNonMonthly, renameNonMonthly, markNonMonthly, formatTxDate, todayIso, updatePaymentMethod, updateHistoryPaymentMethod, moveTransactionCategory } from './sheetsApi.js';
+import { CategoryPickerSheet } from './CategoryPickerSheet.jsx';
 
 // ── Vendor logo helpers ───────────────────────────────────────────────────────
 
@@ -76,6 +77,15 @@ function resolveVendorDomain(name) {
   return vendorDomain(name);
 }
 
+/**
+ * Favicon URL for a domain. Uses Google's gstatic faviconV2 endpoint — the
+ * older www.google.com/s2/favicons path now 301-redirects to HTML, so <img>
+ * loads from it fail. faviconV2 returns a real PNG (and honours the size).
+ */
+function faviconUrl(domain, size = 64) {
+  return `https://t3.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${domain}&size=${size}`;
+}
+
 function VendorLogo({ name, size = 22, onEditDomain }) {
   const [failed, setFailed] = useState(false);
   const domain = resolveVendorDomain(name);
@@ -104,7 +114,7 @@ function VendorLogo({ name, size = 22, onEditDomain }) {
 
   return (
     <img
-      src={`https://www.google.com/s2/favicons?domain=${domain}&sz=64`}
+      src={faviconUrl(domain)}
       alt={name}
       onError={() => setFailed(true)}
       onClick={onEditDomain}
@@ -141,6 +151,8 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
   const [editingGroup, setEditingGroup]     = useState(null); // { key, value }
   const [deletingGroup, setDeletingGroup]   = useState(null); // group key pending delete
   const [editingDate, setEditingDate]       = useState(null); // { rowIndex, value }
+  // Move-to-category picker: { members: [row, …], vendor, subtitle }
+  const [movingTx, setMovingTx]             = useState(null);
 
   const txNoteKey = (vendor, amt) =>
     `${sheetId}_${expense}_${(vendor || '').toLowerCase()}_${Number(amt).toFixed(2)}`;
@@ -295,6 +307,29 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
     });
   };
 
+  // Move transaction(s) to another category (sheet tab). members: 1 row for a
+  // single transaction, or every row of a vendor group.
+  const doMove = (targetCategory) => {
+    const mv = movingTx;
+    if (!mv) return;
+    withSave(async () => {
+      for (const m of mv.members) {
+        await moveTransactionCategory(expense, targetCategory, m, accessToken, sheetId, monthName, null);
+      }
+      setMovingTx(null);
+    });
+  };
+
+  const openMoveFor = (members, vendor) => {
+    const total = members.reduce((s, r) => s + r.amounts.reduce((a, b) => a + b, 0), 0);
+    const count = members.reduce((s, r) => s + r.amounts.length, 0);
+    setMovingTx({
+      members,
+      vendor,
+      subtitle: `${count > 1 ? `${count} transactions · ` : ''}${currencySymbol}${total.toFixed(2)}`,
+    });
+  };
+
   // Toggle one-time/non-monthly flag for a whole vendor group.
   const toggleGroupNonMonthly = (g) => {
     const isNm = isVendorNonMonthly(g.vendor);
@@ -435,6 +470,10 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                       </button>
                     );
                   })()}
+                  <button onClick={() => openMoveFor([row], row.description)}
+                    className="p-1 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }} title="Move to another category">
+                    <FolderInput className="w-3.5 h-3.5" />
+                  </button>
                   <button onClick={() => setEditingAmount({ rowIndex: row.rowIndex, amtIndex: 0, value: String(row.amounts[0]) })}
                     className="p-1 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }} title="Edit amount">
                     <Edit2 className="w-3.5 h-3.5" />
@@ -526,6 +565,10 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
               className="p-1.5 rounded-lg transition-colors flex-shrink-0"
               style={isNm ? { color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)' } : { color: 'var(--color-text-muted)' }}>
               <Repeat className="w-3.5 h-3.5" />
+            </button>
+            <button onClick={() => openMoveFor(g.members, g.vendor)}
+              className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Move all to another category" style={{ color: 'var(--color-text-muted)' }}>
+              <FolderInput className="w-3.5 h-3.5" />
             </button>
             <button onClick={() => setEditingGroup({ key: g.key, value: g.vendor })}
               className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Rename vendor" style={{ color: 'var(--color-text-muted)' }}>
@@ -776,6 +819,11 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                   >
                     <Repeat className="w-3.5 h-3.5" />
                   </button>
+                  <button onClick={() => openMoveFor([row], row.description)}
+                    className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Move to another category"
+                    style={{ color: 'var(--color-text-muted)' }}>
+                    <FolderInput className="w-3.5 h-3.5" />
+                  </button>
                   <button onClick={() => { const nm = nonMonthlyVendors.includes(row.description.toLowerCase()); setEditingVendor({ rowIndex: row.rowIndex, value: row.description, isNonMonthly: nm, wasNonMonthly: nm }); }}
                     className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Rename vendor"
                     style={{ color: 'var(--color-text-muted)' }}>
@@ -956,7 +1004,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                 {editingDomain.draft && (
                   <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
                     <span>Preview:</span>
-                    <img src={`https://www.google.com/s2/favicons?domain=${editingDomain.draft}&sz=64`} alt=""
+                    <img src={faviconUrl(editingDomain.draft)} alt=""
                       className="w-5 h-5 rounded object-contain" onError={e => e.target.style.display = 'none'} />
                     <span>{editingDomain.draft}</span>
                   </div>
@@ -976,6 +1024,18 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
             </div>
           </div>
         </>
+      )}
+
+      {/* Move-to-category picker */}
+      {movingTx && (
+        <CategoryPickerSheet
+          title="Move to category"
+          subtitle={`${movingTx.vendor} · ${movingTx.subtitle}`}
+          currentCategory={expense}
+          saving={saving}
+          onClose={() => setMovingTx(null)}
+          onPick={doMove}
+        />
       )}
     </>
   );

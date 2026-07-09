@@ -61,6 +61,8 @@
   --glass-bg-heavy:    oklch(16% 0.012 var(--accent-hue) / 65%);
   --glass-bg-medium:   oklch(18% 0.010 var(--accent-hue) / 55%);
   --glass-bg-light:    oklch(20% 0.008 var(--accent-hue) / 45%);
+  /* Bottom nav — frosted but near-opaque so scrolling content can't ghost through */
+  --glass-bg-nav:      oklch(16% 0.012 var(--accent-hue) / 92%);
   --glass-blur-heavy:  blur(24px) saturate(180%);
   --glass-blur-medium: blur(16px) saturate(160%);
   --glass-blur-light:  blur(10px) saturate(140%);
@@ -124,6 +126,7 @@
   --glass-bg-heavy:  oklch(100% 0 0 / 88%);
   --glass-bg-medium: oklch(100% 0 0 / 78%);
   --glass-bg-light:  oklch(100% 0 0 / 68%);
+  --glass-bg-nav:    oklch(100% 0 0 / 95%);
   /* Subtle bottom shadow instead of top specular on white glass */
   --glass-specular:  0 1px 0 0 oklch(0% 0 0 / 6%);
 
@@ -316,6 +319,13 @@
   background: var(--glass-bg-light);
   backdrop-filter: var(--glass-blur-light);
   -webkit-backdrop-filter: var(--glass-blur-light);
+  box-shadow: var(--glass-specular);
+}
+
+.glass-nav {
+  background: var(--glass-bg-nav);
+  backdrop-filter: var(--glass-blur-heavy);
+  -webkit-backdrop-filter: var(--glass-blur-heavy);
   box-shadow: var(--glass-specular);
 }
 

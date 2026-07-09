@@ -50,6 +50,11 @@ export const CARD_REWARDS = {
     mccs: {},
     default: 1.5,
   },
+  'Chase Freedom Rise': {
+    type: 'cashback', unit: '$',
+    mccs: {},
+    default: 1.5,                                 // flat 1.5% cash back, all purchases
+  },
   'Chase Freedom Unlimited': {
     type: 'points', unit: 'UR', pointValue: UR_POINT_VALUE_CFU,
     mccs: {

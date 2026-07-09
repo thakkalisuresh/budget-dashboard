@@ -24,12 +24,26 @@ const mockStore = {
   get(key, opts) { return Promise.resolve(this.data.get(key) || null); },
   setJSON(key, value) { this.data.set(key, value); return Promise.resolve(); },
   delete(key) { this.data.delete(key); return Promise.resolve(); },
-  list({ prefix }) {
+  list({ prefix, limit }) {
     const blobs = [];
     for (const key of this.data.keys()) {
       if (key.startsWith(prefix)) blobs.push({ key });
     }
-    return Promise.resolve({ blobs });
+    blobs.sort((a, b) => a.key.localeCompare(b.key));
+    return Promise.resolve({ blobs: limit != null ? blobs.slice(0, limit) : blobs });
+  },
+  // R1: claim a key once (idempotency). Returns true the first time only.
+  claimOnce(key) {
+    if (this.data.has(key)) return Promise.resolve(false);
+    this.data.set(key, { ts: Date.now() });
+    return Promise.resolve(true);
+  },
+  // R4: atomic increment-if-below (mirrors the Firestore transaction).
+  incrementIfBelow(key, limit) {
+    const count = (this.data.get(key)?.count) || 0;
+    if (count >= limit) return Promise.resolve({ allowed: false, count });
+    this.data.set(key, { count: count + 1 });
+    return Promise.resolve({ allowed: true, count: count + 1 });
   },
 };
 
@@ -163,12 +177,13 @@ function setupPhotoMocks(extractionResult) {
     if (url.includes('api.telegram.org/file/')) {
       return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(jpegBytes()) });
     }
-    // Gemini extraction
+    // Gemini extraction (batch: handler calls extractReceiptBatch → expects { transactions: [...] })
     if (url.includes('generativelanguage.googleapis.com')) {
       if (extractionResult === 'fail') {
         return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: { message: 'fail' } }) });
       }
-      return Promise.resolve(geminiResponse(extractionResult));
+      const transactions = Array.isArray(extractionResult) ? extractionResult : [extractionResult];
+      return Promise.resolve(geminiResponse({ transactions }));
     }
     // Google OAuth
     if (url.includes('oauth2.googleapis.com/token')) {
@@ -497,7 +512,7 @@ describe('telegram webhook — DELETE 3-layer flow', () => {
       if (url.includes('sheets.googleapis.com') && url.includes('Months')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['May 2026', 'sheet-may']] }) });
       }
-      if (url.includes('sheets.googleapis.com') && (url.includes('F:F') || url.includes('F%3AF'))) {
+      if (url.includes('sheets.googleapis.com') && (url.includes('F:H') || url.includes('F%3AH'))) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['uuid-abc']] }) });
       }
       if (url.includes('sheets.googleapis.com')) {
@@ -556,7 +571,7 @@ describe('telegram webhook — DELETE 3-layer flow', () => {
           sheets: [{ properties: { title: 'Grocery', sheetId: 0 } }],
         }) });
       }
-      if (url.includes('sheets.googleapis.com') && (url.includes('F:F') || url.includes('F%3AF'))) {
+      if (url.includes('sheets.googleapis.com') && (url.includes('F:H') || url.includes('F%3AH'))) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['UUID'], ['uuid-abc']] }) });
       }
       if (url.includes('sheets.googleapis.com')) {
@@ -654,6 +669,110 @@ describe('telegram webhook — tip edit field', () => {
     const sendCall = mockFetch.mock.calls.find(c => c[0].includes('/sendMessage'));
     const body = JSON.parse(sendCall[1].body);
     expect(body.text).toContain('Invalid tip');
+  });
+});
+
+/* ── R1: idempotency ── */
+
+describe('telegram webhook — R1 idempotency', () => {
+  it('ignores a re-delivered update_id (no double processing)', async () => {
+    setupTelegramMocks();
+    const update = { ...textMessage('GUIDE'), update_id: 555 };
+    await handler(buildRequest(update));
+    await handler(buildRequest(update));   // Telegram retry
+    const sendCalls = mockFetch.mock.calls.filter(c => c[0].includes('/sendMessage'));
+    expect(sendCalls.length).toBe(1);       // only the first was handled
+  });
+});
+
+/* ── R9: greetings (deterministic, no AI) ── */
+
+describe('telegram webhook — R9 greetings', () => {
+  it('greets on "hi" without hitting the AI', async () => {
+    setupTelegramMocks();
+    const res = await handler(buildRequest(textMessage('hi')));
+    expect(res.status).toBe(200);
+    const body = JSON.parse(mockFetch.mock.calls.find(c => c[0].includes('/sendMessage'))[1].body);
+    expect(body.text).toContain('budget bot');
+    expect(mockFetch.mock.calls.some(c => c[0].includes('api.anthropic.com'))).toBe(false);
+  });
+});
+
+/* ── R10: button-driven editing ── */
+
+describe('telegram webhook — R10 button editing', () => {
+  function seedPending(id = 'e1') {
+    mockStore.data.set(`confirm:123456789:${id}`, {
+      id, extraction: { store_name: 'X', total_amount: 10, reward_category: 'Misc' },
+      year: 2026, month: 'May', status: 'awaiting_confirmation',
+    });
+  }
+
+  it('edit:menu opens the field menu for a pending receipt', async () => {
+    setupTelegramMocks();
+    seedPending();
+    await handler(buildRequest(callbackQuery('edit:menu')));
+    const body = JSON.parse(mockFetch.mock.calls.find(c => c[0].includes('/sendMessage'))[1].body);
+    expect(body.text).toContain('What do you want to edit');
+    expect(body.reply_markup.inline_keyboard.flat().some(b => b.callback_data === 'edit:f:cat')).toBe(true);
+  });
+
+  it('edit:setcat:3 sets the category to Travel', async () => {
+    setupTelegramMocks();
+    seedPending('e2');
+    await handler(buildRequest(callbackQuery('edit:setcat:3')));
+    const body = JSON.parse(mockFetch.mock.calls.find(c => c[0].includes('/sendMessage'))[1].body);
+    expect(body.text).toContain('Updated!');
+    expect(body.text).toContain('Category: Travel');
+    expect(mockStore.data.get('confirm:123456789:e2').extraction.reward_category).toBe('Travel');
+  });
+
+  it('button amount edit prompts, then captures the typed value', async () => {
+    setupTelegramMocks();
+    seedPending('e3');
+    await handler(buildRequest(callbackQuery('edit:f:amt')));
+    expect(mockStore.data.get('awaiting_edit:123456789')).toMatchObject({ scope: 'pending', field: 'amount' });
+
+    vi.clearAllMocks();
+    setupTelegramMocks();
+    await handler(buildRequest(textMessage('52.10')));
+    const body = JSON.parse(mockFetch.mock.calls.find(c => c[0].includes('/sendMessage'))[1].body);
+    expect(body.text).toContain('Updated!');
+    expect(body.text).toContain('Total: $52.1');
+    expect(mockStore.data.has('awaiting_edit:123456789')).toBe(false);
+  });
+
+  it('edit:last re-categorizes the last logged expense (delete + re-append)', async () => {
+    const userId = '123456789';
+    mockStore.data.set(`lastlog:${userId}`, {
+      uuid: 'uuid-x', category: 'Grocery', vendor: 'Cafe', amount: 12.5, txDate: '2026-05-10',
+      sheetId: 'sheet-may', monthName: 'May 2026', loggedAt: new Date().toISOString(),
+    });
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('/sendMessage') || url.includes('/answerCallbackQuery')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
+      }
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      if (url.includes('fields=sheets.properties')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ sheets: [{ properties: { title: 'Grocery', sheetId: 0 } }] }) });
+      }
+      if (url.includes('sheets.googleapis.com') && (url.includes('F:H') || url.includes('F%3AH'))) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['UUID'], ['uuid-x']] }) });
+      }
+      if (url.includes('sheets.googleapis.com')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ updates: { updatedRows: 1 }, values: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    await handler(buildRequest(callbackQuery('edit:lastcat:3')));   // Travel
+    const sendCalls = mockFetch.mock.calls.filter(c => c[0].includes('/sendMessage'));
+    const body = JSON.parse(sendCalls[sendCalls.length - 1][1].body);
+    expect(body.text).toContain('Updated');
+    expect(body.text).toContain('Travel');
+    expect(mockStore.data.get(`lastlog:${userId}`).category).toBe('Travel');
   });
 });
 
