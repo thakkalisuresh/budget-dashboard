@@ -6,6 +6,7 @@ import {
 import { fetchDetailRows } from './sheetDetail.js';
 import { appendHistoryEntry } from './sheetHistory.js';
 import { renameCategory } from './sheetCategories.js';
+import { moveTransactionCategory } from './sheetExpenses.js';
 
 export async function undoHistoryEntry(sheetId, accessToken, entry) {
   const { action, category, vendor, amount, details } = entry;
@@ -116,6 +117,28 @@ export async function undoHistoryEntry(sheetId, accessToken, entry) {
       if (row) {
         const config = SHEET_MAP[category];
         if (config) await writeCell(sheetId, config.sheet, row.rowIndex, config.descCol, safeText(oldName), accessToken);
+      }
+    }
+
+  } else if (action === 'Moved') {
+    // details: 'FromCategory → ToCategory' — the row now lives in ToCategory,
+    // so undo is a reverse-move back to FromCategory with the same UUID.
+    const match = details?.match(/^(.+?)\s*→\s*(.+)$/);
+    if (match) {
+      const fromCat = match[1].trim();
+      const toCat   = match[2].trim();
+      const rows = await fetchDetailRows(toCat, accessToken, sheetId);
+      const row = (entry.uuid ? rows.find(r => (r.uuids || []).includes(entry.uuid)) : null)
+        ?? rows.find(r => r.description.toLowerCase() === vendor.toLowerCase());
+      if (row) {
+        const idx = entry.uuid ? (row.uuids || []).indexOf(entry.uuid) : -1;
+        const rowTotal = row.amounts.reduce((a, b) => a + b, 0);
+        // If the destination merged into a V1 vendor row that holds other
+        // amounts too, move back only the matched amount — not the whole row.
+        const amtIndex = (idx >= 0 && row.amounts.length > 1 &&
+          amount != null && Math.abs(rowTotal - amount) > 0.005) ? idx : null;
+        // monthName unknown here; V2 schema detection reads the header row.
+        await moveTransactionCategory(toCat, fromCat, row, accessToken, sheetId, '', amtIndex);
       }
     }
 

@@ -4,7 +4,7 @@
  *   Layer 2: Pre-aggregated summary + Haiku (~$0.002/query)
  *   Layer 3: Full context + Sonnet (~$0.010/query, rare)
  *
- * Files starting with "_" are NOT deployed as functions by Netlify.
+ * Files in lib/ are shared modules, not standalone deployed functions.
  */
 
 import { getCurrentMonthSheetId, getTotals, getRecentExpenses } from './_sheets.mjs';

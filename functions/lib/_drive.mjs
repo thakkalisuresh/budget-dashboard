@@ -1,7 +1,7 @@
 /**
  * Google Drive utilities for serverless functions.
  * Handles: refresh-token exchange, folder creation, file upload, sharing.
- * Files starting with "_" are NOT deployed as functions by Netlify.
+ * Files in lib/ are shared modules, not standalone deployed functions.
  */
 
 const DRIVE_API   = 'https://www.googleapis.com/drive/v3/files';
@@ -14,6 +14,12 @@ const REFRESH_TOKEN = process.env.GOOGLE_DRIVE_REFRESH_TOKEN;
 
 let tokenCache = null;
 
+// Google's token endpoint occasionally returns a transient 400/5xx (observed in
+// prod). Retry a couple of times with backoff before giving up so a single blip
+// doesn't fail the whole transaction. A genuinely revoked/expired refresh token
+// returns invalid_grant — that won't recover on retry, so fail fast on it.
+const TOKEN_MAX_RETRIES = 2;
+
 export async function getAccessToken() {
   if (tokenCache && tokenCache.expiresAt > Date.now() + 30_000) {
     return tokenCache.token;
@@ -21,26 +27,44 @@ export async function getAccessToken() {
   if (!CLIENT_ID || !CLIENT_SECRET || !REFRESH_TOKEN) {
     throw new Error('Drive credentials not configured (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_DRIVE_REFRESH_TOKEN)');
   }
-  const res = await fetch(TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      refresh_token: REFRESH_TOKEN,
-      grant_type: 'refresh_token',
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(`Token refresh failed: ${err.error_description || res.status}`);
+
+  let lastError;
+  for (let attempt = 0; attempt <= TOKEN_MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      await new Promise(r => setTimeout(r, 250 * 2 ** (attempt - 1)));
+    }
+    try {
+      const res = await fetch(TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: CLIENT_ID,
+          client_secret: CLIENT_SECRET,
+          refresh_token: REFRESH_TOKEN,
+          grant_type: 'refresh_token',
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        // A revoked/expired refresh token never recovers on retry — bail out now.
+        if (err.error === 'invalid_grant') {
+          throw new Error(`Token refresh failed (refresh token revoked or expired): ${err.error_description || res.status}`);
+        }
+        throw new Error(`Token refresh failed: ${err.error_description || res.status}`);
+      }
+      const data = await res.json();
+      tokenCache = {
+        token: data.access_token,
+        expiresAt: Date.now() + (data.expires_in - 60) * 1000,
+      };
+      return tokenCache.token;
+    } catch (e) {
+      lastError = e;
+      // invalid_grant won't recover — stop retrying and surface immediately.
+      if (e.message?.includes('revoked or expired')) break;
+    }
   }
-  const data = await res.json();
-  tokenCache = {
-    token: data.access_token,
-    expiresAt: Date.now() + (data.expires_in - 60) * 1000,
-  };
-  return tokenCache.token;
+  throw lastError;
 }
 
 async function driveRequest(path, options = {}) {

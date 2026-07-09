@@ -1,6 +1,6 @@
 /**
  * Server-side mirror of src/cardRewards.js + src/vendorMCC.js for the bot.
- * Netlify functions cannot import client (src/) modules, so the rates and
+ * Cloud Functions cannot import client (src/) modules, so the rates and
  * calculation logic are duplicated here. Keep in sync with both src/ files.
  */
 
@@ -112,6 +112,11 @@ export const CARD_REWARDS = {
     type: 'cashback', unit: '$',
     mccs: {},
     default: 1.5,
+  },
+  'Chase Freedom Rise': {
+    type: 'cashback', unit: '$',
+    mccs: {},
+    default: 1.5,                                 // flat 1.5% cash back, all purchases
   },
   'Chase Freedom Unlimited': {
     type: 'points', unit: 'UR', pointValue: UR_POINT_VALUE_CFU,

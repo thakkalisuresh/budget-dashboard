@@ -1,7 +1,6 @@
 /**
  * Cloud Function — MCP server endpoint. Stateless JSON-RPC 2.0 over HTTP
- * (Streamable HTTP compatible). Ported from netlify/functions/mcp-server.mjs
- * (Deno Web Request/Response + Netlify Blobs → Express onRequest + Firestore).
+ * (Streamable HTTP compatible).
  *
  * Auth: a single shared secret in MCP_API_KEY, sent by the client as
  * `Authorization: Bearer <key>` (or `X-API-Key: <key>`). All RPC logic lives

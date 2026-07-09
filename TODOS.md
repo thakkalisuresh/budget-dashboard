@@ -25,6 +25,14 @@
   the template copy completes
 
 ### Infrastructure
+- **Service worker auto-update (PWA)** — add `skipWaiting` + `clientsClaim` so a fresh
+  deploy replaces a stale cached app shell without users clearing cache, plus a "new version
+  available — reload" prompt. Context: a prior mock-containing Firebase deploy stayed cached
+  in a user's browser and served fake `mockData.js` data even after a clean redeploy; a plain
+  refresh didn't evict it (only Incognito / the in-app "Clear cache" button / DevTools
+  unregister worked). Files: `src/sw.js`, `vite.config.js` (VitePWA injectManifest). Also:
+  never deploy a dev-mode build — `vite build --mode development` keeps `import.meta.env.DEV`
+  true and un-tree-shakes the mock path.
 - **localStorage → Google Sheets migration** (category icons + custom categories done ✅)
   — verify no other user data is still siloed in localStorage only
 - **Hybrid caching layer** — parked as large-scale planning. Aggressive localStorage

@@ -1,30 +1,86 @@
-import { LayoutDashboard, BookOpen, Plus, Clock, CreditCard } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { LayoutDashboard, BookOpen, Plus, Users, CreditCard } from 'lucide-react';
 
 const NAV_ITEMS = [
-  { id: 'budget',  Icon: LayoutDashboard, label: 'Home'    },
-  { id: 'ledger',  Icon: BookOpen,        label: 'Ledger'  },
-  { id: '_add',    Icon: null,            label: 'Add'     },
-  { id: 'history', Icon: Clock,           label: 'History' },
-  { id: 'cards',   Icon: CreditCard,      label: 'Cards'   },
+  { id: 'budget',  Icon: LayoutDashboard, label: 'Home'   },
+  { id: 'ledger',  Icon: BookOpen,        label: 'Ledger' },
+  { id: '_add',    Icon: null,            label: 'Add'    },
+  { id: 'split',   Icon: Users,           label: 'Split'  },
+  { id: 'cards',   Icon: CreditCard,      label: 'Cards'  },
 ];
 
 // Notch: concave arc at top-center, radius 34px (button radius 28px + 6px clearance)
 const NOTCH_MASK = 'radial-gradient(circle 34px at 50% 0, transparent 33px, black 34px)';
 
+// Facebook-style auto-hide: collapse the bar when scrolling down, reveal it
+// when scrolling up or on any touch. Reveal always wins near the top.
+function useAutoHideOnScroll() {
+  const [hidden, setHidden] = useState(false);
+  const lastY = useRef(0);
+  const ticking = useRef(false);
+
+  useEffect(() => {
+    lastY.current = window.scrollY;
+
+    const evaluate = () => {
+      ticking.current = false;
+      const y = window.scrollY;
+      const delta = y - lastY.current;
+      // Ignore rubber-band/tiny jitter; always show near the top.
+      if (y < 80) {
+        setHidden(false);
+      } else if (delta > 8) {
+        setHidden(true);   // scrolling down → hide
+      } else if (delta < -8) {
+        setHidden(false);  // scrolling up → show
+      }
+      lastY.current = y;
+    };
+
+    const onScroll = () => {
+      if (!ticking.current) {
+        ticking.current = true;
+        requestAnimationFrame(evaluate);
+      }
+    };
+    const onTouch = () => setHidden(false);
+
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('touchstart', onTouch, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('touchstart', onTouch);
+    };
+  }, []);
+
+  return hidden;
+}
+
 export function BottomNav({ activeTab, setActiveTab, onAdd, isReadOnly }) {
+  const hidden = useAutoHideOnScroll();
+
   return (
     <nav
       className="fixed bottom-0 inset-x-0 z-40 lg:hidden"
-      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      style={{
+        transform: hidden ? 'translateY(calc(100% + 2.5rem))' : 'translateY(0)',
+        transition: 'transform 0.25s ease',
+        willChange: 'transform',
+      }}
       aria-label="Main navigation"
     >
       <div className="relative">
-        {/* Glass bar */}
+        {/* Glass bar — safe-area inset lives inside so the frosted fill reaches the true bottom */}
         <div
-          className="glass-heavy h-16"
-          style={{ borderTop: '1px solid var(--sur-10)', mask: NOTCH_MASK, WebkitMask: NOTCH_MASK }}
+          className="glass-nav"
+          style={{
+            borderTop: '1px solid var(--sur-10)',
+            mask: NOTCH_MASK,
+            WebkitMask: NOTCH_MASK,
+            paddingBottom: 'env(safe-area-inset-bottom)',
+          }}
         >
-          <div className="flex h-full">
+          <div className="flex h-16">
             {NAV_ITEMS.map(({ id, Icon, label }) => {
               if (id === '_add') {
                 return <div key="_add" className="flex-1" aria-hidden="true" />;

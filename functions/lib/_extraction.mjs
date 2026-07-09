@@ -1,8 +1,8 @@
 /**
  * AI-powered receipt extraction — Gemini primary, Claude fallback.
- * Fallback chain: gemini-2.0-flash → gemini-1.5-pro → gemini-2.5-pro
+ * Fallback chain: gemini-2.5-flash → gemini-2.5-pro
  *               → claude-sonnet-4-6 → claude-haiku-4-5
- * Files starting with "_" are NOT deployed as functions by Netlify.
+ * Files in lib/ are shared modules, not standalone deployed functions.
  */
 
 const GEMINI_API_KEY    = process.env.GEMINI_API_KEY;
@@ -11,7 +11,7 @@ const GEMINI_URL        = 'https://generativelanguage.googleapis.com/v1beta/mode
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ANTHROPIC_URL     = 'https://api.anthropic.com/v1/messages';
 
-const GEMINI_MODELS = ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-2.5-pro'];
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro'];  // flash = fast/cheap primary, pro = fallback
 const CLAUDE_MODELS = ['claude-sonnet-4-6', 'claude-haiku-4-5'];
 const PRIMARY_MODEL = GEMINI_MODELS[0];
 const MAX_RETRIES   = 2;
@@ -31,7 +31,7 @@ function buildUserPrompt() {
 
 Return EXACTLY this JSON structure:
 
-{"store_name":"Store Name","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":3.50,"currency":"USD","items":[{"name":"Item name","amount":5.99}],"reward_category":"Grocery","is_transfer":false,"payment_method":"Chase Sapphire Reserve"}
+{"store_name":"Store Name","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":3.50,"currency":"USD","items":[{"name":"Item name","amount":5.99,"item_category":"Grocery"}],"reward_category":"Grocery","is_transfer":false,"payment_method":"Chase Sapphire Reserve"}
 
 Rules:
 - store_name: The merchant/vendor name (for transfers, use the recipient name)
@@ -39,7 +39,8 @@ Rules:
 - total_amount: Final total/charge amount. Must be a positive number, no currency symbol
 - tax_amount: Tax amount if shown, else null
 - currency: 3-letter ISO code visible (USD, INR, EUR, GBP, etc.). Default "USD" if not shown
-- items: Array of line items with name and amount. Empty array [] for non-receipt images
+- items: Array of line items, each {name, amount, item_category}. Empty array [] for non-receipt images
+- item_category (per line item): your best guess of which budget category that single item belongs to, exactly one of: ${CATEGORIES.join(', ')}. Use it for receipts that mix categories (e.g. a Costco run with groceries + clothing + electronics). If you cannot tell for an item (e.g. ambiguous clothing/electronics), use null and the user will be asked.
 - reward_category: MUST be exactly one of: ${CATEGORIES.join(', ')}. Pick the closest match. Use "Misc" if none fit. For transfers (is_transfer=true), set to null (user will pick).
 - is_transfer: true if this is a peer-to-peer payment, money transfer, or sending money (Zelle, Venmo, PayPal P2P, bank transfer, "sent to" someone). false for purchases at merchants.
 - payment_method: The card or account name if visible. On Apple Pay / Google Pay / Samsung Pay wallet screenshots the card name appears prominently near the top (e.g. "Sapphire Reserve", "Blue Cash Preferred") — extract it exactly as shown. Use null if no card is visible.
@@ -58,7 +59,7 @@ ${text}
 """
 
 Return EXACTLY this JSON structure:
-{"store_name":"...","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":null,"currency":"USD","items":[],"reward_category":"...","is_transfer":false}
+{"store_name":"...","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":null,"currency":"USD","items":[],"reward_category":"...","is_transfer":false,"payment_method":null}
 
 Rules:
 - store_name: Merchant/vendor name from the text (for transfers, use the recipient name)
@@ -69,9 +70,10 @@ Rules:
 - items: Always empty []
 - reward_category: MUST be exactly one of: ${CATEGORIES.join(', ')}. Pick closest match based on merchant. Use "Misc" if unclear. For transfers, set to null.
 - is_transfer: true if this is a peer-to-peer payment (Zelle, Venmo, PayPal P2P, bank transfer "to" someone). false for merchant charges.
+- payment_method: The card or account name if the text names it (e.g. "Chase Sapphire Reserve", "Card ending 1234", "Amex Gold"). Extract it exactly as shown. Use null if no card/account is mentioned.
 
 If the text doesn't look like a transaction notification (e.g., random text, greetings), return:
-{"store_name":null,"purchase_date":null,"total_amount":null,"tax_amount":null,"currency":"USD","items":[],"reward_category":null,"is_transfer":false}
+{"store_name":null,"purchase_date":null,"total_amount":null,"tax_amount":null,"currency":"USD","items":[],"reward_category":null,"is_transfer":false,"payment_method":null}
 
 Respond with ONLY the JSON object. No other text.`;
 }
@@ -101,6 +103,9 @@ export function sanitizeExtraction(data) {
       ...item,
       name: typeof item.name === 'string' ? safeString(item.name) : item.name,
       amount: typeof item.amount === 'number' ? Math.abs(item.amount) : item.amount,
+      // Per-item category hint: keep only if it's a known category, else null
+      // (the deterministic categorizer + user picker handle the rest).
+      item_category: CATEGORIES.includes(item.item_category) ? item.item_category : null,
     }));
   }
   if (typeof result.is_transfer !== 'boolean') {
@@ -134,7 +139,7 @@ function parseJSON(text) {
 
 /* ── Gemini API ── */
 
-async function callGemini(model, base64, mediaType) {
+async function callGemini(model, base64, mediaType, userPrompt) {
   if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured');
 
   const url = `${GEMINI_URL}/${model}:generateContent?key=${GEMINI_API_KEY}`;
@@ -145,7 +150,7 @@ async function callGemini(model, base64, mediaType) {
     body: JSON.stringify({
       contents: [{ parts: [
         { inline_data: { mime_type: mediaType, data: base64 } },
-        { text: buildUserPrompt() },
+        { text: userPrompt ?? buildUserPrompt() },
       ] }],
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
       generationConfig: { responseMimeType: 'application/json' },
@@ -191,7 +196,7 @@ async function callGeminiText(model, text) {
 
 /* ── Claude API ── */
 
-async function callClaude(model, base64, mediaType) {
+async function callClaude(model, base64, mediaType, userPrompt) {
   if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not configured');
 
   const contentBlock = mediaType === 'application/pdf'
@@ -207,11 +212,11 @@ async function callClaude(model, base64, mediaType) {
     },
     body: JSON.stringify({
       model,
-      max_tokens: 1024,
+      max_tokens: 2048,
       system: SYSTEM_PROMPT,
       messages: [{
         role: 'user',
-        content: [contentBlock, { type: 'text', text: buildUserPrompt() }],
+        content: [contentBlock, { type: 'text', text: userPrompt ?? buildUserPrompt() }],
       }],
     }),
   });
@@ -298,6 +303,81 @@ export async function extractReceipt(base64, mediaType) {
   }
 
   console.error('extractReceipt: all models exhausted:', lastError?.message);
+  return { ok: false, error: 'illegible', message: lastError?.message };
+}
+
+/* ── Batch extraction (one image → multiple transactions) ── */
+
+function buildBatchUserPrompt() {
+  return `Analyze this image and extract ALL distinct transactions it contains. The image could be:
+- A bank app transaction history or statement screenshot (may show many charges)
+- An Apple Wallet, Google Pay, or Samsung Pay history screen (may show several payments)
+- A single physical receipt photo (one transaction)
+- A single wallet-app confirmation screen (one transaction)
+
+Return EXACTLY this JSON structure — always a "transactions" array, even for a single transaction:
+
+{"transactions":[{"store_name":"Store Name","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":null,"currency":"USD","items":[{"name":"Item name","amount":5.99,"item_category":"Grocery"}],"reward_category":"Grocery","is_transfer":false,"payment_method":"Chase Sapphire Reserve"}]}
+
+Rules for each transaction object in the array:
+- store_name: The merchant/vendor name (for transfers, use the recipient name)
+- purchase_date: Date in YYYY-MM-DD format. If unclear, use null
+- total_amount: Final charge/payment amount. Must be a positive number, no currency symbol
+- tax_amount: Tax amount if shown, else null
+- currency: 3-letter ISO code (USD, INR, EUR, GBP, etc.). Default "USD" if not shown
+- items: Array of line items, each {name, amount, item_category}. Use [] unless this is a physical receipt with itemized lines
+- item_category (per line item): best guess of the budget category for that single item, exactly one of: ${CATEGORIES.join(', ')}, or null if ambiguous (e.g. clothing/electronics). Used to split mixed receipts.
+- reward_category: MUST be exactly one of: ${CATEGORIES.join(', ')}. Pick the closest match. Use "Misc" if none fit. For transfers (is_transfer=true), set to null.
+- is_transfer: true if this is a peer-to-peer payment (Zelle, Venmo, PayPal P2P, bank transfer "sent to" someone). false for merchant purchases.
+- payment_method: Card or account name if visible, else null
+
+If the image is completely unreadable or contains no transactions, return: {"transactions":[]}
+
+Respond with ONLY the JSON object. No other text.`;
+}
+
+function parseBatchJSON(raw) {
+  return Array.isArray(raw?.transactions) ? raw.transactions : [];
+}
+
+export async function extractReceiptBatch(base64, mediaType) {
+  const prompt = buildBatchUserPrompt();
+  let lastError;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const raw = await callGemini(PRIMARY_MODEL, base64, mediaType, prompt);
+      const transactions = parseBatchJSON(raw).map(sanitizeExtraction).filter(t => t.total_amount != null);
+      return { ok: true, transactions, model: PRIMARY_MODEL };
+    } catch (e) {
+      lastError = e;
+      console.warn(`extractReceiptBatch: ${PRIMARY_MODEL} attempt ${attempt + 1} failed:`, e.message);
+    }
+  }
+
+  for (const model of GEMINI_MODELS.slice(1)) {
+    try {
+      const raw = await callGemini(model, base64, mediaType, prompt);
+      const transactions = parseBatchJSON(raw).map(sanitizeExtraction).filter(t => t.total_amount != null);
+      return { ok: true, transactions, model };
+    } catch (e) {
+      lastError = e;
+      console.warn(`extractReceiptBatch: ${model} failed:`, e.message);
+    }
+  }
+
+  for (const model of CLAUDE_MODELS) {
+    try {
+      const raw = await callClaude(model, base64, mediaType, prompt);
+      const transactions = parseBatchJSON(raw).map(sanitizeExtraction).filter(t => t.total_amount != null);
+      return { ok: true, transactions, model };
+    } catch (e) {
+      lastError = e;
+      console.warn(`extractReceiptBatch: ${model} failed:`, e.message);
+    }
+  }
+
+  console.error('extractReceiptBatch: all models exhausted:', lastError?.message);
   return { ok: false, error: 'illegible', message: lastError?.message };
 }
 

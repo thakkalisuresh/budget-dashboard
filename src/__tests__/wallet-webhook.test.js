@@ -3,16 +3,40 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.stubEnv('WALLET_WEBHOOK_SECRET', 'test-wallet-secret');
 
 // Shared mock state (hoisted so the vi.mock factories can close over it).
-const { extractMock, appendMock, webpushSend, ctl } = vi.hoisted(() => ({
+const { extractMock, appendMock, sheetIdMock, webpushSend, getSettingsMock, telegramSend, splitStore, ctl } = vi.hoisted(() => ({
   extractMock: vi.fn(),
   appendMock: vi.fn(),
+  sheetIdMock: vi.fn(),
   webpushSend: vi.fn(),
+  getSettingsMock: vi.fn(async () => ({})),
+  telegramSend: vi.fn(async () => ({ ok: true })),
+  splitStore: {
+    data: new Map(),
+    get(key) { return Promise.resolve(this.data.get(key) || null); },
+    setJSON(key, value) { this.data.set(key, value); return Promise.resolve(); },
+    delete(key) { this.data.delete(key); return Promise.resolve(); },
+    list({ prefix }) {
+      const blobs = [];
+      for (const key of this.data.keys()) if (key.startsWith(prefix)) blobs.push({ key });
+      return Promise.resolve({ blobs });
+    },
+  },
   ctl: { pushDoc: null, deleted: false },
 }));
 
 vi.mock('../../functions/lib/_extraction.mjs', () => ({ extractTransactionText: extractMock }));
-vi.mock('../../functions/lib/_sheets.mjs', () => ({ appendExpense: appendMock }));
+vi.mock('../../functions/lib/_sheets.mjs', () => ({
+  appendExpense: appendMock,
+  getCurrentMonthSheetId: sheetIdMock,
+  // Default: no per-user settings (no disabled/split vendors). Tests that need
+  // these override the mock via getSettingsMock.
+  getUserSettingsByEmail: (...args) => getSettingsMock(...args),
+}));
 vi.mock('web-push', () => ({ default: { setVapidDetails: vi.fn(), sendNotification: webpushSend } }));
+// The wallet split path builds a bot store + sends Telegram; stub both so the
+// import chain doesn't pull in firebase-admin and no real network calls fire.
+vi.mock('../../functions/lib/bot-store.mjs', () => ({ createBotStore: () => splitStore }));
+vi.mock('../../functions/lib/_telegram.mjs', () => ({ sendMessage: telegramSend }));
 vi.mock('../../functions/lib/firestore.mjs', () => ({
   getDb: () => ({
     collection: () => ({
@@ -57,7 +81,11 @@ const validBody = {
 beforeEach(() => {
   extractMock.mockReset().mockResolvedValue({ ok: true, data: { reward_category: 'Grocery', store_name: 'Costco' } });
   appendMock.mockReset().mockResolvedValue(undefined);
+  sheetIdMock.mockReset().mockResolvedValue('resolved-month-sheet');
   webpushSend.mockReset().mockResolvedValue(undefined);
+  getSettingsMock.mockReset().mockResolvedValue({});
+  telegramSend.mockReset().mockResolvedValue({ ok: true });
+  splitStore.data.clear();
   ctl.pushDoc = null;
   ctl.deleted = false;
   vi.stubEnv('VAPID_PUBLIC_KEY', '');
@@ -119,10 +147,18 @@ describe('wallet-webhook — validation', () => {
     expect(res.json.error).toMatch(/email/i);
   });
 
-  it('400 on missing sheetId', async () => {
+  it('resolves current-month sheet when sheetId is omitted (200)', async () => {
     const res = await call(req({ body: { ...validBody, sheetId: undefined } }));
-    expect(res.status).toBe(400);
-    expect(res.json.error).toMatch(/sheetId/i);
+    expect(res.status).toBe(200);
+    expect(sheetIdMock).toHaveBeenCalledWith('May 2026');
+    expect(appendMock.mock.calls[0][0].sheetId).toBe('resolved-month-sheet');
+  });
+
+  it('422 month_not_found when the month sheet cannot be resolved', async () => {
+    sheetIdMock.mockRejectedValueOnce(new Error('no such tab'));
+    const res = await call(req({ body: { ...validBody, sheetId: undefined } }));
+    expect(res.status).toBe(422);
+    expect(res.json.error).toBe('month_not_found');
   });
 });
 
@@ -216,5 +252,56 @@ describe('wallet-webhook — push notification (best-effort)', () => {
     const res = await call(req({ body: validBody }));
     expect(res.status).toBe(200);
     expect(ctl.deleted).toBe(true);
+  });
+});
+
+describe('wallet-webhook — disabled vendors (per-user)', () => {
+  it('skips logging when the resolved vendor is on the requester\'s block list', async () => {
+    extractMock.mockResolvedValue({ ok: true, data: { reward_category: 'Misc', store_name: 'Shell Gas #123' } });
+    getSettingsMock.mockResolvedValue({ disabledWalletVendors: [{ name: 'Shell', patterns: ['shell'] }] });
+    const res = await call(req({ body: { ...validBody, merchant: 'SHELL OIL 4521' } }));
+    expect(res.status).toBe(200);
+    expect(res.json).toMatchObject({ ok: true, skipped: true, reason: 'vendor_disabled' });
+    expect(appendMock).not.toHaveBeenCalled();
+  });
+
+  it('logs normally when the block list does not match', async () => {
+    extractMock.mockResolvedValue({ ok: true, data: { reward_category: 'Grocery', store_name: 'Trader Joe\'s' } });
+    getSettingsMock.mockResolvedValue({ disabledWalletVendors: [{ name: 'Shell', patterns: ['shell'] }] });
+    const res = await call(req({ body: { ...validBody, merchant: 'Trader Joes' } }));
+    expect(res.status).toBe(200);
+    expect(appendMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('wallet-webhook — split vendors', () => {
+  beforeEach(() => {
+    vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-bot-token');
+    vi.stubEnv('TELEGRAM_EMAIL_MAP', 'nair.sabarish97@gmail.com:111222333');
+  });
+
+  it('prompts via Telegram and does NOT log when a split vendor is charged', async () => {
+    extractMock.mockResolvedValue({ ok: true, data: { reward_category: 'Grocery', store_name: 'Costco Wholesale' } });
+    getSettingsMock.mockResolvedValue({ splitReceiptVendors: [{ name: 'Costco', patterns: ['costco'] }] });
+    const res = await call(req({ body: validBody }));
+    expect(res.status).toBe(200);
+    expect(res.json).toMatchObject({ ok: true, split: true });
+    expect(appendMock).not.toHaveBeenCalled();
+    expect(telegramSend).toHaveBeenCalledTimes(1);
+    // chatId resolved from TELEGRAM_EMAIL_MAP
+    expect(telegramSend.mock.calls[0][0]).toBe('111222333');
+    // a split_pending was stashed under that chat id
+    const keys = [...splitStore.data.keys()];
+    expect(keys.some(k => k.startsWith('split_pending:111222333:'))).toBe(true);
+  });
+
+  it('falls back to normal logging when no Telegram mapping exists for the email', async () => {
+    vi.stubEnv('TELEGRAM_EMAIL_MAP', 'someone-else@x.com:999');
+    extractMock.mockResolvedValue({ ok: true, data: { reward_category: 'Grocery', store_name: 'Costco Wholesale' } });
+    getSettingsMock.mockResolvedValue({ splitReceiptVendors: [{ name: 'Costco', patterns: ['costco'] }] });
+    const res = await call(req({ body: validBody }));
+    expect(res.status).toBe(200);
+    expect(appendMock).toHaveBeenCalledTimes(1);
+    expect(telegramSend).not.toHaveBeenCalled();
   });
 });

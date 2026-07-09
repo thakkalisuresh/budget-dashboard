@@ -1,13 +1,14 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { List, useDynamicRowHeight } from 'react-window';
-import { RefreshCw, Inbox, SlidersHorizontal, ArrowUpDown, X, Download, Search, FileText, MessageSquare } from 'lucide-react';
+import { RefreshCw, Inbox, SlidersHorizontal, ArrowUpDown, X, Download, Search, FileText, MessageSquare, FolderInput } from 'lucide-react';
 
 // Above this many displayed rows, the list is virtualized (react-window) so we
 // only render the visible window. Below it, we keep the lightweight .map() render
 // with its staggered entrance animation (no perf issue at typical monthly counts).
 const VIRTUALIZE_THRESHOLD = 150;
-import { getAllCategoryNames, fetchDetailRows, fetchHistory, fuzzyNamesMatch, formatTxDate } from './sheetsApi.js';
+import { getAllCategoryNames, fetchDetailRows, fetchHistory, fuzzyNamesMatch, formatTxDate, moveTransactionCategory } from './sheetsApi.js';
 import { downloadBlob, downloadCSV, transactionsToJson } from './exportHelpers.js';
+import { CategoryPickerSheet } from './CategoryPickerSheet.jsx';
 
 const METHOD_LABELS = {
   'Receipt Scan': 'Scan',
@@ -83,6 +84,13 @@ async function buildLedger(sheetId, accessToken, monthName = '') {
           user:          match?.user || null,
           date:          match?.timestamp || null,
           txDate:        row.date || null,
+          // Everything a cross-tab category move needs to reconstruct the sheet row
+          rowIndex:      row.rowIndex,
+          amtIndex:      amtIdx,
+          rowAmounts:    row.amounts,
+          rowUuids:      row.uuids || [],
+          bookingMethod: row.bookingMethod || '',
+          _v2:           row._v2 || false,
           _sortDate: row.date
             ? new Date(row.date + 'T00:00:00').getTime()
             : (match?.timestamp ? new Date(match.timestamp).getTime() : 0),
@@ -116,7 +124,7 @@ function loadCachedLedger(sheetId) {
 // per path: virtualized rows get react-window's absolute-positioning style and
 // no entrance animation; animated rows get the staggered --enter-delay.
 const LedgerRow = React.memo(function LedgerRow({
-  t, index, sheetId, transactionNotes, currencySymbol, style, animate = false,
+  t, index, sheetId, transactionNotes, currencySymbol, style, animate = false, onMove,
 }) {
   const noteKey = `${sheetId}_${t.category}_${(t.vendor || '').toLowerCase()}_${t.amount.toFixed(2)}`;
   const noteData = transactionNotes[noteKey];
@@ -163,12 +171,19 @@ const LedgerRow = React.memo(function LedgerRow({
         {t.date && <p className="text-[10px] mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{formatDate(t.date)}</p>}
         {t.user && <p className="text-[10px] font-bold" style={{ color: 'var(--color-text-muted)' }}>{t.user}</p>}
       </div>
+      {onMove && (
+        <button onClick={() => onMove(t)}
+          className="flex-shrink-0 p-1.5 rounded-lg transition-colors hover:bg-[var(--sur-5)]"
+          title="Move to another category" style={{ color: 'var(--color-text-muted)' }}>
+          <FolderInput className="w-3.5 h-3.5" />
+        </button>
+      )}
     </div>
   );
 });
 
 // react-window row adapter — receives { index, style, ...rowProps } from <List>.
-function VirtualLedgerRow({ index, style, items, sheetId, transactionNotes, currencySymbol }) {
+function VirtualLedgerRow({ index, style, items, sheetId, transactionNotes, currencySymbol, onMove }) {
   return (
     <LedgerRow
       t={items[index]}
@@ -177,6 +192,7 @@ function VirtualLedgerRow({ index, style, items, sheetId, transactionNotes, curr
       sheetId={sheetId}
       transactionNotes={transactionNotes}
       currencySymbol={currencySymbol}
+      onMove={onMove}
     />
   );
 }
@@ -197,6 +213,10 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
   const [filterCategories, setFilterCategories] = useState([]);
   const [filterMethods, setFilterMethods]       = useState([]);
   const [filterUsers, setFilterUsers]           = useState([]);
+
+  // Move-to-category state: the ledger transaction being moved
+  const [movingTx, setMovingTx]   = useState(null);
+  const [moveSaving, setMoveSaving] = useState(false);
 
   // Auto-measured row heights for the virtualized path (rows vary in height as
   // badges/notes wrap). Keyed by sheetId so the measurement cache resets on month switch.
@@ -268,6 +288,33 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
       }
     });
   }, [transactions, sortBy, filterCategories, filterMethods, filterUsers, searchQuery]);
+
+  // Move a single ledger transaction to another category (cross-tab move).
+  // For multi-amount V1 rows only the tapped amount moves (amtIndex); a
+  // single-amount row moves whole (null) so the source row is fully cleared.
+  const doMove = async (targetCategory) => {
+    const t = movingTx;
+    if (!t) return;
+    setMoveSaving(true);
+    try {
+      await moveTransactionCategory(t.category, targetCategory, {
+        rowIndex:      t.rowIndex,
+        description:   t.vendor,
+        amounts:       t.rowAmounts,
+        uuids:         t.rowUuids,
+        date:          t.txDate || '',
+        paymentMethod: t.paymentMethod || '',
+        bookingMethod: t.bookingMethod || '',
+        _v2:           t._v2,
+      }, accessToken, sheetId, monthName, t.rowAmounts.length > 1 ? t.amtIndex : null);
+      setMovingTx(null);
+      await load(true);
+    } catch (e) {
+      alert(`Move failed: ${e.message}`);
+    } finally {
+      setMoveSaving(false);
+    }
+  };
 
   const toggleFilter = (setter, value) =>
     setter(prev => prev.includes(value) ? prev.filter(v => v !== value) : [...prev, value]);
@@ -607,7 +654,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
               rowComponent={VirtualLedgerRow}
               rowCount={displayed.length}
               rowHeight={rowHeightCache}
-              rowProps={{ items: displayed, sheetId, transactionNotes, currencySymbol }}
+              rowProps={{ items: displayed, sheetId, transactionNotes, currencySymbol, onMove: setMovingTx }}
               overscanCount={8}
               style={{ height: 'min(70vh, 760px)' }}
             />
@@ -624,10 +671,23 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
                 sheetId={sheetId}
                 transactionNotes={transactionNotes}
                 currencySymbol={currencySymbol}
+                onMove={setMovingTx}
               />
             ))}
           </div>
         )
+      )}
+
+      {/* Move-to-category picker */}
+      {movingTx && (
+        <CategoryPickerSheet
+          title="Move to category"
+          subtitle={`${movingTx.vendor} · ${currencySymbol}${movingTx.amount.toFixed(2)}`}
+          currentCategory={movingTx.category}
+          saving={moveSaving}
+          onClose={() => setMovingTx(null)}
+          onPick={doMove}
+        />
       )}
     </div>
   );
