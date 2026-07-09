@@ -1,3 +1,16 @@
+// ════════════════════════════════════════════════════════════════════════════
+// data.js — a hard-coded SAMPLE of one month's budget sheet.
+// This is demo data shaped exactly like the rows we read from the real Google
+// Sheet, so the app (and tests) can render something without a live connection.
+// Each entry mirrors one spreadsheet row:
+//   • index_ : the row's position in the original sheet. Note the jump 15 → 21 —
+//              real sheets have gaps where rows were deleted, and the code must
+//              cope with that, so the sample keeps the gap too.
+//   • row    : the raw left-to-right cells. Roughly:
+//              [0] category name   [1] amount spent   [2] budget remaining
+//              [5] summary label   [6] summary value  [8] notes label/text
+//              [9] notes value     (other columns are unused/null here)
+// ════════════════════════════════════════════════════════════════════════════
 export const sheetData = [
   { index_: 0, row: ['Expense', 'Amount', 'Budgeted Amount', null, null, 'Salary Received', 8356.61, null, null, null] },
   { index_: 1, row: ['Grocery', 692.77, -192.77, null, null, 'Total Expenses', 7300.68, null, null, null] },
