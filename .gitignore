@@ -35,3 +35,8 @@ ui-debug.log
 
 # Netlify (legacy — build output, app migrated to Firebase)
 .netlify/
+
+# graphify — on-demand knowledge-graph output, regenerate via /graphify when needed
+graphify-out/
+.graphify_detect.json
+.graphify_python
