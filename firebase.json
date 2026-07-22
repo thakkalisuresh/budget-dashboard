@@ -13,6 +13,7 @@
       { "source": "/api/mcp", "function": "mcp" },
       { "source": "/api/wallet", "function": "walletWebhook" },
       { "source": "/api/item-categorize", "function": "itemCategorize" },
+      { "source": "/api/quotes", "function": "quotes" },
       {
         "source": "**",
         "destination": "/index.html"

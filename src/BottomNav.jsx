@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
-import { LayoutDashboard, BookOpen, Plus, Users, CreditCard } from 'lucide-react';
+import { LayoutDashboard, BookOpen, Plus, TrendingUp, CreditCard } from 'lucide-react';
 
+// Split moved to the header user menu (and stays a desktop TabSwitcher tab) to
+// make room for Invest — the more frequently checked surface on mobile.
 const NAV_ITEMS = [
   { id: 'budget',  Icon: LayoutDashboard, label: 'Home'   },
   { id: 'ledger',  Icon: BookOpen,        label: 'Ledger' },
   { id: '_add',    Icon: null,            label: 'Add'    },
-  { id: 'split',   Icon: Users,           label: 'Split'  },
+  { id: 'invest',  Icon: TrendingUp,      label: 'Invest' },
   { id: 'cards',   Icon: CreditCard,      label: 'Cards'  },
 ];
 

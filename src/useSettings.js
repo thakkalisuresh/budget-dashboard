@@ -73,6 +73,15 @@ export const DEFAULT_SETTINGS = {
   messages:                [],  // [{ id, type, title, body, timestamp, read }]
   pushHour:                20,  // preferred local hour for daily push (18-22)
   reconciledFingerprints:  [],  // ["vendor_amount", ...] — tracks imported reconciliation tx
+  // ── Invest tab ──
+  investSheetId:     null, // "Fundient Investments" spreadsheet id (provisioned on first open)
+  investAccountRules: [    // Investment-category expense vendor → invest account (flow-through)
+    { pattern: 'fidelity', accountId: 'fidelity' },
+    { pattern: 'amex',     accountId: 'amex-hysa' },
+    { pattern: 'happen',   accountId: 'happen-hysa' },
+  ],
+  investEtfSymbols:  [],   // extra symbols to treat as ETFs beyond the built-in set
+  preBuyThresholds:  { concentrationPct: 25, near52wkPct: 5 }, // pre-buy check flags (Phase 2)
   colorScheme:             'default',
   titleBarColor:           null,   // PWA/browser chrome <meta theme-color>; null = match app dark bg
   hasSeenOnboarding:       false,

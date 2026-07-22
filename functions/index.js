@@ -34,3 +34,5 @@ export { categoryAudit } from './category-audit.mjs';
 
 // Daily backend error digest (scheduled). See docs/ERROR_CODES.md.
 export { errorDigest } from './error-digest.mjs';
+// Invest tab — Finnhub quotes proxy (key stays server-side).
+export { quotes } from './quotes.mjs';

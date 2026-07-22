@@ -63,6 +63,11 @@ export const TELEGRAM_EMAIL_MAP      = defineSecret('TELEGRAM_EMAIL_MAP');
 // ── MCP server (bound in Phase 6) ──────────────────────────────────────────
 export const MCP_API_KEY = defineSecret('MCP_API_KEY');
 
+// ── Invest tab — Finnhub quotes proxy ──────────────────────────────────────
+// ⚠️ Same deploy-order rule as TELEGRAM_EMAIL_MAP: set the value BEFORE the
+// quotes function first deploys:  firebase functions:secrets:set FINNHUB_API_KEY
+export const FINNHUB_API_KEY = defineSecret('FINNHUB_API_KEY');
+
 // ── Wallet webhook (iOS Shortcuts / Android Automate) ──────────────────
 export const WALLET_WEBHOOK_SECRET = defineSecret('WALLET_WEBHOOK_SECRET');
 

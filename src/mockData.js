@@ -95,3 +95,34 @@ export const MOCK_HISTORY_ROWS = [
   ['June', '2026', '2026-06-19', 'Duane Reade',  18.20, 'Chase Debit Card - Sabarish', 'tx_019'],
   ['June', '2026', '2026-06-20', 'Thai Garden',  72.00, 'Chase Sapphire Reserve', 'tx_020'],
 ];
+
+// ── Invest tab (accounts + activity log + a rate-watch scan) ─────────────────
+export const MOCK_INVEST = {
+  accounts: [
+    { rowIndex: 2, id: 'amex-hysa',   name: 'Amex Savings', type: 'hysa',      institution: 'American Express', apy: 3.7, balance: 28400, balanceAsOf: '2026-07-01', goal: 250000 },
+    { rowIndex: 3, id: 'happen-hysa', name: 'Happen Bank',  type: 'hysa',      institution: 'Happen Bank',      apy: 4.4, balance: 41250, balanceAsOf: '2026-07-01', goal: 250000 },
+    { rowIndex: 4, id: 'fidelity',    name: 'Fidelity',     type: 'brokerage', institution: 'Fidelity',         apy: 0,   balance: 0,     balanceAsOf: '',            goal: 0 },
+  ],
+  activities: [
+    { rowIndex: 2, date: '2026-01-06', accountId: 'fidelity', type: 'BUY', symbol: 'VOO',  qty: 10, price: 478.2,  amount: 4782,    note: '', uuid: 'act_m1' },
+    { rowIndex: 3, date: '2026-03-04', accountId: 'fidelity', type: 'BUY', symbol: 'VOO',  qty: 8,  price: 496.5,  amount: 3972,    note: '', uuid: 'act_m2' },
+    { rowIndex: 4, date: '2026-02-11', accountId: 'fidelity', type: 'BUY', symbol: 'AAPL', qty: 25, price: 210,    amount: 5250,    note: '', uuid: 'act_m3' },
+    { rowIndex: 5, date: '2026-04-18', accountId: 'fidelity', type: 'BUY', symbol: 'NVDA', qty: 32, price: 149.8,  amount: 4793.6,  note: '', uuid: 'act_m4' },
+    { rowIndex: 6, date: '2026-05-07', accountId: 'fidelity', type: 'BUY', symbol: 'VTI',  qty: 15, price: 268.4,  amount: 4026,    note: '', uuid: 'act_m5' },
+    { rowIndex: 7, date: '2026-06-12', accountId: 'fidelity', type: 'BUY', symbol: 'MSFT', qty: 8,  price: 431.9,  amount: 3455.2,  note: '', uuid: 'act_m6' },
+    { rowIndex: 8, date: '2026-06-10', accountId: 'fidelity', type: 'DIVIDEND', symbol: 'VOO', qty: null, price: null, amount: 17.42, note: '', uuid: 'act_m7' },
+    { rowIndex: 9, date: '2026-07-01', accountId: 'happen-hysa', type: 'DEPOSIT',  symbol: '', qty: null, price: null, amount: 1000, note: '', uuid: 'act_m8' },
+    { rowIndex: 10, date: '2026-07-01', accountId: 'amex-hysa',  type: 'DEPOSIT',  symbol: '', qty: null, price: null, amount: 1000, note: '', uuid: 'act_m9' },
+    { rowIndex: 11, date: '2026-07-01', accountId: 'happen-hysa', type: 'INTEREST', symbol: '', qty: null, price: null, amount: 151.25, note: '', uuid: 'act_m10' },
+  ],
+  rateWatch: [
+    { scanDate: '2026-07-08', bestBank: 'Openbank', bestApy: 4.75, yourBestApy: 4.4, delta: 0.35, details: [{ bank: 'Openbank', apy: 4.75 }, { bank: 'Pibank', apy: 4.6 }, { bank: 'BrioDirect', apy: 4.55 }] },
+  ],
+  quotes: {
+    VOO:  { price: 512.4,  prevClose: 509.3,  dayChangePct: 0.61,  high: 514.1, low: 508.2, open: 509.9 },
+    AAPL: { price: 233.6,  prevClose: 231.02, dayChangePct: 1.12,  high: 234.9, low: 230.8, open: 231.4 },
+    NVDA: { price: 171.9,  prevClose: 172.62, dayChangePct: -0.42, high: 173.5, low: 170.9, open: 173.1 },
+    VTI:  { price: 282.1,  prevClose: 280.75, dayChangePct: 0.48,  high: 282.9, low: 280.1, open: 280.9 },
+    MSFT: { price: 445.2,  prevClose: 441.14, dayChangePct: 0.92,  high: 446.8, low: 440.6, open: 441.5 },
+  },
+};

@@ -1,0 +1,189 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import {
+  createInvestSheet, ensureInvestSheet, fetchAccounts, updateAccount,
+  appendActivity, appendActivities, fetchActivities, fetchRateWatch,
+  deleteActivityByUUID, INVEST_TABS,
+} from '../sheetInvest.js';
+
+// Route-based fetch mock: each entry is [urlSubstring+method matcher, response]
+let calls;
+let routes;
+function mockFetch() {
+  calls = [];
+  routes = [];
+  vi.stubGlobal('fetch', vi.fn(async (url, opts = {}) => {
+    const method = opts.method || 'GET';
+    calls.push({ url: String(url), method, body: opts.body ? JSON.parse(opts.body) : null });
+    const hit = routes.find(r => String(url).includes(r.match) && (!r.method || r.method === method));
+    return {
+      ok: hit ? hit.ok !== false : true,
+      status: hit?.status || 200,
+      json: async () => (hit ? hit.json : {}),
+    };
+  }));
+}
+
+beforeEach(() => mockFetch());
+
+describe('createInvestSheet', () => {
+  it('creates the spreadsheet with all four tabs, headers, and seed accounts', async () => {
+    routes.push({ match: 'sheets.googleapis.com/v4/spreadsheets', method: 'POST', json: { spreadsheetId: 'inv123' } });
+    const id = await createInvestSheet('tok', ['a@x.com']);
+    expect(id).toBe('inv123');
+
+    const create = calls.find(c => c.method === 'POST' && c.url.endsWith('/v4/spreadsheets'));
+    const titles = create.body.sheets.map(s => s.properties.title);
+    expect(titles).toEqual(Object.keys(INVEST_TABS));
+
+    const accounts = create.body.sheets.find(s => s.properties.title === 'Accounts');
+    const headerCells = accounts.data[0].rowData[0].values.map(v => v.userEnteredValue.stringValue);
+    expect(headerCells).toEqual(INVEST_TABS.Accounts);
+    // 3 seed accounts follow the header
+    expect(accounts.data[0].rowData).toHaveLength(4);
+    expect(accounts.data[0].rowData[1].values[0].userEnteredValue.stringValue).toBe('amex-hysa');
+    // HYSA goal seeded at 250k
+    expect(accounts.data[0].rowData[1].values[7].userEnteredValue.numberValue).toBe(250000);
+  });
+
+  it('surfaces API errors', async () => {
+    routes.push({ match: '/v4/spreadsheets', method: 'POST', ok: false, json: { error: { message: 'quota' } } });
+    await expect(createInvestSheet('tok', [])).rejects.toThrow('quota');
+  });
+});
+
+describe('ensureInvestSheet', () => {
+  it('returns the existing id without any network call', async () => {
+    const id = await ensureInvestSheet({
+      settings: { investSheetId: 'existing' },
+      updateSettings: vi.fn(), accessToken: 'tok',
+    });
+    expect(id).toBe('existing');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('provisions on first use and persists the id into settings', async () => {
+    routes.push({ match: '/v4/spreadsheets', method: 'POST', json: { spreadsheetId: 'fresh1' } });
+    const updateSettings = vi.fn();
+    const id = await ensureInvestSheet({ settings: {}, updateSettings, accessToken: 'tok', allowedEmails: [] });
+    expect(id).toBe('fresh1');
+    const next = updateSettings.mock.calls[0][0]({ other: true });
+    expect(next).toEqual({ other: true, investSheetId: 'fresh1' });
+  });
+});
+
+describe('fetchAccounts', () => {
+  it('parses account rows and skips blanks', async () => {
+    routes.push({
+      match: "'Accounts'!A2%3AH50", json: {
+        values: [
+          ['amex-hysa', 'Amex Savings', 'hysa', 'American Express', 3.7, 28400, '2026-07-01', 250000],
+          ['fidelity', 'Fidelity', 'brokerage', 'Fidelity', '', '', '', ''],
+          [],
+        ],
+      },
+    });
+    const accounts = await fetchAccounts('inv123', 'tok');
+    expect(accounts).toHaveLength(2);
+    expect(accounts[0]).toMatchObject({ id: 'amex-hysa', apy: 3.7, balance: 28400, goal: 250000, rowIndex: 2 });
+    expect(accounts[1]).toMatchObject({ id: 'fidelity', type: 'brokerage', rowIndex: 3 });
+  });
+});
+
+describe('updateAccount', () => {
+  it('writes apy/balance/asOf and snapshots a balance change', async () => {
+    routes.push({
+      match: "'Accounts'!A2%3AH50", json: {
+        values: [['happen-hysa', 'Happen Bank', 'hysa', 'Happen', 4.4, 41250, '2026-06-01', 250000]],
+      },
+    });
+    await updateAccount('inv123', 'tok', 'happen-hysa', { balance: 43250 });
+
+    const put = calls.find(c => c.method === 'PUT' && c.url.includes("'Accounts'!E2%3AG2"));
+    expect(put.body.values[0][0]).toBe(4.4);      // apy preserved
+    expect(put.body.values[0][1]).toBe(43250);    // new balance
+    const snap = calls.find(c => c.url.includes('Snapshots'));
+    expect(snap.body.values[0][1]).toBe('happen-hysa');
+    expect(snap.body.values[0][2]).toBe(43250);
+  });
+
+  it('throws on unknown account and skips snapshot when balance unchanged', async () => {
+    routes.push({
+      match: "'Accounts'!A2%3AH50", json: {
+        values: [['amex-hysa', 'Amex', 'hysa', 'Amex', 3.7, 28400, '', 250000]],
+      },
+    });
+    await expect(updateAccount('inv123', 'tok', 'nope', {})).rejects.toThrow('Unknown account');
+    mockFetch();
+    routes.push({
+      match: "'Accounts'!A2%3AH50", json: {
+        values: [['amex-hysa', 'Amex', 'hysa', 'Amex', 3.7, 28400, '', 250000]],
+      },
+    });
+    await updateAccount('inv123', 'tok', 'amex-hysa', { apy: 3.9 });
+    expect(calls.find(c => c.url.includes('Snapshots'))).toBeUndefined();
+  });
+});
+
+describe('activities', () => {
+  it('appends rows RAW with generated uuids and normalised symbols', async () => {
+    const uuids = await appendActivities('inv123', 'tok', [
+      { date: '2026-07-02', accountId: 'fidelity', type: 'BUY', symbol: 'voo', qty: 10, price: 502.11, amount: 5021.1, note: 'import' },
+      { accountId: 'amex-hysa', type: 'DEPOSIT', amount: 2000 },
+    ]);
+    expect(uuids).toHaveLength(2);
+    expect(uuids[0]).toMatch(/^act_[0-9a-f]{12}$/);
+
+    const append = calls.find(c => c.url.includes('Activities') && c.url.includes(':append'));
+    expect(append.url).toContain('valueInputOption=RAW');
+    expect(append.body.values[0][3]).toBe('VOO');
+    expect(append.body.values[1][0]).toMatch(/^\d{4}-\d{2}-\d{2}$/); // defaults to today
+    expect(append.body.values[1][4]).toBe(''); // qty blank for deposits
+  });
+
+  it('appendActivity delegates to bulk append', async () => {
+    const uuids = await appendActivity('inv123', 'tok', { accountId: 'fidelity', type: 'INTEREST', amount: 5 });
+    expect(uuids).toHaveLength(1);
+  });
+
+  it('fetchActivities parses typed rows and skips junk', async () => {
+    routes.push({
+      match: "'Activities'!A2%3AI5000", json: {
+        values: [
+          ['2026-07-02', 'fidelity', 'BUY', 'VOO', 10, 502.11, 5021.1, 'import', 'act_aaa'],
+          ['', '', '', '', '', '', '', '', ''],
+        ],
+      },
+    });
+    const acts = await fetchActivities('inv123', 'tok');
+    expect(acts).toHaveLength(1);
+    expect(acts[0]).toMatchObject({ type: 'BUY', symbol: 'VOO', qty: 10, price: 502.11, uuid: 'act_aaa', rowIndex: 2 });
+  });
+
+  it('deleteActivityByUUID deletes the matching sheet row', async () => {
+    routes.push({
+      match: "'Activities'!A2%3AI5000", json: {
+        values: [['2026-07-02', 'fidelity', 'BUY', 'VOO', 10, 502.11, 5021.1, '', 'act_kill']],
+      },
+    });
+    routes.push({ match: '?fields=sheets.properties', json: { sheets: [{ properties: { title: 'Activities', sheetId: 77 } }] } });
+    await deleteActivityByUUID('inv123', 'tok', 'act_kill');
+    const del = calls.find(c => c.url.includes(':batchUpdate'));
+    expect(del.body.requests[0].deleteDimension.range).toMatchObject({ sheetId: 77, startIndex: 1, endIndex: 2 });
+  });
+});
+
+describe('fetchRateWatch', () => {
+  it('parses detailsJson, tolerates bad JSON, returns newest first', async () => {
+    routes.push({
+      match: "'RateWatch'!A2%3AF200", json: {
+        values: [
+          ['2026-06-24', 'Openbank', 4.75, 4.4, 0.35, '[{"bank":"Openbank","apy":4.75}]'],
+          ['2026-07-08', 'Pibank', 4.8, 4.4, 0.4, 'not-json'],
+        ],
+      },
+    });
+    const rows = await fetchRateWatch('inv123', 'tok');
+    expect(rows[0]).toMatchObject({ scanDate: '2026-07-08', bestBank: 'Pibank', details: [] });
+    expect(rows[1].details[0].bank).toBe('Openbank');
+  });
+});
