@@ -266,3 +266,50 @@ describe('extractReceipt', () => {
     expect(result.error).toBe('illegible');
   });
 });
+
+describe('repairPurchaseYear — Amex BCP statement year guard', () => {
+  const TODAY = '2026-07-25';
+
+  it('remaps a stale model-invented year to the current year', async () => {
+    const { repairPurchaseYear } = await import('../../functions/lib/_extraction.mjs');
+    // The reported bug: Amex prints "01/05", model emits 2024.
+    expect(repairPurchaseYear('2024-01-05', TODAY)).toBe('2026-01-05');
+  });
+
+  it('falls back to last year when this year would still be in the future', async () => {
+    const { repairPurchaseYear } = await import('../../functions/lib/_extraction.mjs');
+    // A December statement opened in July: 2026-12-14 is future → 2025-12-14.
+    expect(repairPurchaseYear('2024-12-14', TODAY)).toBe('2025-12-14');
+  });
+
+  it('rewrites a future date back to the most recent past occurrence', async () => {
+    const { repairPurchaseYear } = await import('../../functions/lib/_extraction.mjs');
+    expect(repairPurchaseYear('2027-03-02', TODAY)).toBe('2026-03-02');
+  });
+
+  it('preserves a plausible printed year', async () => {
+    const { repairPurchaseYear } = await import('../../functions/lib/_extraction.mjs');
+    expect(repairPurchaseYear('2026-07-01', TODAY)).toBe('2026-07-01');
+    expect(repairPurchaseYear('2025-11-30', TODAY)).toBe('2025-11-30'); // currentYear-1 is allowed
+  });
+
+  it('allows today and tolerates small clock skew', async () => {
+    const { repairPurchaseYear } = await import('../../functions/lib/_extraction.mjs');
+    expect(repairPurchaseYear('2026-07-25', TODAY)).toBe('2026-07-25');
+    expect(repairPurchaseYear('2026-07-26', TODAY)).toBe('2026-07-26');
+  });
+
+  it('leaves malformed or non-string values untouched', async () => {
+    const { repairPurchaseYear } = await import('../../functions/lib/_extraction.mjs');
+    expect(repairPurchaseYear('not-a-date', TODAY)).toBe('not-a-date');
+    expect(repairPurchaseYear(null, TODAY)).toBe(null);
+    expect(repairPurchaseYear(undefined, TODAY)).toBe(undefined);
+  });
+
+  it('sanitizeExtraction applies the guard to purchase_date', async () => {
+    const { sanitizeExtraction } = await import('../../functions/lib/_extraction.mjs');
+    const out = sanitizeExtraction({ purchase_date: '2019-02-10', total_amount: 12 });
+    expect(out.purchase_date.startsWith('2019')).toBe(false);
+    expect(out.purchase_date.slice(5)).toBe('02-10');
+  });
+});
