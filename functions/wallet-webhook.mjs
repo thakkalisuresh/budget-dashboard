@@ -17,6 +17,7 @@ import { sendMessage, kbCategoryConfirm, resolveTelegramChatId } from './lib/_te
 import { matchesSplitVendor } from './lib/_item-categorizer.mjs';
 import { resolveCardName } from './lib/_card-resolver.mjs';
 import { sha256Hex } from './lib/http-common.mjs';
+import { reportError } from './lib/_error-log.mjs';
 import {
   WALLET_WEBHOOK_SECRET,
   VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_EMAIL,
@@ -90,7 +91,7 @@ export const walletWebhook = onRequest(
           if (!txDate && parsed.purchase_date) txDate = parsed.purchase_date;
         }
       } catch (e) {
-        console.error('Text parse failed:', e.message);
+        await reportError('WAL-003', e, { textLength: rawText.length });
       }
     }
 
@@ -144,7 +145,7 @@ export const walletWebhook = onRequest(
           vendor = result.data.store_name || vendor;
         }
       } catch (e) {
-        console.error('Categorization error (falling back to Misc):', e.message);
+        await reportError('EXTR-002', e, { vendor });
       }
     }
 
@@ -161,7 +162,7 @@ export const walletWebhook = onRequest(
         return;
       }
     } catch (e) {
-      console.error('Disabled-vendor check failed (continuing to log):', e.message);
+      await reportError('SHT-001', e, { step: 'disabled-vendor check', email });
     }
 
     // Both sources of `card` are raw: the Android Wallet macro sends the bank
@@ -256,7 +257,7 @@ export const walletWebhook = onRequest(
           res.status(200).json({ ok: true, split: true, vendor, amount });
           return;
         } catch (e) {
-          console.error('Split prompt failed (falling back to normal logging):', e.message);
+          await reportError('TG-001', e, { flow: 'split-prompt', vendor });
         }
       } else {
         console.warn(`No Telegram mapping for ${email}; logging split vendor normally.`);
@@ -308,7 +309,9 @@ export const walletWebhook = onRequest(
         res.status(422).json({ ok: false, error: 'month_not_found', monthName });
         return;
       }
-      console.error('appendExpense failed:', e.message);
+      // WAL-002 is the single most important error in the system: the charge
+      // arrived and is now lost unless it's re-entered by hand.
+      await reportError('WAL-002', e, { vendor, amount, category, monthName });
       res.status(500).json({ ok: false, error: 'Failed to write transaction' });
       return;
     }
@@ -349,7 +352,7 @@ export const walletWebhook = onRequest(
         if (e.statusCode === 410) {
           await getDb().collection('push_subscriptions').doc(email).delete().catch(() => {});
         }
-        console.error('Push notification failed (non-fatal):', e.message);
+        await reportError('PUSH-002', e, { vendor });
       }
     }
 

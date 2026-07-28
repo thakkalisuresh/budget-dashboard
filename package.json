@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "errdoc": "node scripts/generate-error-codes-doc.mjs"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.9",

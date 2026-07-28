@@ -243,7 +243,7 @@ export async function handleRpc(message) {
         if (e instanceof ToolError) {
           return rpcResult(id, { content: [{ type: 'text', text: `Error: ${e.message}` }], isError: true });
         }
-        console.error('MCP tool error:', name, e);
+        console.error('MCP-001 — MCP tool call failed:', name, e);
         return rpcResult(id, { content: [{ type: 'text', text: 'Error: tool execution failed' }], isError: true });
       }
     }

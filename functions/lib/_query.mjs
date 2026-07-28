@@ -216,7 +216,7 @@ async function answerWithAI(question, sheetId, monthName) {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      console.error(`query Claude (${model}):`, err?.error?.message || res.status);
+      console.error(`LLM-002 — Agent API error, query Claude (${model}):`, err?.error?.message || res.status);
       return "Sorry, I couldn't answer that right now. Try a simpler query like '? budget' or '? total'.";
     }
 
@@ -224,7 +224,7 @@ async function answerWithAI(question, sheetId, monthName) {
     const answer = data.content?.[0]?.text || '';
     return answer.trim() || "I don't have enough data to answer that.";
   } catch (e) {
-    console.error('query: Claude error', e.message);
+    console.error('LLM-002 — Agent API error (query):', e.message);
     return "Sorry, I couldn't reach the AI. Try '? budget' or '? total'.";
   }
 }

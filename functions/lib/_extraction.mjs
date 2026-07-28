@@ -362,7 +362,7 @@ export async function extractReceipt(base64, mediaType) {
     }
   }
 
-  console.error('extractReceipt: all models exhausted:', lastError?.message);
+  console.error('EXTR-005 — All extraction models exhausted (extractReceipt):', lastError?.message);
   return { ok: false, error: 'illegible', message: lastError?.message };
 }
 
@@ -438,7 +438,7 @@ export async function extractReceiptBatch(base64, mediaType) {
     }
   }
 
-  console.error('extractReceiptBatch: all models exhausted:', lastError?.message);
+  console.error('EXTR-005 — All extraction models exhausted (batch):', lastError?.message);
   return { ok: false, error: 'illegible', message: lastError?.message };
 }
 
@@ -478,7 +478,7 @@ export async function extractTransactionText(text) {
     }
   }
 
-  console.error('extractTransactionText: all models exhausted:', lastError?.message);
+  console.error('EXTR-005 — All extraction models exhausted (text):', lastError?.message);
   return { ok: false, error: 'illegible', message: lastError?.message };
 }
 
