@@ -102,6 +102,19 @@ export function kbYesCancel() {
   ]];
 }
 
+/**
+ * Confirmation for something we think is already logged. Same callback_data as
+ * kbYesCancel — the confirm handler is unchanged — but the affirmative button
+ * is relabelled so accepting a duplicate is a deliberate act, not the same
+ * reflex tap as a normal receipt.
+ */
+export function kbLogAnywayCancel() {
+  return [[
+    { text: '⚠️ Log anyway', callback_data: 'YES' },
+    { text: '❌ CANCEL', callback_data: 'CANCEL' },
+  ]];
+}
+
 export function kbYesSkip() {
   return [[
     { text: '✅ YES', callback_data: 'YES' },

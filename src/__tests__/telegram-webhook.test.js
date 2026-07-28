@@ -1098,3 +1098,100 @@ describe('telegram webhook — AUDITFIX category move', () => {
     expect(ops).toEqual([]);
   });
 });
+
+/* ── Duplicate prevention on the receipt confirm prompt ── */
+
+describe('telegram webhook — duplicate warning before logging', () => {
+  const extraction = {
+    store_name: 'Costco', purchase_date: '2026-05-14', total_amount: 89.50,
+    currency: 'USD', items: [], reward_category: 'Grocery', is_transfer: false,
+  };
+  const HEADER = ['Timestamp', 'Action', 'Category', 'Vendor', 'Amount', 'Details', 'Reserved', 'User', 'UUID', 'TxDate'];
+  // Already logged: same vendor + amount, one day earlier, filed under Misc —
+  // the wallet-then-receipt case this exists to catch.
+  const alreadyLogged = ['2026-05-13T08:00:00Z', 'Added', 'Misc', 'Costco', 89.5, '', '', 'Alice', 'tx_old', '2026-05-13'];
+
+  function setupMocks({ history = [], historyFails = false } = {}) {
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('/getFile')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true, result: { file_path: 'photos/f.jpg' } }) });
+      }
+      if (url.includes('api.telegram.org/file/')) {
+        return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(jpegBytes()) });
+      }
+      if (url.includes('generativelanguage.googleapis.com')) {
+        return Promise.resolve(geminiResponse({ transactions: [extraction] }));
+      }
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      if (url.includes('Months')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['May 2026', 'sheet-may']] }) });
+      }
+      if (url.includes('History')) {
+        if (historyFails) return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: { message: 'sheets down' } }) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [HEADER, ...history] }) });
+      }
+      if (url.includes('googleapis.com/drive') || url.includes('googleapis.com/upload')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 'file-1', webViewLink: 'x', files: [{ id: 'f' }] }) });
+      }
+      if (url.includes('/sendMessage')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true, result: { message_id: 9 } }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [] }) });
+    });
+  }
+
+  const lastSend = () => {
+    const calls = mockFetch.mock.calls.filter(c => c[0]?.includes?.('/sendMessage'));
+    return JSON.parse(calls[calls.length - 1][1].body);
+  };
+
+  beforeEach(() => { mockStore.data.clear(); });
+
+  it('warns and relabels the button when the charge is already logged', async () => {
+    setupMocks({ history: [alreadyLogged] });
+    await handler(buildRequest(photoMessage()));
+
+    const body = lastSend();
+    expect(body.text).toContain('Possible duplicate');
+    expect(body.text).toContain('Costco');
+    expect(body.text).toContain('Misc');            // names the category it's already in
+    expect(body.text).toContain('Reply YES to log'); // the normal prompt still follows
+    // Confirming becomes a deliberate act, but the callback_data is unchanged
+    // so the existing confirm handler still works.
+    expect(body.reply_markup.inline_keyboard[0][0].text).toContain('Log anyway');
+    expect(body.reply_markup.inline_keyboard[0][0].callback_data).toBe('YES');
+  });
+
+  it('leaves the normal prompt alone when nothing matches', async () => {
+    setupMocks({ history: [] });
+    await handler(buildRequest(photoMessage()));
+
+    const body = lastSend();
+    expect(body.text).not.toContain('Possible duplicate');
+    expect(body.reply_markup.inline_keyboard[0][0].text).toContain('YES');
+    expect(body.reply_markup.inline_keyboard[0][0].callback_data).toBe('YES');
+  });
+
+  it('does not warn about a same-vendor charge outside the date window', async () => {
+    // A repeat purchase at the same amount two weeks earlier is not a duplicate.
+    const old = [...alreadyLogged];
+    old[0] = '2026-04-28T08:00:00Z';
+    old[9] = '2026-04-28';
+    setupMocks({ history: [old] });
+    await handler(buildRequest(photoMessage()));
+    expect(lastSend().text).not.toContain('Possible duplicate');
+  });
+
+  it('still logs normally when the duplicate check itself fails', async () => {
+    // A broken check must never block someone logging an expense.
+    setupMocks({ historyFails: true });
+    await handler(buildRequest(photoMessage()));
+
+    const body = lastSend();
+    expect(body.text).toContain('Costco');
+    expect(body.text).not.toContain('Possible duplicate');
+    expect(body.reply_markup.inline_keyboard[0][0].callback_data).toBe('YES');
+  });
+});
