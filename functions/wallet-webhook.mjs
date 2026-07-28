@@ -13,6 +13,7 @@ import { getDb } from './lib/firestore.mjs';
 import { createBotStore } from './lib/bot-store.mjs';
 import { sendMessage } from './lib/_telegram.mjs';
 import { matchesSplitVendor } from './lib/_item-categorizer.mjs';
+import { resolveCardName } from './lib/_card-resolver.mjs';
 import { sha256Hex } from './lib/http-common.mjs';
 import {
   WALLET_WEBHOOK_SECRET,
@@ -171,6 +172,20 @@ export const walletWebhook = onRequest(
       }
     } catch (e) {
       console.error('Disabled-vendor check failed (continuing to log):', e.message);
+    }
+
+    // Both sources of `card` are raw: the Android Wallet macro sends the bank
+    // notification title verbatim, and the parsed-text path assigns
+    // parsed.payment_method as-is. Neither had ever been resolved against the
+    // user's card list, so "Blue Cash Preferred" landed in a separate bucket
+    // from "American Express Blue Cash Preferred".
+    //
+    // Fall back to the raw string when nothing matches: an unrecognised card is
+    // still better data than a blank, and getUserSettingsByEmail above may have
+    // failed, leaving userSettings.cards empty — resolving to '' there would
+    // wipe a card name that was perfectly good.
+    if (card) {
+      card = resolveCardName(card, userSettings.cards || []) || card;
     }
 
     // ── Split-receipt vendor (Costco, Amazon…): don't log a lump sum. Stash the

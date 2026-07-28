@@ -122,13 +122,37 @@ export function toBase64(file) {
 
 // ── Claude API extraction ───────────────────────────────────────────────────
 
+// Shorthand → canonical card name, keyed by normalized alias.
+// MIRROR: keep in sync with CARD_ALIASES in functions/lib/_card-resolver.mjs.
+// Only covers strings the substring matcher provably cannot reach: abbreviations
+// below the 5-char guard ("bcp", "csr"), and variants sharing no substring with
+// the canonical name.
+export const CARD_ALIASES = {
+  bcp: 'American Express Blue Cash Preferred',
+  amexbcp: 'American Express Blue Cash Preferred',
+  amexbluecash: 'American Express Blue Cash Preferred',
+  bluecash: 'American Express Blue Cash Preferred',
+  csr: 'Chase Sapphire Reserve',
+  cfu: 'Chase Freedom Unlimited',
+  cfr: 'Chase Freedom Rise',
+  c1quicksilver: 'Capital One Quicksilver',
+  capitalonequicksilver: 'Capital One Quicksilver',
+  bilt: 'Bilt Blue Card',
+  biltmastercard: 'Bilt Blue Card',
+};
+
 // Fuzzy-match a raw card string from Vision against the known cards list.
 // Returns the canonical card name or '' if no confident match.
+// MIRROR: keep in sync with resolveCardName in functions/lib/_card-resolver.mjs.
 export function resolveCardName(raw, cards = []) {
   if (!raw || !cards.length) return '';
   const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
-  const r = norm(raw);
+  let r = norm(raw);
   if (!r) return '';
+  // Expand a known shorthand first, so "BCP" can reach a canonical name it
+  // shares no usable substring with. An alias only rewrites the input — it
+  // never invents a card the user doesn't hold.
+  if (CARD_ALIASES[r]) r = norm(CARD_ALIASES[r]);
   // Exact normalized match first
   for (const c of cards) if (norm(c) === r) return c;
   // Substring either direction (Vision may return "Sapphire Reserve" for "Chase Sapphire Reserve").
