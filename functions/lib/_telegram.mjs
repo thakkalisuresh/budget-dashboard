@@ -201,12 +201,6 @@ export function kbEditLoggedMenu() {
 }
 
 /**
- * Inline keyboard for picking the category of one uncategorized split item.
- * Each button's callback_data is `SPLITCAT:<itemIndex>:<category>` (well under
- * Telegram's 64-byte limit). Categories are laid out two per row; an optional
- * AI-suggested category is pinned to the top row, prefixed with a ⭐.
- */
-/**
  * Category picker for a wallet charge the categorizer wasn't confident about.
  * callback_data is `CATFIX:<pendingId>:<category>`; pendingId is a short id
  * (not a UUID) so the whole payload stays inside Telegram's 64-byte limit.
@@ -225,6 +219,12 @@ export function kbCategoryConfirm(pendingId, categories, suggestion = null) {
   return rows;
 }
 
+/**
+ * Inline keyboard for picking the category of one uncategorized split item.
+ * Each button's callback_data is `SPLITCAT:<itemIndex>:<category>` (well under
+ * Telegram's 64-byte limit). Categories are laid out two per row; an optional
+ * AI-suggested category is pinned to the top row, prefixed with a ⭐.
+ */
 export function kbSplitCategory(itemIndex, categories, suggestion = null) {
   const rows = [];
   if (suggestion && categories.includes(suggestion)) {
@@ -237,4 +237,22 @@ export function kbSplitCategory(itemIndex, categories, suggestion = null) {
   }
   rows.push([{ text: '❌ CANCEL', callback_data: 'CANCEL' }]);
   return rows;
+}
+
+/**
+ * Resolve a user email → Telegram chat id via the TELEGRAM_EMAIL_MAP secret
+ * ("email:chatId,email:chatId"). Returns null when the user has no mapping.
+ * Shared by the wallet webhook and the category audit so the parsing lives in
+ * one place.
+ */
+export function resolveTelegramChatId(email) {
+  const raw = process.env.TELEGRAM_EMAIL_MAP || '';
+  if (!email) return null;
+  for (const pair of raw.split(',')) {
+    const [mappedEmail, chatId] = pair.split(':').map(s => s.trim());
+    if (mappedEmail && chatId && mappedEmail.toLowerCase() === email.toLowerCase()) {
+      return chatId;
+    }
+  }
+  return null;
 }

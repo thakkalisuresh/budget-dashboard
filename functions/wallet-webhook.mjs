@@ -12,7 +12,7 @@ import { resolveCategory } from './lib/_categorize.mjs';
 import { appendExpense, getCurrentMonthSheetId, getUserSettingsByEmail } from './lib/_sheets.mjs';
 import { getDb } from './lib/firestore.mjs';
 import { createBotStore } from './lib/bot-store.mjs';
-import { sendMessage, kbCategoryConfirm } from './lib/_telegram.mjs';
+import { sendMessage, kbCategoryConfirm, resolveTelegramChatId } from './lib/_telegram.mjs';
 import { matchesSplitVendor } from './lib/_item-categorizer.mjs';
 import { resolveCardName } from './lib/_card-resolver.mjs';
 import { sha256Hex } from './lib/http-common.mjs';
@@ -23,18 +23,6 @@ import {
   TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP,
   SHEETS_DRIVE_SECRETS,
 } from './lib/secrets.mjs';
-
-/** Resolve a requester email → Telegram chat id via the TELEGRAM_EMAIL_MAP secret. */
-function resolveTelegramChatId(email) {
-  const raw = process.env.TELEGRAM_EMAIL_MAP || '';
-  for (const pair of raw.split(',')) {
-    const [mappedEmail, chatId] = pair.split(':').map(s => s.trim());
-    if (mappedEmail && chatId && mappedEmail.toLowerCase() === email.toLowerCase()) {
-      return chatId;
-    }
-  }
-  return null;
-}
 
 async function keyMatches(provided, expected) {
   const [a, b] = await Promise.all([sha256Hex(provided), sha256Hex(expected)]);

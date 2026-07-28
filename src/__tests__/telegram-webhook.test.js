@@ -993,3 +993,108 @@ describe('telegram webhook — CATFIX category pick', () => {
     expect(mockStore.data.has(pendingKey)).toBe(false);
   });
 });
+
+/* ── AUDITFIX: moving an already-logged expense between category tabs ── */
+
+describe('telegram webhook — AUDITFIX category move', () => {
+  const HEADER = ['Timestamp', 'Action', 'Category', 'Vendor', 'Amount', 'Details', 'Reserved', 'User', 'UUID', 'TxDate'];
+  const row = ['2026-05-10T08:00:00Z', 'Added', 'Misc', 'Chipotle', 24.5, '', '', 'Alice', 'tx_abc', '2026-05-10'];
+
+  // Records what the handler did so append/delete ordering can be asserted.
+  let ops;
+
+  function mockSheets({ appendFails = false, deleteFails = false } = {}) {
+    ops = [];
+    mockFetch.mockImplementation((url, opts) => {
+      if (url.includes('/sendMessage') || url.includes('/answerCallbackQuery')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
+      }
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      if (url.includes('Months')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['May 2026', 'sheet-may']] }) });
+      }
+      if (url.includes('History')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [HEADER, row] }) });
+      }
+      // Row write for the new category tab.
+      if (opts?.method === 'PUT') {
+        ops.push('append');
+        return appendFails
+          ? Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: { message: 'append blew up' } }) })
+          : Promise.resolve({ ok: true, json: () => Promise.resolve({ updates: { updatedRows: 1 } }) });
+      }
+      // Row removal from the old tab.
+      if (url.includes(':batchUpdate')) {
+        ops.push('delete');
+        return deleteFails
+          ? Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: { message: 'delete blew up' } }) })
+          : Promise.resolve({ ok: true, json: () => Promise.resolve({ replies: [] }) });
+      }
+      // UUID lookup across category tabs (deleteExpenseByUUID scans F:H).
+      if (url.includes('F:H') || url.includes('F%3AH')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['tx_abc']] }) });
+      }
+      // Tab metadata, needed to turn a row index into a deleteDimension range.
+      if (url.includes('fields=sheets.properties')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({
+          sheets: [
+            { properties: { title: 'Misc', sheetId: 1 } },
+            { properties: { title: 'Eating Out', sheetId: 2 } },
+          ],
+        }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [] }) });
+    });
+  }
+
+  const lastSend = () => {
+    const calls = mockFetch.mock.calls.filter(c => c[0]?.includes?.('/sendMessage'));
+    return JSON.parse(calls[calls.length - 1][1].body).text;
+  };
+
+  beforeEach(() => { mockStore.data.clear(); mockSheets(); });
+
+  it('moves the expense and reports both sides of the move', async () => {
+    await handler(buildRequest(callbackQuery('AUDITFIX:tx_abc:Eating Out')));
+    const text = lastSend();
+    expect(text).toContain('Moved Chipotle');
+    expect(text).toContain('Misc');
+    expect(text).toContain('Eating Out');
+  });
+
+  it('appends before deleting, so a half-failure duplicates instead of losing', async () => {
+    await handler(buildRequest(callbackQuery('AUDITFIX:tx_abc:Eating Out')));
+    expect(ops).toEqual(['append', 'delete']);
+  });
+
+  it('changes nothing when the append fails', async () => {
+    mockSheets({ appendFails: true });
+    await handler(buildRequest(callbackQuery('AUDITFIX:tx_abc:Eating Out')));
+
+    expect(ops).not.toContain('delete');   // old row untouched
+    expect(lastSend()).toContain('Nothing was changed');
+  });
+
+  it('says so plainly when the old row could not be removed', async () => {
+    mockSheets({ deleteFails: true });
+    await handler(buildRequest(callbackQuery('AUDITFIX:tx_abc:Eating Out')));
+
+    // The user now has a duplicate; claiming success would hide it.
+    const text = lastSend();
+    expect(text).toContain("couldn't remove the old");
+    expect(text).toMatch(/counted twice/i);
+  });
+
+  it('handles an expense that has since disappeared', async () => {
+    await handler(buildRequest(callbackQuery('AUDITFIX:tx_gone:Eating Out')));
+    expect(lastSend()).toContain('Could not find that expense');
+  });
+
+  it('no-ops when the expense is already in the suggested category', async () => {
+    await handler(buildRequest(callbackQuery('AUDITFIX:tx_abc:Misc')));
+    expect(lastSend()).toContain('already in Misc');
+    expect(ops).toEqual([]);
+  });
+});

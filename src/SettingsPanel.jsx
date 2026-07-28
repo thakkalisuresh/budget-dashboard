@@ -1049,6 +1049,17 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
             )}
           </div>
 
+          {/* ── AI categorization ────────────────────────────────────────── */}
+          <div>
+            <SectionLabel>AI Categorization</SectionLabel>
+            <Toggle
+              on={settings.llmCategorize !== false}
+              onToggle={() => updateSettings(prev => ({ ...prev, llmCategorize: prev.llmCategorize === false }))}
+              label="Correct categories with AI"
+              desc="Checks the category when an expense is added, and runs a weekly review. Smart Rules always win — this only fills the gaps."
+            />
+          </div>
+
           {/* ── Smart Rules ─────────────────────────────────────────────── */}
           <div>
             <div className="flex items-center justify-between mb-3">

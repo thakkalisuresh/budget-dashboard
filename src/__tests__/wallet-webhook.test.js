@@ -42,6 +42,13 @@ vi.mock('../../functions/lib/bot-store.mjs', () => ({ createBotStore: () => spli
 vi.mock('../../functions/lib/_telegram.mjs', () => ({
   sendMessage: telegramSend,
   kbCategoryConfirm: (id, cats, suggestion) => [[{ text: suggestion, callback_data: `CATFIX:${id}:${suggestion}` }]],
+  resolveTelegramChatId: (email) => {
+    for (const pair of (process.env.TELEGRAM_EMAIL_MAP || '').split(',')) {
+      const [e, id] = pair.split(':').map(s => s.trim());
+      if (e && id && email && e.toLowerCase() === email.toLowerCase()) return id;
+    }
+    return null;
+  },
 }));
 vi.mock('../../functions/lib/firestore.mjs', () => ({
   getDb: () => ({

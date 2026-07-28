@@ -137,6 +137,11 @@ export async function handleTextReply(ctx, text) {
     return await handleCategoryPick(ctx, text);
   }
 
+  // ── AUDITFIX callback (user accepted a weekly-audit recategorization) ──
+  if (text.startsWith('AUDITFIX:')) {
+    return await handleAuditFix(ctx, text);
+  }
+
   // ── NEW MONTH wizard / DELETE pending (R5: probe the two independent
   //    state keys in parallel to shave a Firestore round-trip) ──
   const [wizardState, deletePending] = await Promise.all([
@@ -974,6 +979,70 @@ async function handleCategoryPick(ctx, text) {
     // tap again once whatever broke is back.
     return ctx.send(`Couldn't log that: ${e.message}. Tap a category again to retry.`);
   }
+}
+
+/**
+ * Handle an `AUDITFIX:<uuid>:<category>` tap from the weekly digest — move an
+ * already-logged expense to a different category.
+ *
+ * Categories are separate sheet tabs, so a move is an append plus a delete.
+ * Append FIRST, on purpose: if the delete then fails the user has a visible
+ * duplicate they can remove, whereas deleting first and failing to append
+ * would silently destroy the expense. Neither half is atomic and a duplicate
+ * is the cheaper failure.
+ */
+async function handleAuditFix(ctx, text) {
+  const { store, userId } = ctx;
+  const m = text.match(/^AUDITFIX:([^:]+):(.+)$/);
+  if (!m) return;
+
+  const [, uuid, newCategory] = m;
+  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+  let sheetId;
+  try {
+    sheetId = await getCurrentMonthSheetId(monthName);
+  } catch {
+    return ctx.send(`No sheet found for ${monthName}.`);
+  }
+
+  const recent = await getRecentExpenses(sheetId, 100).catch(() => []);
+  const expense = recent.find(e => e.uuid === uuid);
+  if (!expense) {
+    return ctx.send('Could not find that expense — it may have been edited or deleted already.');
+  }
+  if (expense.category === newCategory) {
+    return ctx.send(`${expense.vendor} is already in ${newCategory}.`);
+  }
+
+  try {
+    await appendExpense({
+      category: newCategory,
+      vendor: expense.vendor,
+      amount: expense.amount,
+      txDate: expense.txDate || undefined,
+      sheetId,
+      monthName,
+      channel: 'audit',
+    });
+  } catch (e) {
+    console.error('bot-core: AUDITFIX append failed', e.message);
+    return ctx.send(`Couldn't move that: ${e.message}. Nothing was changed.`);
+  }
+
+  try {
+    await deleteExpenseByUUID({ category: expense.category, uuid, sheetId });
+  } catch (e) {
+    // The new row exists; the old one didn't go. Say so rather than claim success.
+    console.error('bot-core: AUDITFIX delete failed', e.message);
+    return ctx.send(
+      `Added ${expense.vendor} to ${newCategory}, but couldn't remove the old ${expense.category} entry — ` +
+      `please delete it in the dashboard so it isn't counted twice.`
+    );
+  }
+
+  console.log(`bot-core: AUDITFIX moved ${expense.vendor} ${expense.category} → ${newCategory} for ${userId}`);
+  return ctx.send(`Moved ${expense.vendor} · $${Number(expense.amount).toFixed(2)} from ${expense.category} to ${newCategory}.`);
 }
 
 /** Handle a `SPLITCAT:<idx>:<category>` pick from the inline keyboard. */
