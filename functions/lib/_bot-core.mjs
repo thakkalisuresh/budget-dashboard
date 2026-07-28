@@ -637,7 +637,12 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
   const baseReceiptId = crypto.randomUUID();
   const now = new Date();
 
+  // Timing breakdown for the receipt path, so the remaining optimizations
+  // (retry counts, image downscaling) can be decided from real numbers instead
+  // of guesses. Grep the function logs for `bot-core: timing`.
+  const t0 = Date.now();
   const extraction = await extractReceiptBatch(base64, mediaType);
+  const tExtract = Date.now() - t0;
 
   if (!extraction.ok || extraction.transactions.length === 0) {
     await store.setJSON(`pending:${baseReceiptId}`, {
@@ -658,6 +663,21 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
       ? new Date(data.purchase_date).toLocaleString('en-US', { month: 'long' })
       : now.toLocaleString('en-US', { month: 'long' });
 
+    // Drive is the one consistently expensive call left on this path —
+    // maybeConvertCurrency short-circuits for USD and getUserSettings is cached
+    // (R3). Start the upload now and let it run underneath the card resolution
+    // and prompt building instead of blocking the user on it. Awaited later,
+    // never abandoned. Rejection is folded into the promise so an upload
+    // failure can't surface as an unhandled rejection while it's unowned.
+    const drivePromise = uploadReceiptImage({
+      year, month, category: null,
+      fileName: `receipt-${baseReceiptId.slice(0, 8)}.${mediaType === 'application/pdf' ? 'pdf' : 'jpg'}`,
+      mimeType: mediaType, base64,
+    }).catch(e => {
+      console.error('bot-core: Drive upload failed', e.message);
+      return null;
+    });
+
     const conversionInfo = await maybeConvertCurrency(data);
 
     let settings = {};
@@ -668,17 +688,6 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
       console.warn('bot-core: card resolution failed (non-fatal)', e.message);
     }
 
-    let driveResult = null;
-    try {
-      driveResult = await uploadReceiptImage({
-        year, month, category: null,
-        fileName: `receipt-${baseReceiptId.slice(0, 8)}.${mediaType === 'application/pdf' ? 'pdf' : 'jpg'}`,
-        mimeType: mediaType, base64,
-      });
-    } catch (e) {
-      console.error('bot-core: Drive upload failed', e.message);
-    }
-
     // ── Split flow: itemized receipt from a configured split vendor (Costco,
     // Amazon…) OR a wallet-triggered split awaiting its receipt. Splits the
     // receipt across categories instead of logging one lump sum.
@@ -687,58 +696,72 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
     const isSplitVendor = matchesSplitVendor(data.store_name, settings.splitReceiptVendors || []);
     if (!data.is_transfer && Array.isArray(data.items) && data.items.length > 0 && (isSplitVendor || hasSplitPending)) {
       const pendingKey = hasSplitPending ? splitPendingBlobs[0].key : null;
+      // The split flow threads driveResult through its own per-category blobs,
+      // so it needs the real value rather than a deferred patch.
+      const driveResult = await drivePromise;
       return await handleSplitFlow(ctx, {
         data, year, month, conversionInfo, baseReceiptId, driveResult, pendingKey,
       });
     }
 
+    // Both remaining paths store the blob with null Drive ids, send the prompt,
+    // then patch the ids in. The user sees the prompt a full Drive round-trip
+    // sooner; the ids land before the handler returns.
     if (data.is_transfer) {
-      await store.setJSON(`transfer_pending:${userId}:${baseReceiptId}`, {
+      const transferKey = `transfer_pending:${userId}:${baseReceiptId}`;
+      await store.setJSON(transferKey, {
         id: baseReceiptId, phone: userId, mediaType, base64,
         extraction: data, conversionInfo,
-        driveFileId: driveResult?.fileId || null,
-        driveFolderId: driveResult?.folderId || null,
-        driveShareLink: driveResult?.shareLink || null,
+        driveFileId: null, driveFolderId: null, driveShareLink: null,
         year, month, receivedAt: now.toISOString(),
       });
-      return ctx.send(buildTransferPrompt(data, conversionInfo));
+      const sent = await ctx.send(buildTransferPrompt(data, conversionInfo));
+      await attachDriveResult(store, transferKey, drivePromise);
+      return sent;
     }
 
-    await store.setJSON(`confirm:${userId}:${baseReceiptId}`, {
+    const confirmKey = `confirm:${userId}:${baseReceiptId}`;
+    await store.setJSON(confirmKey, {
       id: baseReceiptId, phone: userId, mediaType, base64,
       extraction: data, conversionInfo,
-      driveFileId: driveResult?.fileId || null,
-      driveFolderId: driveResult?.folderId || null,
-      driveShareLink: driveResult?.shareLink || null,
+      driveFileId: null, driveFolderId: null, driveShareLink: null,
       year, month, receivedAt: now.toISOString(),
       status: 'awaiting_confirmation',
     });
 
     console.log(`bot-core: receipt ${baseReceiptId} extracted for ${userId} — ${data.store_name} $${data.total_amount}`);
-    return ctx.send(buildConfirmPrompt(data, conversionInfo), kbYesCancel());
+    const sent = await ctx.send(buildConfirmPrompt(data, conversionInfo), kbYesCancel());
+    // Perceived latency ends at the send; Drive now lands after it.
+    console.log(`bot-core: timing ${baseReceiptId} extract=${tExtract}ms toPrompt=${Date.now() - t0}ms`);
+    await attachDriveResult(store, confirmKey, drivePromise);
+    console.log(`bot-core: timing ${baseReceiptId} total=${Date.now() - t0}ms (drive after prompt)`);
+    return sent;
   }
 
   // Multiple transactions — upload image once, queue all items as confirm blobs.
   const batchTotal = transactions.length;
 
-  let driveResult = null;
-  try {
-    const first = transactions[0];
-    const firstYear  = first.purchase_date ? new Date(first.purchase_date).getFullYear() : now.getFullYear();
-    const firstMonth = first.purchase_date
-      ? new Date(first.purchase_date).toLocaleString('en-US', { month: 'long' })
-      : now.toLocaleString('en-US', { month: 'long' });
-    driveResult = await uploadReceiptImage({
+  // The batch loop threads driveResult into every per-item blob, so deferring
+  // the upload here would mean patching N blobs afterwards — more Firestore
+  // writes than the one round-trip it would save. Overlap it with the settings
+  // fetch instead and await both together.
+  const first = transactions[0];
+  const firstYear  = first.purchase_date ? new Date(first.purchase_date).getFullYear() : now.getFullYear();
+  const firstMonth = first.purchase_date
+    ? new Date(first.purchase_date).toLocaleString('en-US', { month: 'long' })
+    : now.toLocaleString('en-US', { month: 'long' });
+
+  const [driveResult, settings] = await Promise.all([
+    uploadReceiptImage({
       year: firstYear, month: firstMonth, category: null,
       fileName: `receipt-${baseReceiptId.slice(0, 8)}.${mediaType === 'application/pdf' ? 'pdf' : 'jpg'}`,
       mimeType: mediaType, base64,
-    });
-  } catch (e) {
-    console.error('bot-core: Drive upload failed (batch)', e.message);
-  }
-
-  let settings = {};
-  try { settings = await getUserSettings(); } catch { /* non-fatal */ }
+    }).catch(e => {
+      console.error('bot-core: Drive upload failed (batch)', e.message);
+      return null;
+    }),
+    getUserSettings().catch(() => ({})),
+  ]);
 
   for (let i = 0; i < transactions.length; i++) {
     const data = transactions[i];
@@ -773,7 +796,7 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
   // R2: reuse the conversionInfo already computed + stored for item 0 instead of
   // re-running maybeConvertCurrency (which double-converted foreign currencies
   // and fired a redundant FX call).
-  const first = transactions[0];
+  // `first` is already in scope — hoisted above for the Drive folder path.
   const firstItemId = `${baseReceiptId}_000`;
   const firstBlob = await store.get(`confirm:${userId}:${firstItemId}`, { type: 'json' });
   const firstConvInfo = firstBlob?.conversionInfo || null;
@@ -1061,6 +1084,32 @@ function buildSplitSummary(state) {
 }
 
 /* ── Helpers: currency + prompts ─────────────────────────────────────────── */
+
+/**
+ * Await an in-flight Drive upload and patch its ids onto an already-stored
+ * blob.
+ *
+ * Called AFTER the confirm prompt has been sent, so the user never waits on
+ * Drive I/O they don't need yet — but still awaited before the handler
+ * returns, because Cloud Functions does not guarantee execution once the
+ * response is flushed.
+ *
+ * If the blob is gone the user confirmed or cancelled inside the upload
+ * window; there is nothing left to attach, and the expense simply carries no
+ * Drive link. That race is narrow (the upload starts well before the prompt is
+ * sent, and a reply needs a human plus a round-trip) and costs a receipt image,
+ * not an expense.
+ */
+async function attachDriveResult(store, key, drivePromise) {
+  const driveResult = await drivePromise;
+  if (!driveResult) return;
+  const blob = await store.get(key, { type: 'json' }).catch(() => null);
+  if (!blob) return;
+  blob.driveFileId    = driveResult.fileId    || null;
+  blob.driveFolderId  = driveResult.folderId  || null;
+  blob.driveShareLink = driveResult.shareLink || null;
+  await store.setJSON(key, blob);
+}
 
 async function maybeConvertCurrency(data) {
   if (!data.currency || data.currency === 'USD') return null;
