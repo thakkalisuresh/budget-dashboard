@@ -1534,6 +1534,24 @@ function buildGuideMessage() {
 
 /* ── DELETE handler (3-layer security) ───────────────────────────────────── */
 
+/**
+ * Short date for the DELETE list. Two rows with the same vendor AND amount are
+ * otherwise indistinguishable in the numbered list, so the date is what makes
+ * `DELETE #2` a deliberate choice instead of a guess. Prefers the real
+ * transaction date; falls back to the History log timestamp for legacy 8-col
+ * bot rows that predate the TxDate column. Returns '' when neither parses, so
+ * callers can omit the segment rather than print "Invalid Date".
+ */
+export function shortDate(expense) {
+  const raw = expense?.txDate || expense?.timestamp || '';
+  if (!raw) return '';
+  const ms = Date.parse(typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.trim())
+    ? `${raw.trim()}T00:00:00Z`
+    : raw);
+  if (Number.isNaN(ms)) return '';
+  return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
 async function handleDelete(ctx, target) {
   const { store, userId } = ctx;
   const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
@@ -1551,7 +1569,8 @@ async function handleDelete(ctx, target) {
     }
     const lines = ['Recent expenses:'];
     expenses.forEach((e, i) => {
-      lines.push(`#${i + 1} ${e.vendor} · $${Number(e.amount).toFixed(2)} (${e.category})`);
+      const when = shortDate(e);
+      lines.push(`#${i + 1} ${e.vendor} · $${Number(e.amount).toFixed(2)}${when ? ` · ${when}` : ''} (${e.category})`);
     });
     lines.push('', 'Reply DELETE #N or DELETE last.');
     return ctx.send(lines.join('\n'));
@@ -1594,8 +1613,11 @@ async function handleDelete(ctx, target) {
   });
 
   const displayAmt = Number(expense.amount).toFixed(2);
+  // Repeat the date here too: this is the last screen before a destructive,
+  // irreversible write, and it's where picking the wrong duplicate gets caught.
+  const when = shortDate(expense);
   return ctx.send(
-    `⚠️ Delete this expense?\n\n${expense.vendor} · $${displayAmt}\nCategory: ${expense.category}\n\nType CONFIRM DELETE to proceed, or CANCEL.`,
+    `⚠️ Delete this expense?\n\n${expense.vendor} · $${displayAmt}${when ? `\nDate: ${when}` : ''}\nCategory: ${expense.category}\n\nType CONFIRM DELETE to proceed, or CANCEL.`,
     kbConfirmDelete()
   );
 }

@@ -1195,3 +1195,77 @@ describe('telegram webhook — duplicate warning before logging', () => {
     expect(body.reply_markup.inline_keyboard[0][0].callback_data).toBe('YES');
   });
 });
+
+/* ── DELETE disambiguation when one vendor has several identical rows ── */
+
+describe('telegram webhook — DELETE list disambiguates duplicate vendor+amount', () => {
+  const userId = '123456789';
+  // Same vendor, same amount, different dates — indistinguishable before this fix.
+  // Web layout: uuid@8, txDate@9. History is append-only, and getRecentExpenses
+  // reverses it, so the LAST row here comes back as #1.
+  const HEADER = ['Timestamp', 'Action', 'Category', 'Vendor', 'Amount', 'Details', 'Reserved', 'User', 'UUID', 'TxDate'];
+  const costcoOld = ['2026-05-08T08:00:00Z', 'Added', 'Grocery', 'Costco', 50, '', '', 'Alice', 'uuid-older', '2026-05-08'];
+  const costcoNew = ['2026-05-11T08:00:00Z', 'Added', 'Grocery', 'Costco', 50, '', '', 'Alice', 'uuid-newer', '2026-05-11'];
+
+  function mockSheets() {
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('/sendMessage') || url.includes('/answerCallbackQuery')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
+      }
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      if (url.includes('sheets.googleapis.com') && url.includes('Months')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['May 2026', 'sheet-may']] }) });
+      }
+      if (url.includes('sheets.googleapis.com') && url.includes('History')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [HEADER, costcoOld, costcoNew] }) });
+      }
+      if (url.includes('sheets.googleapis.com')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ updates: { updatedRows: 1 }, values: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+  }
+
+  beforeEach(() => {
+    mockStore.data.clear();
+    mockSheets();
+  });
+
+  function lastSendText() {
+    const calls = mockFetch.mock.calls.filter(c => c[0]?.includes?.('/sendMessage'));
+    return JSON.parse(calls[calls.length - 1][1].body).text;
+  }
+
+  it('shows a date on each line so identical vendor+amount rows are separable', async () => {
+    await handler(buildRequest(textMessage('DELETE')));
+    const text = lastSendText();
+
+    // Both rows read "Costco · $50.00" — the date is the only differentiator.
+    expect(text).toContain('#1 Costco · $50.00 · May 11');
+    expect(text).toContain('#2 Costco · $50.00 · May 8');
+  });
+
+  it('DELETE #2 targets the older row, not the newer one', async () => {
+    await handler(buildRequest(textMessage('DELETE #2')));
+
+    // The pending delete is what CONFIRM DELETE later acts on, so this is the
+    // assertion that #N maps to the row the user actually saw at that index.
+    const pending = mockStore.data.get(`delete_pending:${userId}`);
+    expect(pending.target.uuid).toBe('uuid-older');
+    expect(pending.target.vendor).toBe('Costco');
+  });
+
+  it('DELETE #1 targets the newer row', async () => {
+    await handler(buildRequest(textMessage('DELETE #1')));
+    expect(mockStore.data.get(`delete_pending:${userId}`).target.uuid).toBe('uuid-newer');
+  });
+
+  it('repeats the date on the confirm screen, the last stop before deletion', async () => {
+    await handler(buildRequest(textMessage('DELETE #2')));
+    const text = lastSendText();
+    expect(text).toContain('Delete this expense');
+    expect(text).toContain('Date: May 8');
+  });
+});
