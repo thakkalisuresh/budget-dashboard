@@ -920,3 +920,76 @@ describe('telegram webhook — receipt latency: Drive upload is deferred', () =>
     expect(confirmBlob().driveFileId).toBeNull();
   });
 });
+
+/* ── CATFIX: logging a wallet charge the categorizer wasn't sure about ── */
+
+describe('telegram webhook — CATFIX category pick', () => {
+  const userId = '123456789';
+  const pendingKey = `category_pending:${userId}:abc12345`;
+  const pending = {
+    id: 'abc12345', vendor: 'Chipotle', amount: 24.5, txDate: '2026-05-14',
+    monthName: 'May 2026', sheetId: 'sheet-may', paymentMethod: 'Chase Sapphire Reserve',
+    suggested: 'Travel',
+  };
+
+  function mockSheets({ appendFails = false } = {}) {
+    mockFetch.mockImplementation((url, opts) => {
+      if (url.includes('/sendMessage') || url.includes('/answerCallbackQuery')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
+      }
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      if (url.includes('sheets.googleapis.com') && url.includes('Months')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['May 2026', 'sheet-may']] }) });
+      }
+      if (appendFails && opts?.method === 'PUT') {
+        return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: { message: 'sheet locked' } }) });
+      }
+      if (url.includes('sheets.googleapis.com')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ updates: { updatedRows: 1 }, values: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+  }
+
+  const lastSend = () => {
+    const calls = mockFetch.mock.calls.filter(c => c[0]?.includes?.('/sendMessage'));
+    return JSON.parse(calls[calls.length - 1][1].body).text;
+  };
+
+  beforeEach(() => {
+    mockStore.data.clear();
+    mockSheets();
+  });
+
+  it('writes the parked charge with the tapped category and clears the blob', async () => {
+    mockStore.data.set(pendingKey, { ...pending });
+    await handler(buildRequest(callbackQuery('CATFIX:abc12345:Eating Out')));
+
+    expect(lastSend()).toContain('Logged Chipotle');
+    expect(lastSend()).toContain('Eating Out');
+    expect(mockStore.data.has(pendingKey)).toBe(false);
+  });
+
+  it('tells the user plainly when the charge is already gone', async () => {
+    await handler(buildRequest(callbackQuery('CATFIX:abc12345:Grocery')));
+    expect(lastSend()).toContain('no longer waiting');
+  });
+
+  it('keeps the charge parked when the sheet write fails, so it can be retried', async () => {
+    mockSheets({ appendFails: true });
+    mockStore.data.set(pendingKey, { ...pending });
+    await handler(buildRequest(callbackQuery('CATFIX:abc12345:Grocery')));
+
+    // The blob is the only record of this charge — losing it would lose the expense.
+    expect(mockStore.data.has(pendingKey)).toBe(true);
+    expect(lastSend()).toMatch(/Couldn't log|retry/i);
+  });
+
+  it('CANCEL clears a parked category charge', async () => {
+    mockStore.data.set(pendingKey, { ...pending });
+    await handler(buildRequest(textMessage('CANCEL')));
+    expect(mockStore.data.has(pendingKey)).toBe(false);
+  });
+});
