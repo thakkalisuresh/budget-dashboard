@@ -6,6 +6,13 @@
  * A daily "all clear" would train you to ignore it.
  *
  * Also prunes the log, so the collection stays bounded without a separate job.
+ *
+ * Deployment note: this is a scheduled function, so deploying it needs BOTH
+ * the cloudscheduler.googleapis.com API enabled on the project AND
+ * roles/cloudscheduler.admin on the deploying principal (github-ci-deploy).
+ * Without the role the function itself deploys fine but its Cloud Scheduler
+ * job is never created — it goes ACTIVE and simply never fires, which looks
+ * identical to "working" until you notice the digest never arrives.
  */
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { getDb } from './lib/firestore.mjs';
