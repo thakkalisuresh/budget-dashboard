@@ -16,6 +16,20 @@ try {
 } catch { /* non-git environment */ }
 
 export default defineConfig({
+  // Dev-only: `vite dev` doesn't know about Firebase Hosting's /api/* rewrites,
+  // so forward them to the deployed Cloud Functions. The claude proxy already
+  // allowlists http://localhost:5173 (see functions/lib/http-common.mjs), and
+  // the browser sends its Google access token + sec-fetch-site: same-origin, so
+  // real scans work from localhost. No effect on `vite build` / production.
+  server: {
+    proxy: {
+      '/api': {
+        target: 'https://fundient-dashboard.web.app',
+        changeOrigin: true,
+        secure: true,
+      },
+    },
+  },
   test: {
     globals: true,
     environment: 'node',

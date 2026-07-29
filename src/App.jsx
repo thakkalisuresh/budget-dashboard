@@ -772,7 +772,7 @@ function Dashboard({ auth }) {
           }))}
           nonMonthlyVendors={nonMonthlyItems.map(i => i.vendor.toLowerCase())}
           onNonMonthlyChanged={refreshNonMonthly}
-          onAddExpense={!isReadOnly ? () => setShowAddDialog({ prefillCategory: detail.expense }) : undefined}
+          onAddExpense={!isReadOnly ? () => { setShowAddDialog({ prefillCategory: detail.expense }); setDetail(null); } : undefined}
           cards={settings.cards || []}
         /></Suspense>
       )}
