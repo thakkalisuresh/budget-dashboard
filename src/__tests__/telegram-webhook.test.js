@@ -802,3 +802,121 @@ describe('telegram webhook — edge cases', () => {
     expect(sendCalls.length).toBe(0);
   });
 });
+
+/* ── Drive upload moved off the perceived critical path ── */
+
+describe('telegram webhook — receipt latency: Drive upload is deferred', () => {
+  const extraction = {
+    store_name: 'Costco', purchase_date: '2026-05-25', total_amount: 89.50,
+    currency: 'USD', items: [], reward_category: 'Grocery', is_transfer: false,
+  };
+
+  // Same as setupPhotoMocks, but every Drive call is held until released, so
+  // the test can observe what happened while the upload was still in flight.
+  function setupGatedDriveMocks(gate, { driveFails = false } = {}) {
+    mockFetch.mockImplementation((url) => {
+      if (url.includes('/getFile')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true, result: { file_path: 'photos/file_0.jpg' } }) });
+      }
+      if (url.includes('api.telegram.org/file/')) {
+        return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(jpegBytes()) });
+      }
+      if (url.includes('generativelanguage.googleapis.com')) {
+        return Promise.resolve(geminiResponse({ transactions: [extraction] }));
+      }
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      if (url.includes('googleapis.com/drive') || url.includes('googleapis.com/upload')) {
+        return gate.then(() => driveFails
+          ? { ok: false, status: 500, json: () => Promise.resolve({ error: { message: 'drive down' } }) }
+          : { ok: true, json: () => Promise.resolve({ id: 'file-123', webViewLink: 'https://drive.google.com/file/d/file-123/view', files: [{ id: 'folder-1' }] }) });
+      }
+      if (url.includes('/sendMessage')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true, result: { message_id: 99 } }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [] }) });
+    });
+  }
+
+  const sendCalls = () => mockFetch.mock.calls.filter(c => c[0]?.includes?.('/sendMessage'));
+  const confirmBlob = () => {
+    for (const [k, v] of mockStore.data) if (k.startsWith('confirm:123456789:')) return v;
+    return null;
+  };
+  // setTimeout is real here (only Date is faked), so this yields to the event loop.
+  async function until(pred, tries = 50) {
+    for (let i = 0; i < tries; i++) {
+      if (pred()) return true;
+      await new Promise(r => setTimeout(r, 0));
+    }
+    return pred();
+  }
+
+  it('sends the confirm prompt while the Drive upload is still in flight', async () => {
+    let release;
+    const gate = new Promise(r => { release = r; });
+    setupGatedDriveMocks(gate);
+
+    const inFlight = handler(buildRequest(photoMessage()));
+
+    // The whole point of the change: the user has their prompt before Drive
+    // has answered. Without the deferral this can never become true, because
+    // the handler is still parked on uploadReceiptImage.
+    const sent = await until(() => sendCalls().length > 0);
+    expect(sent).toBe(true);
+    expect(JSON.parse(sendCalls()[0][1].body).text).toContain('Costco');
+
+    release();
+    await inFlight;
+  });
+
+  it('still attaches the Drive ids to the confirm blob once the upload lands', async () => {
+    let release;
+    const gate = new Promise(r => { release = r; });
+    setupGatedDriveMocks(gate);
+
+    const inFlight = handler(buildRequest(photoMessage()));
+    await until(() => sendCalls().length > 0);
+
+    // Deferred, so not yet attached…
+    expect(confirmBlob()?.driveFileId).toBeNull();
+    release();
+    await inFlight;
+    // …but present by the time the handler returns.
+    expect(confirmBlob()?.driveFileId).toBe('file-123');
+  });
+
+  it('survives the user confirming before the upload lands', async () => {
+    let release;
+    const gate = new Promise(r => { release = r; });
+    setupGatedDriveMocks(gate);
+
+    const inFlight = handler(buildRequest(photoMessage()));
+    await until(() => sendCalls().length > 0);
+
+    // Simulate the confirm/cancel consuming the blob inside the upload window.
+    for (const k of [...mockStore.data.keys()]) {
+      if (k.startsWith('confirm:123456789:')) mockStore.data.delete(k);
+    }
+    release();
+    // Patching a blob that no longer exists must not throw.
+    await expect(inFlight).resolves.toBeDefined();
+  });
+
+  it('a failed Drive upload does not break the receipt flow', async () => {
+    let release;
+    const gate = new Promise(r => { release = r; });
+    setupGatedDriveMocks(gate, { driveFails: true });
+
+    const inFlight = handler(buildRequest(photoMessage()));
+    await until(() => sendCalls().length > 0);
+    release();
+    await inFlight;
+
+    // Prompt still sent, blob still queued, just without a Drive link.
+    expect(JSON.parse(sendCalls()[0][1].body).text).toContain('Costco');
+    expect(confirmBlob()).not.toBeNull();
+    expect(confirmBlob().driveFileId).toBeNull();
+  });
+});
