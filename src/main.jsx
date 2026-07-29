@@ -37,7 +37,10 @@ if ('serviceWorker' in navigator) {              // feature-check: older browser
 // async errors don't vanish silently. (This handles ASYNC errors; the
 // ErrorBoundary below handles errors thrown while React is RENDERING.)
 window.addEventListener('unhandledrejection', (e) => {
-  console.error('[Budget] Unhandled rejection:', e.reason);
+  // Prefer a code the throwing code already attached; WEB-002 is the generic
+  // "nobody caught this" bucket. See docs/ERROR_CODES.md.
+  const code = e.reason?.code || 'WEB-002';
+  console.error(`[Budget] ${code} — Unhandled rejection:`, e.reason);
 });
 
 // ── React Error Boundary ──────────────────────────────────────────────────────
@@ -61,7 +64,9 @@ class ErrorBoundary extends Component {
   // Also runs on a crash — but this is the place for side effects like logging.
   // `info.componentStack` tells us which part of the tree the error came from.
   componentDidCatch(error, info) {
-    console.error('[Budget] Render crash:', error, info.componentStack);
+    // WEB-001 is the only error the user experiences as a fallback screen
+    // rather than a message, so it is worth naming on screen as well as here.
+    console.error(`[Budget] ${error?.code || 'WEB-001'} — Render crash:`, error, info.componentStack);
   }
 
   render() {
@@ -95,7 +100,10 @@ class ErrorBoundary extends Component {
         }}>⚠️</div>
         <div>
           <p style={{ fontSize: 18, fontWeight: 900, margin: '0 0 8px' }}>
-            Something went wrong
+            Something went wrong{' '}
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#94a3b8' }}>
+              [{this.state.error?.code || 'WEB-001'}]
+            </span>
           </p>
           <p style={{ fontSize: 13, color: '#94a3b8', margin: 0, maxWidth: 320 }}>
             The app ran into an unexpected error. Try clearing the cache and reloading.

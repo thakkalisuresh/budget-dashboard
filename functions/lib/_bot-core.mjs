@@ -131,8 +131,11 @@ export async function handleTextReply(ctx, text) {
   }
 
   // ── Error code lookup ──
-  // Before the query/agent router so a bare code is answered from the
-  // catalogue instead of being sent to an LLM that would guess at it.
+  // Placed before the query/agent router so a bare code is answered from the
+  // catalogue instead of being sent to an LLM that would guess at it. Codes
+  // are distinctive enough (DOMAIN-NNN) to detect anywhere in a message, so
+  // pasting one straight from the app — or asking "what does SHT-009 mean" —
+  // both work without a command to remember.
   const codeLookup = findErrorCodeInText(text);
   if (codeLookup) {
     return ctx.send(explainErrorCode(codeLookup));
@@ -808,7 +811,7 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
       year: firstYear, month: firstMonth, category: null,
       fileName: `receipt-${baseReceiptId.slice(0, 8)}.${mediaType === 'application/pdf' ? 'pdf' : 'jpg'}`,
       mimeType: mediaType, base64,
-    }).catch(e => {
+    }).catch(async e => {
       await reportError('DRV-002', e, { userId, step: 'batch' });
       return null;
     }),

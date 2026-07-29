@@ -3,6 +3,7 @@ import { RefreshCw, Clock, Inbox, Undo2, Copy, ChevronDown, ChevronRight } from 
 import { fetchHistory, undoHistoryEntry, formatTxDate } from './sheetsApi.js';
 import { getEffectiveSheetMap } from './sheetHelpers.js';
 import { scanDuplicates, suggestKeeper, deleteTransactions } from './duplicateScan.js';
+import { userMessage } from './errorCodes.js';
 
 const ACTION_STYLE = {
   'Added':            { background: 'oklch(70% 0.15 145 / 12%)', color: 'var(--color-success)',       border: '1px solid oklch(70% 0.15 145 / 25%)' },
@@ -243,7 +244,7 @@ export function HistoryTab({ sheetId, accessToken, onRefresh, currencySymbol = '
       await load(true);
       onRefresh?.();
     } catch (e) {
-      alert(`Undo failed: ${e.message}`);
+      alert(`Undo failed: ${userMessage(e, 'BOT-002')}`);
     } finally {
       setUndoing(null);
     }

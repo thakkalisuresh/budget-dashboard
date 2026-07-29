@@ -62,7 +62,7 @@ export const walletWebhook = onRequest(
     const key = extractKey(req);
     const secret = process.env.WALLET_WEBHOOK_SECRET;
     if (!key || !secret || !(await keyMatches(key, secret))) {
-      res.status(401).json({ ok: false, error: 'Unauthorized' });
+      res.status(401).json({ ok: false, code: 'AUTH-002', error: 'Unauthorized' });
       return;
     }
 
@@ -101,15 +101,15 @@ export const walletWebhook = onRequest(
     const amount = parseFloat(String(amountRaw ?? '').replace(/[^\d.-]/g, ''));
 
     if (!merchant || typeof merchant !== 'string') {
-      res.status(400).json({ ok: false, error: 'Missing or invalid merchant' });
+      res.status(400).json({ ok: false, code: 'WAL-001', error: 'Missing or invalid merchant' });
       return;
     }
     if (isNaN(amount) || amount <= 0) {
-      res.status(400).json({ ok: false, error: 'Missing or invalid amount' });
+      res.status(400).json({ ok: false, code: 'WAL-001', error: 'Missing or invalid amount' });
       return;
     }
     if (!email || !email.includes('@')) {
-      res.status(400).json({ ok: false, error: 'Missing or invalid email' });
+      res.status(400).json({ ok: false, code: 'WAL-001', error: 'Missing or invalid email' });
       return;
     }
     const monthName = new Date(txDate + 'T00:00:00').toLocaleString('en-US', {
@@ -126,7 +126,7 @@ export const walletWebhook = onRequest(
       try {
         sheetId = await getCurrentMonthSheetId(monthName);
       } catch (e) {
-        res.status(422).json({ ok: false, error: 'month_not_found', monthName });
+        res.status(422).json({ ok: false, code: 'SHT-002', error: 'month_not_found', monthName });
         return;
       }
     }
@@ -306,13 +306,13 @@ export const walletWebhook = onRequest(
       });
     } catch (e) {
       if (e.message?.includes('No sheet found for month')) {
-        res.status(422).json({ ok: false, error: 'month_not_found', monthName });
+        res.status(422).json({ ok: false, code: 'SHT-002', error: 'month_not_found', monthName });
         return;
       }
       // WAL-002 is the single most important error in the system: the charge
       // arrived and is now lost unless it's re-entered by hand.
       await reportError('WAL-002', e, { vendor, amount, category, monthName });
-      res.status(500).json({ ok: false, error: 'Failed to write transaction' });
+      res.status(500).json({ ok: false, code: 'WAL-002', error: 'Failed to write transaction' });
       return;
     }
 

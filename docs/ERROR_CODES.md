@@ -3,10 +3,14 @@
 > **Generated file — do not edit by hand.**
 > Source of truth: `functions/lib/_error-codes.mjs`. Regenerate with `npm run errdoc`.
 
-57 codes across 13 domains.
+58 codes across 13 domains.
 
-When something breaks you should see a code in the log line or the daily
-Telegram digest — e.g. `SHT-009 — Expense write failed: ...`. Find it below.
+Codes appear wherever the failure surfaces: in the bot's reply, on the
+dashboard crash screen, in the wallet webhook response body, in Cloud Logging,
+and in the daily Telegram digest.
+
+**You can also just ask the bot.** Send it a code — `SHT-009`, or
+"what does SHT-009 mean" — and it replies with the entry below.
 
 ## Severity
 
@@ -65,6 +69,7 @@ Telegram digest — e.g. `SHT-009 — Expense write failed: ...`. Find it below.
 | [`BOT-005`](#bot-005) | fatal | Split could not be logged |
 | [`BOT-006`](#bot-006) | fatal | Daily receipt limit reached |
 | [`BOT-007`](#bot-007) | fatal | Parked charge could not be logged |
+| [`BOT-008`](#bot-008) | fatal | Category move left a duplicate |
 | [`WAL-001`](#wal-001) | fatal | Wallet request rejected as invalid |
 | [`WAL-002`](#wal-002) | fatal | Wallet transaction write failed |
 | [`WAL-003`](#wal-003) | degraded | Wallet text parse failed |
@@ -471,6 +476,14 @@ Telegram digest — e.g. `SHT-009 — Expense write failed: ...`. Find it below.
 **Why it happens.** A wallet charge held for category confirmation failed to write when the user tapped.
 
 **What to do.** The pending record is kept deliberately so tapping again retries. Do not clear it.
+
+### BOT-008
+
+**Category move left a duplicate** · `fatal`
+
+**Why it happens.** A weekly-audit recategorization added the row to its new category but could not remove the old one. The expense is now counted twice.
+
+**What to do.** Delete the old entry in the dashboard. The move deliberately appends before deleting, so a half-failure duplicates rather than destroys.
 
 ## WAL — Wallet webhook
 

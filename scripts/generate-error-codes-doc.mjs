@@ -52,8 +52,12 @@ export function renderDoc() {
   out.push('');
   out.push(`${total} codes across ${Object.keys(byDomain).length} domains.`);
   out.push('');
-  out.push('When something breaks you should see a code in the log line or the daily');
-  out.push('Telegram digest — e.g. `SHT-009 — Expense write failed: ...`. Find it below.');
+  out.push('Codes appear wherever the failure surfaces: in the bot\'s reply, on the');
+  out.push('dashboard crash screen, in the wallet webhook response body, in Cloud Logging,');
+  out.push('and in the daily Telegram digest.');
+  out.push('');
+  out.push('**You can also just ask the bot.** Send it a code — `SHT-009`, or');
+  out.push('"what does SHT-009 mean" — and it replies with the entry below.');
   out.push('');
 
   out.push('## Severity');

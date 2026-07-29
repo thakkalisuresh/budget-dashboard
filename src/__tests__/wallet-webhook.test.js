@@ -116,7 +116,9 @@ describe('wallet-webhook — method & auth', () => {
   it('rejects a request with no key (401)', async () => {
     const res = await call(req({ key: null, body: validBody }));
     expect(res.status).toBe(401);
-    expect(res.json).toEqual({ ok: false, error: 'Unauthorized' });
+    // Error responses now carry the code so it is visible wherever the
+    // response is seen — phone automation logs included.
+    expect(res.json).toEqual({ ok: false, code: 'AUTH-002', error: 'Unauthorized' });
   });
 
   it('rejects a wrong key (401)', async () => {

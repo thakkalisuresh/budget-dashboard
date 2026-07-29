@@ -421,3 +421,45 @@ export function codesByDomain() {
   }
   return out;
 }
+
+/* ── Lookup: answering "what does this code mean" ─────────────────────────── */
+
+/**
+ * Pull an error code out of a message, if it looks like the user is asking
+ * about one.
+ *
+ * Deliberately narrow: the message must be short and mostly the code, or
+ * clearly a question about it. Otherwise a receipt whose vendor happens to
+ * look like a code ("AMZ-001 STORE") would hijack the reply.
+ */
+export function findErrorCodeInText(text) {
+  const raw = String(text || '').trim();
+  if (raw.length > 80) return null;
+  const m = /\b([A-Z]{2,4}-\d{3})\b/.exec(raw.toUpperCase());
+  if (!m) return null;
+  const code = m[1];
+  const rest = raw.toUpperCase().replace(code, '').replace(/[^A-Z]/g, '');
+  // Just the code, or the code plus question-ish words. Anything else is noise.
+  if (rest.length === 0) return code;
+  if (/^(WHAT|WHATS|WHATIS|WHATDOES|MEAN|MEANS|ERROR|CODE|IS|DOES|THE|HELP|WITH|ABOUT|HOW|FIX|DO|I|TELL|ME)+$/.test(rest)) return code;
+  return null;
+}
+
+/** Render a catalogue entry as a Telegram reply. */
+export function explainErrorCode(code) {
+  const entry = describeError(code);
+  if (!entry) {
+    return `${code} isn't a known error code. Codes look like SHT-009 or WAL-002 — check the exact letters and digits.`;
+  }
+  const flag = entry.severity === 'fatal' ? '🔴' : entry.severity === 'config' ? '⚙️' : '🟡';
+  return [
+    `${flag} ${code} — ${entry.title}`,
+    `Severity: ${entry.severity}`,
+    '',
+    `Why it happens:`,
+    entry.cause,
+    '',
+    `What to do:`,
+    entry.fix,
+  ].join('\n');
+}
