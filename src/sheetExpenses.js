@@ -6,6 +6,7 @@ import {
 import { invalidateDetailCache } from './sheetDetail.js';
 import { appendHistoryEntry } from './sheetHistory.js';
 import { enqueue } from './offlineQueue.js';
+import { codedError } from './errorCodes.js';
 
 export async function addOrUpdateExpense(
   categoryName, vendorName, amount, accessToken, sheetId, monthName,
@@ -17,7 +18,7 @@ export async function addOrUpdateExpense(
   }
 
   const config = getEffectiveSheetMap()[categoryName];
-  if (!config) throw new Error(`Unknown category: ${categoryName}`);
+  if (!config) throw codedError('SHT-003', `Unknown category: ${categoryName}`);
 
   const values   = await fetchRaw(sheetId, config.sheet, accessToken);
   const dataRows = values.slice(1);
@@ -137,7 +138,7 @@ export async function addOrUpdateExpense(
  */
 export async function updatePaymentMethod(categoryName, rowIndex, newCard, accessToken, sheetId) {
   const config = getEffectiveSheetMap()[categoryName];
-  if (!config) throw new Error(`Unknown category: ${categoryName}`);
+  if (!config) throw codedError('SHT-003', `Unknown category: ${categoryName}`);
   await writeCell(sheetId, config.sheet, rowIndex, 5, safeText(newCard || ''), accessToken);
   await appendHistoryEntry(sheetId, accessToken, {
     action: 'Card Updated',
@@ -149,14 +150,14 @@ export async function updatePaymentMethod(categoryName, rowIndex, newCard, acces
 
 export async function updateTransactionDate(categoryName, rowIndex, newDate, accessToken, sheetId) {
   const config = getEffectiveSheetMap()[categoryName];
-  if (!config) throw new Error(`Unknown category: ${categoryName}`);
+  if (!config) throw codedError('SHT-003', `Unknown category: ${categoryName}`);
   await writeCell(sheetId, config.sheet, rowIndex, 2, newDate, accessToken);
   invalidateDetailCache(sheetId, categoryName);
 }
 
 export async function updateVendorName(categoryName, rowIndex, newName, accessToken, sheetId, oldName = '', v2 = false) {
   const config   = getEffectiveSheetMap()[categoryName];
-  if (!config) throw new Error(`Unknown category: ${categoryName}`);
+  if (!config) throw codedError('SHT-003', `Unknown category: ${categoryName}`);
   const descCol  = v2 ? 3 : config.descCol;
   await writeCell(sheetId, config.sheet, rowIndex, descCol, safeText(newName), accessToken);
   await appendHistoryEntry(sheetId, accessToken, {
@@ -186,13 +187,13 @@ export async function moveTransactionCategory(
   if (fromCategory === toCategory) return;
   // v1: block moves offline — the offline queue only knows add_expense, and a
   // half-queued cross-tab move could lose data.
-  if (!navigator.onLine) throw new Error('You are offline — category changes need a connection.');
+  if (!navigator.onLine) throw codedError('WEB-003', 'You are offline — category changes need a connection.');
 
   const map        = getEffectiveSheetMap();
   const fromConfig = map[fromCategory];
   const toConfig   = map[toCategory];
-  if (!fromConfig) throw new Error(`Unknown category: ${fromCategory}`);
-  if (!toConfig)   throw new Error(`Unknown category: ${toCategory}`);
+  if (!fromConfig) throw codedError('SHT-003', `Unknown category: ${fromCategory}`);
+  if (!toConfig)   throw codedError('SHT-003', `Unknown category: ${toCategory}`);
 
   const movingAmounts = amtIndex == null ? row.amounts : [row.amounts[amtIndex]];
   // Preserve existing UUIDs; only mint one for legacy rows that never had any.
@@ -348,7 +349,7 @@ export async function updateVendorAmounts(
   categoryName, rowIndex, amounts, accessToken, sheetId, vendorName = '', previousTotal = null, uuids = [], v2 = false,
 ) {
   const config  = getEffectiveSheetMap()[categoryName];
-  if (!config) throw new Error(`Unknown category: ${categoryName}`);
+  if (!config) throw codedError('SHT-003', `Unknown category: ${categoryName}`);
   const amtCol       = v2 ? 4 : config.amtCol;
   const isTravelCat  = categoryName === 'Travel' || categoryName === 'Holiday';
   const uuidCol      = v2 ? (isTravelCat ? 7 : 6) : uuidStart(config);

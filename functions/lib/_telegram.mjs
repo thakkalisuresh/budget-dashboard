@@ -43,7 +43,7 @@ export async function sendMessage(chatId, text, markup = null) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    console.error('telegram sendMessage failed:', err.description || res.status);
+    console.error('TG-001 — Telegram sendMessage failed:', err.description || res.status);
   }
   return res;
 }
@@ -59,7 +59,7 @@ export async function answerCallback(callbackQueryId) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    console.error('telegram answerCallbackQuery failed:', err.description || res.status);
+    console.error('TG-001 — Telegram answerCallbackQuery failed:', err.description || res.status);
   }
   return res;
 }
@@ -255,8 +255,8 @@ export function kbSplitCategory(itemIndex, categories, suggestion = null) {
 /**
  * Resolve a user email → Telegram chat id via the TELEGRAM_EMAIL_MAP secret
  * ("email:chatId,email:chatId"). Returns null when the user has no mapping.
- * Shared by the wallet webhook and the category audit so the parsing lives in
- * one place.
+ * Shared by the wallet webhook and the scheduled jobs (category audit, error
+ * digest) so the parsing lives in one place.
  */
 export function resolveTelegramChatId(email) {
   const raw = process.env.TELEGRAM_EMAIL_MAP || '';

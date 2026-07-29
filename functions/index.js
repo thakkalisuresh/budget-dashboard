@@ -28,3 +28,6 @@ export { walletWebhook } from './wallet-webhook.mjs';
 
 // Weekly LLM category audit (scheduled).
 export { categoryAudit } from './category-audit.mjs';
+
+// Daily backend error digest (scheduled). See docs/ERROR_CODES.md.
+export { errorDigest } from './error-digest.mjs';

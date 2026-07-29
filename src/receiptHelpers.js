@@ -1,5 +1,6 @@
 import { CATEGORIES, fetchDetailRows, fuzzyNamesMatch, getAllCategoryNames } from './sheetsApi.js';
 import { startScanTiming } from './scanTiming.js';
+import { codedError } from './errorCodes.js';
 
 export const CLAUDE_URL = '/api/claude';
 
@@ -168,7 +169,7 @@ export async function extractFromFile(file, accessToken, cards = []) {
   const timing = startScanTiming('extract');
   const detectedMime = await detectMimeType(file);
   if (!detectedMime || !ALLOWED_MIME_TYPES.has(detectedMime)) {
-    throw new Error('Unsupported file type. Please upload an image or PDF.');
+    throw codedError('WEB-004', 'Unsupported file type. Please upload an image or PDF.');
   }
 
   let blob = file;
@@ -176,7 +177,7 @@ export async function extractFromFile(file, accessToken, cards = []) {
 
   if (detectedMime === 'application/pdf') {
     if (file.size > MAX_PDF_MB * 1024 * 1024) {
-      throw new Error(`PDF is too large (max ${MAX_PDF_MB} MB). Try a screenshot instead.`);
+      throw codedError('WEB-004', `PDF is too large (max ${MAX_PDF_MB} MB). Try a screenshot instead.`);
     }
   } else {
     blob      = await compressImage(file);

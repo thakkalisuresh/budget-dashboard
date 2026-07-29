@@ -9,6 +9,7 @@ const VIRTUALIZE_THRESHOLD = 150;
 import { getAllCategoryNames, fetchDetailRows, fetchHistory, fuzzyNamesMatch, formatTxDate, moveTransactionCategory } from './sheetsApi.js';
 import { downloadBlob, downloadCSV, transactionsToJson } from './exportHelpers.js';
 import { CategoryPickerSheet } from './CategoryPickerSheet.jsx';
+import { userMessage } from './errorCodes.js';
 
 const METHOD_LABELS = {
   'Receipt Scan': 'Scan',
@@ -310,7 +311,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
       setMovingTx(null);
       await load(true);
     } catch (e) {
-      alert(`Move failed: ${e.message}`);
+      alert(`Move failed: ${userMessage(e, 'SHT-003')}`);
     } finally {
       setMoveSaving(false);
     }

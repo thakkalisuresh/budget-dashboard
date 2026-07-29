@@ -17,6 +17,8 @@ import {
   createMonth,
 } from './_sheets.mjs';
 import { convertToUSD } from './_currency.mjs';
+import { reportError } from './_error-log.mjs';
+import { findErrorCodeInText, explainErrorCode } from './_error-codes.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
 import { buildRewardsLine, getEffectiveRates } from './_card-rewards.mjs';
 import { resolveCardName } from './_card-resolver.mjs';
@@ -128,6 +130,17 @@ export async function handleTextReply(ctx, text) {
     return ctx.send(cancelledAny ? 'Cancelled.' : 'Nothing to cancel.');
   }
 
+  // ── Error code lookup ──
+  // Placed before the query/agent router so a bare code is answered from the
+  // catalogue instead of being sent to an LLM that would guess at it. Codes
+  // are distinctive enough (DOMAIN-NNN) to detect anywhere in a message, so
+  // pasting one straight from the app — or asking "what does SHT-009 mean" —
+  // both work without a command to remember.
+  const codeLookup = findErrorCodeInText(text);
+  if (codeLookup) {
+    return ctx.send(explainErrorCode(codeLookup));
+  }
+
   // ── SPLITCAT callback (user picked a category for one split line item) ──
   if (text.startsWith('SPLITCAT:')) {
     return await handleSplitCategoryPick(ctx, text);
@@ -196,9 +209,9 @@ export async function handleTextReply(ctx, text) {
       try {
         await writeSalaryAmount(salaryPending.sheetId, salaryPending.amount);
       } catch (e) {
-        console.error('bot-core: salary write failed', e.message);
+        await reportError('SHT-006', e, { flow: 'salary' });
         await store.delete(`salary_pending:${userId}`);
-        return ctx.send('Failed to update salary. Try again or use the dashboard.');
+        return ctx.send('Failed to update salary. Try again or use the dashboard. [SHT-006]');
       }
       await store.delete(`salary_pending:${userId}`);
       console.log(`bot-core: salary updated to ${salaryPending.amount} by ${userId}`);
@@ -211,9 +224,9 @@ export async function handleTextReply(ctx, text) {
       try {
         await writeBudgetAmount(budgetPending.sheetId, budgetPending.category, budgetPending.amount);
       } catch (e) {
-        console.error('bot-core: budget write failed', e.message);
+        await reportError('SHT-001', e, { flow: 'budget' });
         await store.delete(`budget_pending:${userId}`);
-        return ctx.send('Failed to update budget. Try again or use the dashboard.');
+        return ctx.send('Failed to update budget. Try again or use the dashboard. [SHT-001]');
       }
       await store.delete(`budget_pending:${userId}`);
       console.log(`bot-core: ${budgetPending.category} budget updated to ${budgetPending.amount} by ${userId}`);
@@ -267,7 +280,7 @@ export async function handleTextReply(ctx, text) {
     try {
       sheetId = await getCurrentMonthSheetId(monthName);
     } catch (e) {
-      console.error('bot-core: could not find month sheet', e.message);
+      await reportError('SHT-002', e, { flow: 'receipt-confirm' });
       return ctx.send(`Could not find sheet for ${monthName}. Please log this receipt via the dashboard.`);
     }
 
@@ -275,8 +288,8 @@ export async function handleTextReply(ctx, text) {
     try {
       result = await appendExpense({ category, vendor, amount, txDate, sheetId, monthName, paymentMethod, channel: ctx.channel, bookingMethod });
     } catch (e) {
-      console.error('bot-core: Sheets append failed', e.message);
-      return ctx.send('Failed to log receipt to spreadsheet. Please try via the dashboard.');
+      await reportError('SHT-009', e, { flow: 'receipt-confirm' });
+      return ctx.send('Failed to log receipt to spreadsheet. Please try via the dashboard. [SHT-009]');
     }
 
     if (driveFileId) {
@@ -367,7 +380,7 @@ export async function handleTextReply(ctx, text) {
           await deleteExpenseByUUID({ category: e.category, uuid: e.uuid, sheetId: e.sheetId || lastlog.sheetId });
         } catch (err) {
           failed++;
-          console.error('bot-core: UNDO split delete failed', err.message);
+          await reportError('BOT-002', err, { flow: 'undo-split' });
         }
       }
       await store.delete(`lastlog:${userId}`);
@@ -381,8 +394,8 @@ export async function handleTextReply(ctx, text) {
     try {
       await deleteExpenseByUUID({ category: lastlog.category, uuid: lastlog.uuid, sheetId: lastlog.sheetId });
     } catch (e) {
-      console.error('bot-core: UNDO delete failed', e.message);
-      return ctx.send('Could not undo. The entry may have been modified. Check the dashboard.');
+      await reportError('BOT-002', e, { flow: 'undo' });
+      return ctx.send('Could not undo. The entry may have been modified. Check the dashboard. [BOT-002]');
     }
 
     await store.delete(`lastlog:${userId}`);
@@ -455,7 +468,7 @@ export async function handleTextReply(ctx, text) {
       const answer = await answerQuery(text);
       return ctx.send(answer);
     } catch (e) {
-      console.error('bot-core: query failed', e.message);
+      await reportError('LLM-002', e, { flow: 'query' });
       return ctx.send("Couldn't answer that query right now. Try '? help' for examples.");
     }
   }
@@ -644,7 +657,7 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
   const rateKey = `rate:${userId}:${new Date().toISOString().slice(0, 10)}`;
   const rate = await store.incrementIfBelow(rateKey, DAILY_LIMIT);
   if (!rate.allowed) {
-    return ctx.send("You've reached 50 receipts today. Try again tomorrow.");
+    return ctx.send("You've reached 50 receipts today. Try again tomorrow. [BOT-006]");
   }
 
   const baseReceiptId = crypto.randomUUID();
@@ -686,8 +699,8 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
       year, month, category: null,
       fileName: `receipt-${baseReceiptId.slice(0, 8)}.${mediaType === 'application/pdf' ? 'pdf' : 'jpg'}`,
       mimeType: mediaType, base64,
-    }).catch(e => {
-      console.error('bot-core: Drive upload failed', e.message);
+    }).catch(async e => {
+      await reportError('DRV-002', e, { userId, step: 'receipt' });
       return null;
     });
 
@@ -798,8 +811,8 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
       year: firstYear, month: firstMonth, category: null,
       fileName: `receipt-${baseReceiptId.slice(0, 8)}.${mediaType === 'application/pdf' ? 'pdf' : 'jpg'}`,
       mimeType: mediaType, base64,
-    }).catch(e => {
-      console.error('bot-core: Drive upload failed (batch)', e.message);
+    }).catch(async e => {
+      await reportError('DRV-002', e, { userId, step: 'batch' });
       return null;
     }),
     getUserSettings().catch(() => ({})),
@@ -866,8 +879,8 @@ export async function handleAttachMedia(ctx, base64, mediaType, attachState) {
       year, month, category, fileName, mimeType: mediaType, base64,
     });
   } catch (e) {
-    console.error('bot-core: ATTACH Drive upload failed', e.message);
-    return ctx.send('Failed to upload receipt to Drive. Try again.');
+    await reportError('DRV-002', e, { userId, step: 'attach' });
+    return ctx.send('Failed to upload receipt to Drive. Try again. [DRV-002]');
   }
 
   const lastlog = await store.get(`lastlog:${userId}`, { type: 'json' }).catch(() => null);
@@ -992,7 +1005,7 @@ async function handleCategoryPick(ctx, text) {
     console.log(`bot-core: CATFIX logged ${pending.vendor} $${pending.amount} as ${category} for ${userId}`);
     return ctx.send(`Logged ${pending.vendor} · $${Number(pending.amount).toFixed(2)} as ${category}.`);
   } catch (e) {
-    console.error('bot-core: CATFIX write failed', e.message);
+    await reportError('BOT-007', e, { userId, vendor: pending?.vendor });
     // Leave the pending blob in place so the charge isn't lost — the user can
     // tap again once whatever broke is back.
     return ctx.send(`Couldn't log that: ${e.message}. Tap a category again to retry.`);
@@ -1027,7 +1040,7 @@ async function handleAuditFix(ctx, text) {
   const recent = await getRecentExpenses(sheetId, 100).catch(() => []);
   const expense = recent.find(e => e.uuid === uuid);
   if (!expense) {
-    return ctx.send('Could not find that expense — it may have been edited or deleted already.');
+    return ctx.send('Could not find that expense — it may have been edited or deleted already. [SHT-004]');
   }
   if (expense.category === newCategory) {
     return ctx.send(`${expense.vendor} is already in ${newCategory}.`);
@@ -1044,7 +1057,7 @@ async function handleAuditFix(ctx, text) {
       channel: 'audit',
     });
   } catch (e) {
-    console.error('bot-core: AUDITFIX append failed', e.message);
+    await reportError('SHT-009', e, { flow: 'auditfix', uuid });
     return ctx.send(`Couldn't move that: ${e.message}. Nothing was changed.`);
   }
 
@@ -1052,7 +1065,7 @@ async function handleAuditFix(ctx, text) {
     await deleteExpenseByUUID({ category: expense.category, uuid, sheetId });
   } catch (e) {
     // The new row exists; the old one didn't go. Say so rather than claim success.
-    console.error('bot-core: AUDITFIX delete failed', e.message);
+    await reportError('BOT-008', e, { flow: 'auditfix', uuid });
     return ctx.send(
       `Added ${expense.vendor} to ${newCategory}, but couldn't remove the old ${expense.category} entry — ` +
       `please delete it in the dashboard so it isn't counted twice.`
@@ -1106,7 +1119,7 @@ async function finalizeSplit(ctx, key, state) {
   try {
     sheetId = await getCurrentMonthSheetId(monthName);
   } catch (e) {
-    console.error('bot-core: split — month sheet missing', e.message);
+    await reportError('SHT-002', e, { flow: 'split' });
     return ctx.send(`Could not find sheet for ${monthName}. Log this via the dashboard.`);
   }
 
@@ -1136,12 +1149,12 @@ async function finalizeSplit(ctx, key, state) {
       });
       entries.push({ category, uuid: result.uuid, sheetId, amount });
     } catch (e) {
-      console.error(`bot-core: split append failed for ${category}`, e.message);
+      await reportError('BOT-005', e, { category });
     }
   }
 
   if (entries.length === 0) {
-    return ctx.send('Failed to log the split to the spreadsheet. Try again or use the dashboard.');
+    return ctx.send('Failed to log the split to the spreadsheet. Try again or use the dashboard. [BOT-005]');
   }
 
   // Move the receipt into the largest group's Drive folder (best-effort).
@@ -1192,7 +1205,7 @@ async function handleSplitSkip(ctx, key) {
     sheetId = await getCurrentMonthSheetId(monthName);
   } catch (e) {
     await store.delete(key);
-    console.error('bot-core: split skip — month sheet missing', e.message);
+    await reportError('SHT-002', e, { flow: 'split-skip' });
     return ctx.send(`Could not find sheet for ${monthName}. Log this via the dashboard.`);
   }
 
@@ -1205,8 +1218,8 @@ async function handleSplitSkip(ctx, key) {
       paymentMethod: pending.paymentMethod || '', channel: ctx.channel,
     });
   } catch (e) {
-    console.error('bot-core: split skip append failed', e.message);
-    return ctx.send('Failed to log. Try again or use the dashboard.');
+    await reportError('SHT-009', e, { flow: 'split-skip' });
+    return ctx.send('Failed to log. Try again or use the dashboard. [SHT-009]');
   }
 
   await store.setJSON(`lastlog:${userId}`, {
@@ -1393,8 +1406,8 @@ async function handleSetSalary(ctx, amountStr) {
   try {
     await writeSalaryAmount(sheetId, amount);
   } catch (e) {
-    console.error('bot-core: salary write failed', e.message);
-    return ctx.send('Failed to set salary. Try again or use the dashboard.');
+    await reportError('SHT-006', e, { flow: 'salary' });
+    return ctx.send('Failed to set salary. Try again or use the dashboard. [SHT-006]');
   }
   console.log(`bot-core: salary set to ${amount} for ${monthName} by ${userId}`);
   return ctx.send(`✅ Salary set to $${amount} for ${monthName}.`);
@@ -1442,8 +1455,8 @@ async function handleSetBudget(ctx, categoryInput, amountStr) {
   try {
     await writeBudgetAmount(sheetId, matchedCat.name, amount);
   } catch (e) {
-    console.error('bot-core: budget write failed', e.message);
-    return ctx.send('Failed to set budget. Try again or use the dashboard.');
+    await reportError('SHT-001', e, { flow: 'budget' });
+    return ctx.send('Failed to set budget. Try again or use the dashboard. [SHT-001]');
   }
   console.log(`bot-core: ${matchedCat.name} budget set to ${amount} for ${monthName} by ${userId}`);
   return ctx.send(`✅ ${matchedCat.name} budget set to $${amount} for ${monthName}.`);
@@ -1480,8 +1493,8 @@ async function handleAddCategory(ctx, nameInput, budgetStr, type) {
     if (e.message.includes('full')) {
       return ctx.send('Totals sheet is full (max 20 categories). Remove one first.');
     }
-    console.error('bot-core: add category failed', e.message);
-    return ctx.send('Failed to add category. Try again or use the dashboard.');
+    await reportError('SHT-007', e, { flow: 'add-category' });
+    return ctx.send('Failed to add category. Try again or use the dashboard. [SHT-007]');
   }
 
   const typeLabel = { need: 'Need', want: 'Want', saving: 'Saving' }[type] || 'Want';
@@ -1601,7 +1614,7 @@ async function handleDelete(ctx, target) {
   }
 
   if (!expense.uuid) {
-    return ctx.send('Cannot delete this entry (no tracking ID). Use the dashboard instead.');
+    return ctx.send('Cannot delete this entry (no tracking ID). Use the dashboard instead. [BOT-004]');
   }
 
   await store.setJSON(`delete_pending:${userId}`, {
@@ -1657,9 +1670,9 @@ async function handleDeletePending(ctx, text, pending) {
         sheetId: pending.sheetId,
       });
     } catch (e) {
-      console.error('bot-core: DELETE failed', e.message);
+      await reportError('BOT-003', e, { userId });
       await store.delete(key);
-      return ctx.send('Failed to delete. The entry may have been modified. Check the dashboard.');
+      return ctx.send('Failed to delete. The entry may have been modified. Check the dashboard. [BOT-003]');
     }
 
     const lastlog = await store.get(`lastlog:${userId}`, { type: 'json' }).catch(() => null);
@@ -1815,7 +1828,7 @@ async function handleNewMonthWizard(ctx, text, wizard) {
         budgetChanges: wizard.budgetChanges,
       });
     } catch (e) {
-      console.error('bot-core: createMonth failed', e.message);
+      await reportError('SHT-002', e, { flow: 'create-month' });
       await store.delete(key);
       return ctx.send(`Failed to create ${wizard.monthName}. Try again or use the dashboard.`);
     }
@@ -2117,8 +2130,8 @@ async function editLoggedExpense(ctx, changes) {
   try {
     await deleteExpenseByUUID({ category: lastlog.category, uuid: lastlog.uuid, sheetId: lastlog.sheetId });
   } catch (e) {
-    console.error('bot-core: edit (delete) failed', e.message);
-    return ctx.send('Could not edit — the entry may have changed. Check the dashboard.');
+    await reportError('SHT-004', e, { flow: 'edit' });
+    return ctx.send('Could not edit — the entry may have changed. Check the dashboard. [SHT-004]');
   }
 
   let result;
@@ -2130,8 +2143,8 @@ async function editLoggedExpense(ctx, changes) {
       channel: ctx.channel,
     });
   } catch (e) {
-    console.error('bot-core: edit (append) failed', e.message);
-    return ctx.send('Edit failed while saving. Check the dashboard.');
+    await reportError('SHT-009', e, { flow: 'edit' });
+    return ctx.send('Edit failed while saving. Check the dashboard. [SHT-009]');
   }
 
   await store.setJSON(`lastlog:${userId}`, {
