@@ -93,9 +93,12 @@ function TabSwitcher({ activeTab, setActiveTab }) {
   );
 }
 
-function UserMenu({ user, signOut, setShowSettings, setShowReconcile, setShowUserMenu, showUserMenu, userMenuRef, isMonthEnded, selectedMonth }) {
+function UserMenu({ user, signOut, setShowSettings, setShowReconcile, setShowUserMenu, showUserMenu, isMonthEnded, selectedMonth }) {
   return (
-    <div className="relative" ref={userMenuRef}>
+    // data-user-menu marks "inside the menu" for App's outside-click handler.
+    // Deliberately not a ref: this component is rendered twice (desktop +
+    // mobile) and a shared ref can only point at one of them.
+    <div className="relative" data-user-menu>
       <button
         onClick={() => setShowUserMenu(v => !v)}
         className="flex items-center gap-2 px-3 py-1.5 rounded-xl transition-colors duration-150 active:scale-[0.98]"
@@ -182,13 +185,13 @@ export function HeaderBar({
   loading, lastUpdated, error, refresh, shareAllMonths,
   isDark, setIsDark,
   showMessages, setShowMessages, messages, unreadCount, markAllRead, dismissMessage, clearMessages,
-  showUserMenu, setShowUserMenu, userMenuRef,
+  showUserMenu, setShowUserMenu,
   user, signOut,
   setShowSettings, setShowReconcile,
   isMonthEnded, selectedMonth,
   activeTab, setActiveTab,
 }) {
-  const userMenuProps = { user, signOut, setShowSettings, setShowReconcile, setShowUserMenu, showUserMenu, userMenuRef, isMonthEnded, selectedMonth };
+  const userMenuProps = { user, signOut, setShowSettings, setShowReconcile, setShowUserMenu, showUserMenu, isMonthEnded, selectedMonth };
 
   return (
     <>
