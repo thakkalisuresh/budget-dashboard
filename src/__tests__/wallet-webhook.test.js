@@ -305,3 +305,48 @@ describe('wallet-webhook — split vendors', () => {
     expect(telegramSend).not.toHaveBeenCalled();
   });
 });
+
+/* ── Card-name resolution on the wallet path ── */
+
+describe('wallet-webhook — resolves the card against the user card list', () => {
+  const CARDS = ['American Express Blue Cash Preferred', 'Chase Sapphire Reserve'];
+
+  it('canonicalizes the shortened name the Wallet notification sends', async () => {
+    // The Android macro forwards the bank notification title verbatim. This
+    // path never called the resolver, so "Blue Cash Preferred" was written as
+    // its own card, splitting the bucket from the canonical AmEx name.
+    getSettingsMock.mockResolvedValue({ cards: CARDS });
+    const res = await call(req({ body: { ...validBody, card: 'Blue Cash Preferred' } }));
+    expect(res.status).toBe(200);
+    expect(appendMock.mock.calls[0][0].paymentMethod)
+      .toBe('American Express Blue Cash Preferred');
+  });
+
+  it('resolves an abbreviation via the alias map', async () => {
+    getSettingsMock.mockResolvedValue({ cards: CARDS });
+    await call(req({ body: { ...validBody, card: 'BCP' } }));
+    expect(appendMock.mock.calls[0][0].paymentMethod)
+      .toBe('American Express Blue Cash Preferred');
+  });
+
+  it('keeps the raw card when it matches nothing', async () => {
+    // Better to log an unrecognised card than to blank it.
+    getSettingsMock.mockResolvedValue({ cards: CARDS });
+    await call(req({ body: { ...validBody, card: 'Some Other Card' } }));
+    expect(appendMock.mock.calls[0][0].paymentMethod).toBe('Some Other Card');
+  });
+
+  it('keeps the raw card when the settings lookup fails', async () => {
+    // getUserSettingsByEmail throwing leaves userSettings empty; resolving to
+    // '' there would wipe a perfectly good card name.
+    getSettingsMock.mockRejectedValue(new Error('firestore down'));
+    await call(req({ body: { ...validBody, card: 'Blue Cash Preferred' } }));
+    expect(appendMock.mock.calls[0][0].paymentMethod).toBe('Blue Cash Preferred');
+  });
+
+  it('leaves an absent card absent', async () => {
+    getSettingsMock.mockResolvedValue({ cards: CARDS });
+    await call(req({ body: { ...validBody, card: undefined } }));
+    expect(appendMock.mock.calls[0][0].paymentMethod).toBe('');
+  });
+});

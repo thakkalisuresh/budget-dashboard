@@ -19,6 +19,7 @@ import {
 import { convertToUSD } from './_currency.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
 import { buildRewardsLine, getEffectiveRates } from './_card-rewards.mjs';
+import { resolveCardName } from './_card-resolver.mjs';
 import {
   kbYesCancel, kbYesSkip, kbConfirmDelete, kbSplitCategory,
   kbConfirmReceipt, kbEditMenu, kbCategoryPicker, kbCardPicker,
@@ -31,21 +32,9 @@ const DAILY_LIMIT    = 50;
 const UNDO_WINDOW_MS = 10 * 60 * 1000;
 const DASHBOARD_URL  = process.env.SITE_URL || 'https://fundient-dashboard.web.app';
 
-/* ── Card resolution (server-side mirror of src/smartRules + resolveCardName) ── */
-
-const normCard = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-
-function resolveCardName(raw, cards = []) {
-  if (!raw || !cards.length) return '';
-  const r = normCard(raw);
-  if (!r) return '';
-  for (const c of cards) if (normCard(c) === r) return c;
-  for (const c of cards) {
-    const nc = normCard(c);
-    if (nc.length >= 5 && r.length >= 5 && (nc.includes(r) || r.includes(nc))) return c;
-  }
-  return '';
-}
+/* ── Card resolution (server-side mirror of src/smartRules + resolveCardName) ──
+   resolveCardName now lives in _card-resolver.mjs so wallet-webhook.mjs can
+   share it without importing this module. */
 
 function applyCardRules(vendor, category, rules = []) {
   if (!vendor || !rules.length) return '';
