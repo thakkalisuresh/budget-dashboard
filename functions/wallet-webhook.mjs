@@ -7,33 +7,22 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import webpush from 'web-push';
 import crypto from 'node:crypto';
-import { extractTransactionText } from './lib/_extraction.mjs';
+import { extractTransactionText, CATEGORIES } from './lib/_extraction.mjs';
+import { resolveCategory } from './lib/_categorize.mjs';
 import { appendExpense, getCurrentMonthSheetId, getUserSettingsByEmail } from './lib/_sheets.mjs';
 import { getDb } from './lib/firestore.mjs';
 import { createBotStore } from './lib/bot-store.mjs';
-import { sendMessage } from './lib/_telegram.mjs';
+import { sendMessage, kbCategoryConfirm, resolveTelegramChatId } from './lib/_telegram.mjs';
 import { matchesSplitVendor } from './lib/_item-categorizer.mjs';
 import { resolveCardName } from './lib/_card-resolver.mjs';
 import { sha256Hex } from './lib/http-common.mjs';
 import {
   WALLET_WEBHOOK_SECRET,
   VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_EMAIL,
-  ANTHROPIC_API_KEY, GEMINI_API_KEY,
+  ANTHROPIC_API_KEY, GEMINI_API_KEY, GROQ_API_KEY,
   TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP,
   SHEETS_DRIVE_SECRETS,
 } from './lib/secrets.mjs';
-
-/** Resolve a requester email → Telegram chat id via the TELEGRAM_EMAIL_MAP secret. */
-function resolveTelegramChatId(email) {
-  const raw = process.env.TELEGRAM_EMAIL_MAP || '';
-  for (const pair of raw.split(',')) {
-    const [mappedEmail, chatId] = pair.split(':').map(s => s.trim());
-    if (mappedEmail && chatId && mappedEmail.toLowerCase() === email.toLowerCase()) {
-      return chatId;
-    }
-  }
-  return null;
-}
 
 async function keyMatches(provided, expected) {
   const [a, b] = await Promise.all([sha256Hex(provided), sha256Hex(expected)]);
@@ -55,7 +44,7 @@ export const walletWebhook = onRequest(
     secrets: [
       WALLET_WEBHOOK_SECRET,
       VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_EMAIL,
-      ANTHROPIC_API_KEY, GEMINI_API_KEY,
+      ANTHROPIC_API_KEY, GEMINI_API_KEY, GROQ_API_KEY,
       TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP,
       ...SHEETS_DRIVE_SECRETS,
     ],
@@ -186,6 +175,56 @@ export const walletWebhook = onRequest(
     // wipe a card name that was perfectly good.
     if (card) {
       card = resolveCardName(card, userSettings.cards || []) || card;
+    }
+
+    // ── Category resolution: smart rules → Groq → whatever the extractor said.
+    // A confident answer is written straight through, preserving the instant
+    // logging this path exists for. An unconfident one is parked and asked
+    // about over Telegram rather than guessed at.
+    const allCategories = [...CATEGORIES, ...(userSettings.customCategories || [])];
+    const decision = await resolveCategory({
+      vendor,
+      amount,
+      extractedCategory: category,
+      categories: allCategories,
+      settings: userSettings,
+      enabled: userSettings.llmCategorize !== false,
+    });
+    if (decision.category !== category) {
+      console.log(`wallet-webhook: category ${category} → ${decision.category} (${decision.source}, conf ${decision.confidence})`);
+    }
+    category = decision.category;
+
+    if (decision.needsConfirm) {
+      const chatId = resolveTelegramChatId(email);
+      if (chatId) {
+        try {
+          const store = createBotStore(getDb());
+          // Short id: callback_data must stay under Telegram's 64-byte limit
+          // once the category name is appended.
+          const id = crypto.randomUUID().slice(0, 8);
+          await store.setJSON(`category_pending:${chatId}:${id}`, {
+            id, vendor, amount, txDate, monthName, sheetId,
+            paymentMethod: card ?? '',
+            suggested: decision.category,
+            createdAt: new Date().toISOString(),
+          });
+          await sendMessage(
+            chatId,
+            `🤔 ${vendor} · $${amount.toFixed(2)}\n\n` +
+            `Not sure which category — best guess is ${decision.category}. Pick one:`,
+            kbCategoryConfirm(id, allCategories, decision.category)
+          );
+          res.status(200).json({ ok: true, pendingCategory: true, vendor, amount });
+          return;
+        } catch (e) {
+          // Falling through logs it with the best guess, which is strictly
+          // better than dropping the transaction because Telegram was down.
+          console.error('Category confirm prompt failed (logging with best guess):', e.message);
+        }
+      } else {
+        console.warn(`No Telegram mapping for ${email}; logging best-guess category ${category}.`);
+      }
     }
 
     // ── Split-receipt vendor (Costco, Amazon…): don't log a lump sum. Stash the

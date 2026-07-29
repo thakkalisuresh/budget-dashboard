@@ -20,8 +20,9 @@ import { convertToUSD } from './_currency.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
 import { buildRewardsLine, getEffectiveRates } from './_card-rewards.mjs';
 import { resolveCardName } from './_card-resolver.mjs';
+import { resolveCategory } from './_categorize.mjs';
 import {
-  kbYesCancel, kbYesSkip, kbConfirmDelete, kbSplitCategory,
+  kbYesCancel, kbYesSkip, kbConfirmDelete, kbSplitCategory, kbCategoryConfirm,
   kbConfirmReceipt, kbEditMenu, kbCategoryPicker, kbCardPicker,
   kbLoggedActions, kbEditLoggedMenu,
 } from './_telegram.mjs';
@@ -114,6 +115,7 @@ export async function handleTextReply(ctx, text) {
     for (const prefix of [
       `confirm:${userId}:`, `transfer_pending:${userId}:`,
       `split_pending:${userId}:`, `split_confirm:${userId}:`,
+      `category_pending:${userId}:`,
     ]) {
       const { blobs } = await store.list({ prefix });
       for (const b of (blobs || [])) {
@@ -128,6 +130,16 @@ export async function handleTextReply(ctx, text) {
   // ── SPLITCAT callback (user picked a category for one split line item) ──
   if (text.startsWith('SPLITCAT:')) {
     return await handleSplitCategoryPick(ctx, text);
+  }
+
+  // ── CATFIX callback (user picked a category for an unconfident wallet charge) ──
+  if (text.startsWith('CATFIX:')) {
+    return await handleCategoryPick(ctx, text);
+  }
+
+  // ── AUDITFIX callback (user accepted a weekly-audit recategorization) ──
+  if (text.startsWith('AUDITFIX:')) {
+    return await handleAuditFix(ctx, text);
   }
 
   // ── NEW MONTH wizard / DELETE pending (R5: probe the two independent
@@ -688,6 +700,18 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
       console.warn('bot-core: card resolution failed (non-fatal)', e.message);
     }
 
+    // Correct the extractor's category before the user sees it. This path
+    // already ends in a YES/CANCEL confirm, so an unconfident answer needs no
+    // extra round-trip — it just changes what the prompt proposes.
+    data.reward_category = (await resolveCategory({
+      vendor: data.store_name,
+      amount: data.total_amount,
+      extractedCategory: data.reward_category,
+      categories: [...CATEGORIES, ...(settings.customCategories || [])],
+      settings,
+      enabled: settings.llmCategorize !== false,
+    })).category;
+
     // ── Split flow: itemized receipt from a configured split vendor (Costco,
     // Amazon…) OR a wallet-triggered split awaiting its receipt. Splits the
     // receipt across categories instead of logging one lump sum.
@@ -908,6 +932,117 @@ async function askNextSplitItem(ctx, key, state) {
   ];
   await store.setJSON(key, state);
   return ctx.send(lines.join('\n'), kbSplitCategory(state.currentIndex, CATEGORIES, item.suggestion));
+}
+
+/**
+ * Handle a `CATFIX:<pendingId>:<category>` pick.
+ *
+ * The wallet webhook parked this charge instead of writing it, because the
+ * categorizer wasn't confident. The tap supplies the category and the expense
+ * is written now — this is the only place that charge ever gets logged, so a
+ * failure here has to say so plainly rather than fail silently.
+ */
+async function handleCategoryPick(ctx, text) {
+  const { store, userId } = ctx;
+  const m = text.match(/^CATFIX:([^:]+):(.+)$/);
+  if (!m) return; // malformed — ignore
+
+  const [, pendingId, category] = m;
+  const key = `category_pending:${userId}:${pendingId}`;
+  const pending = await store.get(key, { type: 'json' }).catch(() => null);
+  if (!pending) {
+    return ctx.send('That charge is no longer waiting — it may have been logged or cancelled already.');
+  }
+
+  try {
+    const { uuid } = await appendExpense({
+      category,
+      vendor: pending.vendor,
+      amount: pending.amount,
+      txDate: pending.txDate,
+      sheetId: pending.sheetId,
+      monthName: pending.monthName,
+      paymentMethod: pending.paymentMethod || '',
+      channel: 'wallet',
+    });
+    await store.delete(key);
+    await store.setJSON(`lastlog:${userId}`, {
+      uuid, category, vendor: pending.vendor, amount: pending.amount,
+      sheetId: pending.sheetId, monthName: pending.monthName,
+      loggedAt: new Date().toISOString(),
+    });
+    console.log(`bot-core: CATFIX logged ${pending.vendor} $${pending.amount} as ${category} for ${userId}`);
+    return ctx.send(`Logged ${pending.vendor} · $${Number(pending.amount).toFixed(2)} as ${category}.`);
+  } catch (e) {
+    console.error('bot-core: CATFIX write failed', e.message);
+    // Leave the pending blob in place so the charge isn't lost — the user can
+    // tap again once whatever broke is back.
+    return ctx.send(`Couldn't log that: ${e.message}. Tap a category again to retry.`);
+  }
+}
+
+/**
+ * Handle an `AUDITFIX:<uuid>:<category>` tap from the weekly digest — move an
+ * already-logged expense to a different category.
+ *
+ * Categories are separate sheet tabs, so a move is an append plus a delete.
+ * Append FIRST, on purpose: if the delete then fails the user has a visible
+ * duplicate they can remove, whereas deleting first and failing to append
+ * would silently destroy the expense. Neither half is atomic and a duplicate
+ * is the cheaper failure.
+ */
+async function handleAuditFix(ctx, text) {
+  const { store, userId } = ctx;
+  const m = text.match(/^AUDITFIX:([^:]+):(.+)$/);
+  if (!m) return;
+
+  const [, uuid, newCategory] = m;
+  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+  let sheetId;
+  try {
+    sheetId = await getCurrentMonthSheetId(monthName);
+  } catch {
+    return ctx.send(`No sheet found for ${monthName}.`);
+  }
+
+  const recent = await getRecentExpenses(sheetId, 100).catch(() => []);
+  const expense = recent.find(e => e.uuid === uuid);
+  if (!expense) {
+    return ctx.send('Could not find that expense — it may have been edited or deleted already.');
+  }
+  if (expense.category === newCategory) {
+    return ctx.send(`${expense.vendor} is already in ${newCategory}.`);
+  }
+
+  try {
+    await appendExpense({
+      category: newCategory,
+      vendor: expense.vendor,
+      amount: expense.amount,
+      txDate: expense.txDate || undefined,
+      sheetId,
+      monthName,
+      channel: 'audit',
+    });
+  } catch (e) {
+    console.error('bot-core: AUDITFIX append failed', e.message);
+    return ctx.send(`Couldn't move that: ${e.message}. Nothing was changed.`);
+  }
+
+  try {
+    await deleteExpenseByUUID({ category: expense.category, uuid, sheetId });
+  } catch (e) {
+    // The new row exists; the old one didn't go. Say so rather than claim success.
+    console.error('bot-core: AUDITFIX delete failed', e.message);
+    return ctx.send(
+      `Added ${expense.vendor} to ${newCategory}, but couldn't remove the old ${expense.category} entry — ` +
+      `please delete it in the dashboard so it isn't counted twice.`
+    );
+  }
+
+  console.log(`bot-core: AUDITFIX moved ${expense.vendor} ${expense.category} → ${newCategory} for ${userId}`);
+  return ctx.send(`Moved ${expense.vendor} · $${Number(expense.amount).toFixed(2)} from ${expense.category} to ${newCategory}.`);
 }
 
 /** Handle a `SPLITCAT:<idx>:<category>` pick from the inline keyboard. */

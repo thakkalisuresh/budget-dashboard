@@ -920,3 +920,181 @@ describe('telegram webhook — receipt latency: Drive upload is deferred', () =>
     expect(confirmBlob().driveFileId).toBeNull();
   });
 });
+
+/* ── CATFIX: logging a wallet charge the categorizer wasn't sure about ── */
+
+describe('telegram webhook — CATFIX category pick', () => {
+  const userId = '123456789';
+  const pendingKey = `category_pending:${userId}:abc12345`;
+  const pending = {
+    id: 'abc12345', vendor: 'Chipotle', amount: 24.5, txDate: '2026-05-14',
+    monthName: 'May 2026', sheetId: 'sheet-may', paymentMethod: 'Chase Sapphire Reserve',
+    suggested: 'Travel',
+  };
+
+  function mockSheets({ appendFails = false } = {}) {
+    mockFetch.mockImplementation((url, opts) => {
+      if (url.includes('/sendMessage') || url.includes('/answerCallbackQuery')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
+      }
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      if (url.includes('sheets.googleapis.com') && url.includes('Months')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['May 2026', 'sheet-may']] }) });
+      }
+      if (appendFails && opts?.method === 'PUT') {
+        return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: { message: 'sheet locked' } }) });
+      }
+      if (url.includes('sheets.googleapis.com')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ updates: { updatedRows: 1 }, values: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+  }
+
+  const lastSend = () => {
+    const calls = mockFetch.mock.calls.filter(c => c[0]?.includes?.('/sendMessage'));
+    return JSON.parse(calls[calls.length - 1][1].body).text;
+  };
+
+  beforeEach(() => {
+    mockStore.data.clear();
+    mockSheets();
+  });
+
+  it('writes the parked charge with the tapped category and clears the blob', async () => {
+    mockStore.data.set(pendingKey, { ...pending });
+    await handler(buildRequest(callbackQuery('CATFIX:abc12345:Eating Out')));
+
+    expect(lastSend()).toContain('Logged Chipotle');
+    expect(lastSend()).toContain('Eating Out');
+    expect(mockStore.data.has(pendingKey)).toBe(false);
+  });
+
+  it('tells the user plainly when the charge is already gone', async () => {
+    await handler(buildRequest(callbackQuery('CATFIX:abc12345:Grocery')));
+    expect(lastSend()).toContain('no longer waiting');
+  });
+
+  it('keeps the charge parked when the sheet write fails, so it can be retried', async () => {
+    mockSheets({ appendFails: true });
+    mockStore.data.set(pendingKey, { ...pending });
+    await handler(buildRequest(callbackQuery('CATFIX:abc12345:Grocery')));
+
+    // The blob is the only record of this charge — losing it would lose the expense.
+    expect(mockStore.data.has(pendingKey)).toBe(true);
+    expect(lastSend()).toMatch(/Couldn't log|retry/i);
+  });
+
+  it('CANCEL clears a parked category charge', async () => {
+    mockStore.data.set(pendingKey, { ...pending });
+    await handler(buildRequest(textMessage('CANCEL')));
+    expect(mockStore.data.has(pendingKey)).toBe(false);
+  });
+});
+
+/* ── AUDITFIX: moving an already-logged expense between category tabs ── */
+
+describe('telegram webhook — AUDITFIX category move', () => {
+  const HEADER = ['Timestamp', 'Action', 'Category', 'Vendor', 'Amount', 'Details', 'Reserved', 'User', 'UUID', 'TxDate'];
+  const row = ['2026-05-10T08:00:00Z', 'Added', 'Misc', 'Chipotle', 24.5, '', '', 'Alice', 'tx_abc', '2026-05-10'];
+
+  // Records what the handler did so append/delete ordering can be asserted.
+  let ops;
+
+  function mockSheets({ appendFails = false, deleteFails = false } = {}) {
+    ops = [];
+    mockFetch.mockImplementation((url, opts) => {
+      if (url.includes('/sendMessage') || url.includes('/answerCallbackQuery')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
+      }
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      if (url.includes('Months')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['May 2026', 'sheet-may']] }) });
+      }
+      if (url.includes('History')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [HEADER, row] }) });
+      }
+      // Row write for the new category tab.
+      if (opts?.method === 'PUT') {
+        ops.push('append');
+        return appendFails
+          ? Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: { message: 'append blew up' } }) })
+          : Promise.resolve({ ok: true, json: () => Promise.resolve({ updates: { updatedRows: 1 } }) });
+      }
+      // Row removal from the old tab.
+      if (url.includes(':batchUpdate')) {
+        ops.push('delete');
+        return deleteFails
+          ? Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: { message: 'delete blew up' } }) })
+          : Promise.resolve({ ok: true, json: () => Promise.resolve({ replies: [] }) });
+      }
+      // UUID lookup across category tabs (deleteExpenseByUUID scans F:H).
+      if (url.includes('F:H') || url.includes('F%3AH')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['tx_abc']] }) });
+      }
+      // Tab metadata, needed to turn a row index into a deleteDimension range.
+      if (url.includes('fields=sheets.properties')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({
+          sheets: [
+            { properties: { title: 'Misc', sheetId: 1 } },
+            { properties: { title: 'Eating Out', sheetId: 2 } },
+          ],
+        }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [] }) });
+    });
+  }
+
+  const lastSend = () => {
+    const calls = mockFetch.mock.calls.filter(c => c[0]?.includes?.('/sendMessage'));
+    return JSON.parse(calls[calls.length - 1][1].body).text;
+  };
+
+  beforeEach(() => { mockStore.data.clear(); mockSheets(); });
+
+  it('moves the expense and reports both sides of the move', async () => {
+    await handler(buildRequest(callbackQuery('AUDITFIX:tx_abc:Eating Out')));
+    const text = lastSend();
+    expect(text).toContain('Moved Chipotle');
+    expect(text).toContain('Misc');
+    expect(text).toContain('Eating Out');
+  });
+
+  it('appends before deleting, so a half-failure duplicates instead of losing', async () => {
+    await handler(buildRequest(callbackQuery('AUDITFIX:tx_abc:Eating Out')));
+    expect(ops).toEqual(['append', 'delete']);
+  });
+
+  it('changes nothing when the append fails', async () => {
+    mockSheets({ appendFails: true });
+    await handler(buildRequest(callbackQuery('AUDITFIX:tx_abc:Eating Out')));
+
+    expect(ops).not.toContain('delete');   // old row untouched
+    expect(lastSend()).toContain('Nothing was changed');
+  });
+
+  it('says so plainly when the old row could not be removed', async () => {
+    mockSheets({ deleteFails: true });
+    await handler(buildRequest(callbackQuery('AUDITFIX:tx_abc:Eating Out')));
+
+    // The user now has a duplicate; claiming success would hide it.
+    const text = lastSend();
+    expect(text).toContain("couldn't remove the old");
+    expect(text).toMatch(/counted twice/i);
+  });
+
+  it('handles an expense that has since disappeared', async () => {
+    await handler(buildRequest(callbackQuery('AUDITFIX:tx_gone:Eating Out')));
+    expect(lastSend()).toContain('Could not find that expense');
+  });
+
+  it('no-ops when the expense is already in the suggested category', async () => {
+    await handler(buildRequest(callbackQuery('AUDITFIX:tx_abc:Misc')));
+    expect(lastSend()).toContain('already in Misc');
+    expect(ops).toEqual([]);
+  });
+});
