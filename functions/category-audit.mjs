@@ -9,6 +9,13 @@
  * mistakes before they land; this catches the ones that got through — including
  * anything written while Groq was down or below the confidence threshold with
  * no Telegram mapping to ask through.
+ *
+ * Deployment note: this is a scheduled function, so deploying it needs BOTH
+ * the cloudscheduler.googleapis.com API enabled on the project AND
+ * roles/cloudscheduler.admin on the deploying principal (github-ci-deploy).
+ * Without the role the function itself deploys fine but its Cloud Scheduler
+ * job is never created — it goes ACTIVE and simply never fires, which looks
+ * identical to "working" until you notice the digest never arrives.
  */
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import {

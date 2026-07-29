@@ -33,8 +33,27 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Audit dependencies
-        run: npm audit --audit-level=high
+      # Audit what actually ships, in both packages.
+      #
+      # --omit=dev on purpose: the previous gate audited dev dependencies too,
+      # so CI could go red because ESLint's glob matcher had a slow-path DoS or
+      # PostCSS could read a source map it was pointed at — neither of which is
+      # reachable in this pipeline, and neither of which ends up in the browser
+      # bundle. That blocked a release on 2026-07-29 for zero security benefit.
+      # A deploy gate that fails on things you don't deploy trains you to
+      # ignore it, which is how a real advisory eventually slips through.
+      # Dependabot still tracks dev-dependency advisories separately.
+      #
+      # functions/ is audited too, and was NOT before — which is how a high
+      # severity form-data CRLF injection sat unnoticed in the deployed
+      # backend while the gate policed the build toolchain. Lockfile-only, so
+      # it needs no second npm ci.
+      - name: Audit dependencies (app)
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Audit dependencies (functions runtime)
+        working-directory: functions
+        run: npm audit --package-lock-only --omit=dev --audit-level=high
 
       - name: Run tests
         run: npm test
