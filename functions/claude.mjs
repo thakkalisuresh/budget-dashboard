@@ -119,6 +119,18 @@ export const claude = onRequest(
       return;
     }
 
+    // OPTIONS already returned above, so anything reaching here that isn't
+    // POST gets rejected before the CORS/sec-fetch gates: a bare "method not
+    // allowed" leaks nothing and doesn't need Origin validation. This also
+    // lets the client fire a same-origin GET warm-up ping to boot the instance
+    // pre-scan — browsers omit the Origin header on simple same-origin GETs
+    // (it's a forbidden header the client can't set), so requiring it here
+    // would reject the warm-up with a 403 instead of the intended 405.
+    if (req.method !== 'POST') {
+      res.status(405).send('Method not allowed');
+      return;
+    }
+
     if (!corsOrigin) { sendJson(res, 403, { error: { message: 'Forbidden' } }); return; }
 
     // sec-fetch-site must be present and same-origin/same-site.
@@ -126,8 +138,6 @@ export const claude = onRequest(
       sendJson(res, 403, { error: { message: 'Forbidden' } }, corsOrigin);
       return;
     }
-
-    if (req.method !== 'POST') { res.status(405).send('Method not allowed'); return; }
 
     // Body-size pre-check via content-length header
     const declaredLen = parseInt(req.get('content-length') || '0', 10);

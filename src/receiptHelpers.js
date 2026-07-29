@@ -1,6 +1,25 @@
 import { CATEGORIES, fetchDetailRows, fuzzyNamesMatch, getAllCategoryNames } from './sheetsApi.js';
+import { startScanTiming } from './scanTiming.js';
 
 export const CLAUDE_URL = '/api/claude';
+
+// Fire-and-forget "warm-up" hit to boot the proxy's Cloud Function instance
+// before the real scan. A GET is rejected with 405 *before* the proxy touches
+// auth, the rate limiter, or Anthropic (see functions/claude.mjs), so this
+// costs no API tokens and doesn't consume the rate-limit budget — it just
+// pays the cold-start latency while the user is still picking a file.
+// Best-effort only: fetch never throws on a non-2xx status, so failures are
+// silent, but Chrome's console/network panel still logs the raw request —
+// harmless noise, not an error to chase.
+let _lastWarm = 0;
+export function warmClaudeProxy() {
+  const now = Date.now();
+  if (now - _lastWarm < 30_000) return; // already warm recently; don't spam
+  _lastWarm = now;
+  try {
+    fetch(CLAUDE_URL, { method: 'GET', cache: 'no-store', keepalive: true }).catch(() => {});
+  } catch { /* ignore */ }
+}
 const MAX_PX     = 1600;
 const JPEG_Q     = 0.85;
 const MAX_PDF_MB = 5;
@@ -122,6 +141,7 @@ export function resolveCardName(raw, cards = []) {
 }
 
 export async function extractFromFile(file, accessToken, cards = []) {
+  const timing = startScanTiming('extract');
   const detectedMime = await detectMimeType(file);
   if (!detectedMime || !ALLOWED_MIME_TYPES.has(detectedMime)) {
     throw new Error('Unsupported file type. Please upload an image or PDF.');
@@ -138,6 +158,7 @@ export async function extractFromFile(file, accessToken, cards = []) {
     blob      = await compressImage(file);
     mediaType = 'image/jpeg';
   }
+  timing.mark('compress');
 
   const base64 = await toBase64(blob);
   const contentBlock = file.type === 'application/pdf'
@@ -184,7 +205,11 @@ Rules:
     headers,
     body: JSON.stringify({
       model: 'claude-haiku-4-5',
-      max_tokens: 1024,
+      // Bank statements can list many transactions; 1024 tokens truncated the
+      // JSON array mid-row, so the parse silently failed and the user re-scanned.
+      // 3072 (proxy caps at 4096) comfortably fits a long statement. Cost is
+      // unchanged — billing is on tokens generated, not this ceiling.
+      max_tokens: 3072,
       stream: true,
       messages: [{ role: 'user', content: [contentBlock, { type: 'text', text: prompt }] }],
     }),
@@ -199,10 +224,12 @@ Rules:
   const reader  = res.body.getReader();
   const decoder = new TextDecoder();
   let fullText  = '';
+  let firstByte = false;
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
+    if (!firstByte) { timing.mark('model-ttfb'); firstByte = true; }
     const chunk = decoder.decode(value, { stream: true });
     for (const line of chunk.split('\n')) {
       if (!line.startsWith('data: ')) continue;
@@ -216,6 +243,8 @@ Rules:
       } catch { /* skip malformed lines */ }
     }
   }
+  timing.mark('model-stream');
+  timing.end();
 
   try {
     const match = fullText.match(/\{[\s\S]*\}/);
