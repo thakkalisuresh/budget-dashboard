@@ -23,7 +23,24 @@ const CATEGORIES = [
 
 const SYSTEM_PROMPT = `You are a transaction parser for a personal budget tracker. Extract structured data from images (receipt photos, wallet app screenshots like Apple Pay/Google Pay/Samsung Pay, bank app screenshots, SMS notification screenshots) and return ONLY valid JSON — no markdown, no explanation, no preamble.`;
 
-function buildUserPrompt() {
+/** Today in YYYY-MM-DD. Isolated so tests can freeze it. */
+export function todayISO(now = new Date()) {
+  return now.toISOString().slice(0, 10);
+}
+
+/**
+ * Statement/receipt dates are often printed as MM/DD with no year (Amex BCP
+ * does this). Without today's date in the prompt the model invents a year from
+ * its training prior — historically 2024 — and `_bot-core` then routes the
+ * expense to the wrong year tab. Every prompt builder gets this block.
+ */
+function dateRules(today) {
+  const year = Number(today.slice(0, 4));
+  return `- Today is ${today}. If a transaction date shows no year (e.g. "03/14" or "Mar 14"), use the most recent past occurrence of that month/day: never a future date, and never earlier than ${year - 1} unless the year is printed on the document.
+- If a year IS printed, use it exactly as printed.`;
+}
+
+function buildUserPrompt(today = todayISO()) {
   return `Extract data from this transaction image. The image could be:
 - A physical receipt photo
 - A wallet app screenshot (Apple Pay, Google Pay, Samsung Pay, Venmo, Zelle, PayPal, etc.)
@@ -36,6 +53,7 @@ Return EXACTLY this JSON structure:
 Rules:
 - store_name: The merchant/vendor name (for transfers, use the recipient name)
 - purchase_date: Date in YYYY-MM-DD format. If unclear, use null
+${dateRules(today)}
 - total_amount: Final total/charge amount. Must be a positive number, no currency symbol
 - tax_amount: Tax amount if shown, else null
 - currency: 3-letter ISO code visible (USD, INR, EUR, GBP, etc.). Default "USD" if not shown
@@ -51,7 +69,7 @@ If the image is completely unreadable, return:
 Respond with ONLY the JSON object. No other text.`;
 }
 
-function buildTextPrompt(text) {
+function buildTextPrompt(text, today = todayISO()) {
   return `Extract transaction data from this text (likely a bank SMS, payment notification, or transaction alert):
 
 """
@@ -64,6 +82,7 @@ Return EXACTLY this JSON structure:
 Rules:
 - store_name: Merchant/vendor name from the text (for transfers, use the recipient name)
 - purchase_date: Date in YYYY-MM-DD if mentioned. If not, use null
+${dateRules(today)}
 - total_amount: The charge amount. Positive number, no currency symbol
 - tax_amount: null (text usually doesn't mention tax separately)
 - currency: 3-letter ISO code (USD, INR, EUR, GBP, etc.). Detect from symbols ($, \\u20b9, \\u20ac, \\u00a3) or text. Default "USD"
@@ -80,9 +99,50 @@ Respond with ONLY the JSON object. No other text.`;
 
 /* ── sanitization ── */
 
+/**
+ * Second line of defence for the missing-year problem (see `dateRules`).
+ * If the model still returns an implausible year — a future date, or older than
+ * last year — remap to the most recent past occurrence of that month/day.
+ * Conservative by design: a plausible year is never rewritten, and an
+ * unparseable value is left alone for the caller to reject.
+ */
+export function repairPurchaseYear(dateStr, today = todayISO()) {
+  if (typeof dateStr !== 'string') return dateStr;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr.trim());
+  if (!m) return dateStr;
+
+  const [, y, mo, d] = m;
+  const todayMs = Date.parse(`${today}T00:00:00Z`);
+  const asMs = Date.parse(`${dateStr}T00:00:00Z`);
+  if (Number.isNaN(asMs) || Number.isNaN(todayMs)) return dateStr;
+
+  const currentYear = Number(today.slice(0, 4));
+  const GRACE_MS = 2 * 24 * 60 * 60 * 1000; // clock skew / timezone slack
+  const tooFuture = asMs > todayMs + GRACE_MS;
+  const tooOld = Number(y) < currentYear - 1;
+  if (!tooFuture && !tooOld) return dateStr;
+
+  // Prefer this year; fall back to last year when that would still be future.
+  for (const candidateYear of [currentYear, currentYear - 1]) {
+    const candidate = `${candidateYear}-${mo}-${d}`;
+    const ms = Date.parse(`${candidate}T00:00:00Z`);
+    if (!Number.isNaN(ms) && ms <= todayMs + GRACE_MS) {
+      if (candidate !== dateStr) {
+        console.warn(`repairPurchaseYear: remapped ${dateStr} → ${candidate} (today ${today})`);
+      }
+      return candidate;
+    }
+  }
+  return dateStr;
+}
+
 export function sanitizeExtraction(data) {
   if (!data || typeof data !== 'object') return data;
   const result = { ...data };
+
+  if (typeof result.purchase_date === 'string') {
+    result.purchase_date = repairPurchaseYear(result.purchase_date);
+  }
 
   if (typeof result.store_name === 'string') {
     result.store_name = safeString(result.store_name);
@@ -308,7 +368,7 @@ export async function extractReceipt(base64, mediaType) {
 
 /* ── Batch extraction (one image → multiple transactions) ── */
 
-function buildBatchUserPrompt() {
+function buildBatchUserPrompt(today = todayISO()) {
   return `Analyze this image and extract ALL distinct transactions it contains. The image could be:
 - A bank app transaction history or statement screenshot (may show many charges)
 - An Apple Wallet, Google Pay, or Samsung Pay history screen (may show several payments)
@@ -322,6 +382,7 @@ Return EXACTLY this JSON structure — always a "transactions" array, even for a
 Rules for each transaction object in the array:
 - store_name: The merchant/vendor name (for transfers, use the recipient name)
 - purchase_date: Date in YYYY-MM-DD format. If unclear, use null
+${dateRules(today)}
 - total_amount: Final charge/payment amount. Must be a positive number, no currency symbol
 - tax_amount: Tax amount if shown, else null
 - currency: 3-letter ISO code (USD, INR, EUR, GBP, etc.). Default "USD" if not shown
