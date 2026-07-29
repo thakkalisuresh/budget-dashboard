@@ -9,13 +9,29 @@
  * reportError never replaces console.error, it wraps it — the Cloud Logging
  * trail stays exactly as it was, so nothing that relied on it breaks.
  */
+import { createHash } from 'node:crypto';
 import { getDb } from './firestore.mjs';
 import { errorLabel, describeError } from './_error-codes.mjs';
+import { sendMessage, resolveTelegramChatId } from './_telegram.mjs';
 
 export const ERROR_COLLECTION = 'error_log';
 
 /** Keep the log bounded; the digest prunes anything older on each run. */
 export const RETENTION_DAYS = 14;
+
+/** Per-fingerprint alert state, so a storm of one failure sends one message. */
+export const ALERT_COLLECTION = 'error_alerts';
+
+/**
+ * How long one distinct failure stays quiet after alerting.
+ *
+ * The scenario this exists for: Sheets rate-limits and forty errors fire in
+ * ninety seconds. Without this you get forty Telegram messages, and the next
+ * thing you do is mute the bot — at which point the one alert that mattered is
+ * muted with the rest. One message per distinct failure per hour keeps the
+ * signal usable.
+ */
+export const ALERT_COOLDOWN_MS = 60 * 60 * 1000;
 
 /**
  * Collapse a message to a stable grouping key.
@@ -72,11 +88,63 @@ export async function reportError(code, error, context = {}) {
       context: sanitizeContext(context),
       at: new Date().toISOString(),
       reported: false,
+      alerted: false,
     });
   } catch (e) {
     // Deliberately quiet: the console.error above already happened, and a
     // second failure here is not worth a second alarm.
     console.warn('error-log: could not persist error', e?.message);
+  }
+
+  // Fatal means the user's action did not happen and they have to redo it —
+  // a wallet charge that vanished should not wait until 08:00 tomorrow.
+  // degraded and config keep flowing to the daily digest only.
+  if (meta?.severity === 'fatal') {
+    await maybeAlertNow(code, meta, message, context);
+  }
+}
+
+/** Firestore doc ids can't hold arbitrary text; hash the fingerprint instead. */
+function alertKey(fp) {
+  return createHash('sha1').update(String(fp)).digest('hex').slice(0, 32);
+}
+
+/**
+ * Send an immediate Telegram alert for a fatal error, at most once per hour
+ * per distinct failure.
+ *
+ * Never throws and never blocks the caller's own error handling: the Firestore
+ * record is already written by the time this runs, and the daily digest is the
+ * backstop if Telegram is unreachable. An alerting path that can itself throw
+ * would turn a handled failure into a crash.
+ */
+async function maybeAlertNow(code, meta, message, context) {
+  try {
+    const email = (process.env.ALLOWED_EMAILS || '').split(',')[0]?.trim();
+    const chatId = resolveTelegramChatId(email);
+    if (!chatId) return;
+
+    const db = getDb();
+    const key = alertKey(fingerprint(code, message));
+    const ref = db.collection(ALERT_COLLECTION).doc(key);
+    const snap = await ref.get();
+    const lastAt = snap.exists ? Date.parse(snap.data()?.lastAt || '') : NaN;
+    if (Number.isFinite(lastAt) && Date.now() - lastAt < ALERT_COOLDOWN_MS) return;
+
+    const ctx = Object.entries(sanitizeContext(context))
+      .slice(0, 3).map(([k, v]) => `${k}=${v}`).join(' ');
+    await sendMessage(chatId, [
+      `🔴 ${code} — ${meta.title}`,
+      '',
+      message.slice(0, 200),
+      ctx || null,
+      '',
+      meta.fix,
+    ].filter(v => v !== null).join('\n'));
+
+    await ref.set({ lastAt: new Date().toISOString(), code });
+  } catch (e) {
+    console.warn('error-log: instant alert failed (digest remains the backstop)', e?.message);
   }
 }
 
@@ -110,10 +178,12 @@ export function groupErrors(docs) {
         fingerprint: key, code: d.code || '?', severity: d.severity || 'unknown',
         title: d.title || '', message: d.message || '',
         count: 0, first: d.at, last: d.at, context: d.context || {},
+        alerted: false,
       });
     }
     const g = byPrint.get(key);
     g.count += 1;
+    if (d.alerted) g.alerted = true;
     if (d.at && (!g.first || d.at < g.first)) g.first = d.at;
     if (d.at && (!g.last || d.at > g.last)) { g.last = d.at; g.message = d.message || g.message; g.context = d.context || g.context; }
   }
@@ -130,7 +200,9 @@ export function buildDigest(groups, sinceLabel) {
   ];
   for (const g of groups.slice(0, 10)) {
     const flag = g.severity === 'fatal' ? '🔴' : g.severity === 'config' ? '⚙️' : '🟡';
-    lines.push(`${flag} ${g.count}× ${g.code} — ${g.title}`);
+    // Flag anything already sent instantly, so the morning recap reads as a
+    // summary rather than a surprise repeat.
+    lines.push(`${flag} ${g.count}× ${g.code} — ${g.title}${g.alerted ? ' (already alerted)' : ''}`);
     lines.push(`   ${g.message.slice(0, 140)}`);
     const ctx = Object.entries(g.context || {}).slice(0, 3).map(([k, v]) => `${k}=${v}`).join(' ');
     if (ctx) lines.push(`   ${ctx}`);
