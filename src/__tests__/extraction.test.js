@@ -6,7 +6,7 @@ vi.stubEnv('ANTHROPIC_API_KEY', 'test-anthropic-key');
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-const { sanitizeExtraction, extractReceipt, CATEGORIES } = await import('../../functions/lib/_extraction.mjs');
+const { sanitizeExtraction, extractReceipt, CATEGORIES, normalizePurchaseDate, repairPurchaseYear } = await import('../../functions/lib/_extraction.mjs');
 
 /* ── Response helpers ── */
 
@@ -311,5 +311,69 @@ describe('repairPurchaseYear — Amex BCP statement year guard', () => {
     const out = sanitizeExtraction({ purchase_date: '2019-02-10', total_amount: 12 });
     expect(out.purchase_date.startsWith('2019')).toBe(false);
     expect(out.purchase_date.slice(5)).toBe('02-10');
+  });
+});
+
+/* ── Date normalization: the gap that let a stale year reach the sheet ── */
+
+describe('normalizePurchaseDate', () => {
+  it('passes strict ISO through untouched', () => {
+    expect(normalizePurchaseDate('2026-07-15')).toBe('2026-07-15');
+  });
+
+  it('pads sloppy ISO', () => {
+    expect(normalizePurchaseDate('2024-7-5')).toBe('2024-07-05');
+  });
+
+  it('reads US slash and dash order', () => {
+    expect(normalizePurchaseDate('07/15/2024')).toBe('2024-07-15');
+    expect(normalizePurchaseDate('7/5/2024')).toBe('2024-07-05');
+    expect(normalizePurchaseDate('07-15-2024')).toBe('2024-07-15');
+  });
+
+  it('expands a two-digit year', () => {
+    expect(normalizePurchaseDate('7/5/24')).toBe('2024-07-05');
+  });
+
+  it('keeps the date half of a timestamp', () => {
+    expect(normalizePurchaseDate('2024-07-15T10:30:00Z')).toBe('2024-07-15');
+  });
+
+  it('reads long form', () => {
+    expect(normalizePurchaseDate('July 15, 2024')).toBe('2024-07-15');
+  });
+
+  it('returns unreadable input untouched rather than guessing', () => {
+    // A wrong date silently written to a budget is worse than one that fails loudly.
+    expect(normalizePurchaseDate('not a date')).toBe('not a date');
+    expect(normalizePurchaseDate('13/45/2024')).toBe('13/45/2024');
+    expect(normalizePurchaseDate('')).toBe('');
+    expect(normalizePurchaseDate(null)).toBeNull();
+  });
+});
+
+describe('normalization + year repair together', () => {
+  const today = '2026-07-29';
+
+  it('repairs a stale year in a NON-ISO date — the case that reached production', () => {
+    // A real receipt on 2026-07-29 produced "July 2024" and failed with SHT-002:
+    // repairPurchaseYear only matched strict ISO, so this bypassed it entirely.
+    expect(repairPurchaseYear(normalizePurchaseDate('07/15/2024'), today)).toBe('2026-07-15');
+  });
+
+  it('repairs every format the model realistically emits', () => {
+    for (const raw of ['2024-07-15', '07/15/2024', '7/15/24', '2024-7-15', 'July 15, 2024']) {
+      expect(repairPurchaseYear(normalizePurchaseDate(raw), today), `failed on ${raw}`)
+        .toBe('2026-07-15');
+    }
+  });
+
+  it('leaves a plausible current-year date alone', () => {
+    expect(repairPurchaseYear(normalizePurchaseDate('07/15/2026'), today)).toBe('2026-07-15');
+  });
+
+  it('sanitizeExtraction applies both', () => {
+    const out = sanitizeExtraction({ purchase_date: '07/15/2024', total_amount: 10 });
+    expect(out.purchase_date).toBe('2026-07-15');
   });
 });
