@@ -1,7 +1,9 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Users, RefreshCw, Inbox } from 'lucide-react';
+import { Users, RefreshCw, Inbox, CreditCard, ChevronDown, ChevronRight } from 'lucide-react';
 import { fetchHistory, ensurePersonSplitSheet } from './sheetsApi.js';
 import { ownerForCard, ownerLabel, DEFAULT_CARD_OWNERS, DEFAULT_PEOPLE } from './cardOwners.js';
+import { getEffectiveSheetMap } from './sheetHelpers.js';
+import { collectMethodlessRows, saveAssignments, buildCardOptions } from './backfillPaymentMethod.js';
 
 const SPEND_ACTIONS = new Set(['Added', 'Receipt Scan', 'Import', 'Updated', 'WhatsApp Receipt', 'Telegram Receipt']);
 
@@ -38,6 +40,158 @@ function PersonColumn({ name, accent, data, grandMax, currencySymbol }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Backfill panel: transactions with no payment method, and a card picker for
+ * each. These rows are invisible in the split (owner comes from the card), so
+ * until they're assigned both people's totals are understated.
+ *
+ * Scanning costs one request per category tab, so it only runs when the panel
+ * is opened — not on every Split tab load.
+ */
+function BackfillPanel({ sheetId, accessToken, currencySymbol, cards, onSaved }) {
+  const [open, setOpen]         = useState(false);
+  const [rows, setRows]         = useState(null);   // null = never scanned
+  const [scanning, setScanning] = useState(false);
+  const [picks, setPicks]       = useState({});     // row.key -> card
+  const [saving, setSaving]     = useState(false);
+  const [progress, setProgress] = useState(null);
+  const [error, setError]       = useState('');
+
+  const options = useMemo(() => buildCardOptions(cards), [cards]);
+
+  const scan = async () => {
+    setScanning(true);
+    setError('');
+    try {
+      const categories = Object.keys(getEffectiveSheetMap());
+      setRows(await collectMethodlessRows(categories, accessToken, sheetId));
+    } catch (e) {
+      setError(e?.message || 'Could not scan for transactions.');
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && rows === null) scan();
+  };
+
+  const assignments = useMemo(
+    () => (rows || []).filter(r => picks[r.key]).map(r => ({ row: r, card: picks[r.key] })),
+    [rows, picks]
+  );
+
+  const save = async () => {
+    if (assignments.length === 0) return;
+    setSaving(true);
+    setError('');
+    try {
+      const res = await saveAssignments(assignments, accessToken, sheetId, (done, total) =>
+        setProgress({ done, total })
+      );
+      // Drop only what actually saved, so failures stay on screen to retry.
+      const savedKeys = new Set(res.saved);
+      setRows(prev => (prev || []).filter(r => !savedKeys.has(r.key)));
+      setPicks(prev => {
+        const next = { ...prev };
+        for (const k of savedKeys) delete next[k];
+        return next;
+      });
+      if (res.failed.length > 0) {
+        setError(`${res.failed.length} row${res.failed.length !== 1 ? 's' : ''} could not be saved — still listed above.`);
+      }
+      if (res.saved.length > 0) onSaved?.();
+    } finally {
+      setSaving(false);
+      setProgress(null);
+    }
+  };
+
+  const count = rows?.length ?? 0;
+  // Hide entirely once a scan has found nothing — no empty panel to dismiss.
+  if (rows !== null && count === 0 && !error) return null;
+
+  return (
+    <div className="rounded-3xl overflow-hidden"
+      style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+      <button onClick={toggle}
+        className="w-full flex items-center gap-3 px-5 py-4 transition-colors hover:bg-[var(--sur-5)]">
+        {open ? <ChevronDown className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
+              : <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />}
+        <CreditCard className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-warning)' }} />
+        <span className="text-xs font-black flex-1 text-left" style={{ color: 'var(--color-text)' }}>
+          Needs a payment method{rows !== null ? ` (${count})` : ''}
+        </span>
+        {scanning && <RefreshCw className="w-3.5 h-3.5 animate-spin" style={{ color: 'var(--color-text-muted)' }} />}
+      </button>
+
+      {open && (
+        <div className="px-5 pb-5 space-y-3">
+          <p className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
+            These aren't counted in either column — the split is derived from the card. Assign one to include them.
+          </p>
+
+          {scanning && rows === null && (
+            <div className="space-y-2">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className="h-10 rounded-xl animate-pulse" style={{ background: 'var(--sur-6)' }} />
+              ))}
+            </div>
+          )}
+
+          {/* Stacks below sm: at 375px a single row squeezes the description to
+              an ellipsis and wraps the date across three lines. */}
+          {(rows || []).map(row => (
+            <div key={row.key} className="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3">
+              <div className="min-w-0 sm:flex-1">
+                <p className="text-xs font-bold truncate" style={{ color: 'var(--color-text)' }}>
+                  {row.description || '(no description)'}
+                </p>
+                <p className="text-[10px] truncate" style={{ color: 'var(--color-text-muted)' }}>
+                  {row.category}{row.date ? ` · ${row.date}` : ''}
+                </p>
+              </div>
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="text-xs font-black tabular-nums flex-1 sm:flex-none" style={{ color: 'var(--color-text)' }}>
+                  {money(row.amount, currencySymbol)}
+                </span>
+                <select
+                  value={picks[row.key] || ''}
+                  onChange={e => setPicks(p => ({ ...p, [row.key]: e.target.value }))}
+                  className="text-xs font-semibold rounded-xl px-2 py-1.5 min-w-0 max-w-[11rem] truncate"
+                  style={{ background: 'var(--sur-8)', color: 'var(--color-text)', border: '1px solid var(--sur-12)' }}
+                >
+                  <option value="">Choose card…</option>
+                  {options.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+            </div>
+          ))}
+
+          {error && (
+            <p className="text-[11px] font-semibold" style={{ color: 'var(--color-danger)' }}>{error}</p>
+          )}
+
+          {count > 0 && (
+            <button
+              onClick={save}
+              disabled={saving || assignments.length === 0}
+              className="w-full py-2.5 rounded-xl text-xs font-black transition-colors disabled:opacity-40"
+              style={{ background: 'var(--color-accent)', color: 'white' }}
+            >
+              {saving
+                ? `Saving${progress ? ` ${progress.done}/${progress.total}` : ''}…`
+                : `Save ${assignments.length || ''} assignment${assignments.length === 1 ? '' : 's'}`.replace('  ', ' ')}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -117,6 +271,19 @@ export function SplitTab({ sheetId, accessToken, currencySymbol = '$', settings 
             <div key={i} className="h-24 rounded-2xl animate-pulse" style={{ background: 'var(--sur-6)' }} />
           ))}
         </div>
+      )}
+
+      {/* Transactions the split can't attribute yet. Above everything else,
+          including the empty state — if nothing has a card then this panel is
+          the reason the split looks empty, and the fix for it. */}
+      {!loading && (
+        <BackfillPanel
+          sheetId={sheetId}
+          accessToken={accessToken}
+          currencySymbol={currencySymbol}
+          cards={settings?.cards || []}
+          onSaved={() => load(true)}
+        />
       )}
 
       {/* Empty state */}
