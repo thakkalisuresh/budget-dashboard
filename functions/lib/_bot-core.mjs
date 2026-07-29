@@ -281,7 +281,7 @@ export async function handleTextReply(ctx, text) {
       sheetId = await getCurrentMonthSheetId(monthName);
     } catch (e) {
       await reportError('SHT-002', e, { flow: 'receipt-confirm' });
-      return ctx.send(`Could not find sheet for ${monthName}. Please log this receipt via the dashboard.`);
+      return ctx.send(`Could not find sheet for ${monthName}. Please log this receipt via the dashboard. [SHT-002]`);
     }
 
     let result;
@@ -1008,7 +1008,7 @@ async function handleCategoryPick(ctx, text) {
     await reportError('BOT-007', e, { userId, vendor: pending?.vendor });
     // Leave the pending blob in place so the charge isn't lost — the user can
     // tap again once whatever broke is back.
-    return ctx.send(`Couldn't log that: ${e.message}. Tap a category again to retry.`);
+    return ctx.send(`Couldn't log that: ${e.message}. Tap a category again to retry. [BOT-007]`);
   }
 }
 
@@ -1058,7 +1058,7 @@ async function handleAuditFix(ctx, text) {
     });
   } catch (e) {
     await reportError('SHT-009', e, { flow: 'auditfix', uuid });
-    return ctx.send(`Couldn't move that: ${e.message}. Nothing was changed.`);
+    return ctx.send(`Couldn't move that: ${e.message}. Nothing was changed. [SHT-009]`);
   }
 
   try {
@@ -1120,7 +1120,7 @@ async function finalizeSplit(ctx, key, state) {
     sheetId = await getCurrentMonthSheetId(monthName);
   } catch (e) {
     await reportError('SHT-002', e, { flow: 'split' });
-    return ctx.send(`Could not find sheet for ${monthName}. Log this via the dashboard.`);
+    return ctx.send(`Could not find sheet for ${monthName}. Log this via the dashboard. [SHT-002]`);
   }
 
   // Reconcile the item sum against the actual charged total (tax / fees /
@@ -1206,7 +1206,7 @@ async function handleSplitSkip(ctx, key) {
   } catch (e) {
     await store.delete(key);
     await reportError('SHT-002', e, { flow: 'split-skip' });
-    return ctx.send(`Could not find sheet for ${monthName}. Log this via the dashboard.`);
+    return ctx.send(`Could not find sheet for ${monthName}. Log this via the dashboard. [SHT-002]`);
   }
 
   const category = pending.category || 'Misc';
@@ -1830,7 +1830,7 @@ async function handleNewMonthWizard(ctx, text, wizard) {
     } catch (e) {
       await reportError('SHT-002', e, { flow: 'create-month' });
       await store.delete(key);
-      return ctx.send(`Failed to create ${wizard.monthName}. Try again or use the dashboard.`);
+      return ctx.send(`Failed to create ${wizard.monthName}. Try again or use the dashboard. [SHT-002]`);
     }
 
     wizard.createdSheetId = result.sheetId;

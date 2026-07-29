@@ -63,12 +63,22 @@ describe('codes reach the user, not just the logs', () => {
     }
   });
 
-  it('no bot failure message is left without a code', () => {
+  it('no bot failure message is left without a code — quoted OR template literal', () => {
+    // The original version of this test only matched single-quoted strings, so
+    // every `ctx.send(\`...\`)` slipped through uncoded. That is why a real
+    // SHT-002 reached the user on 2026-07-29 with no code attached. Both
+    // quoting styles are checked now.
     const src = read('functions/lib/_bot-core.mjs');
-    const failures = [...src.matchAll(/ctx\.send\((['"])((?:Failed|Could not|Cannot)[^'"]*)\1/g)];
-    expect(failures.length, 'expected to find bot failure messages').toBeGreaterThan(5);
-    for (const m of failures) {
-      expect(m[2], `uncoded bot message: "${m[2]}"`).toMatch(/\[[A-Z]{2,4}-\d{3}\]/);
+    const quoted = [...src.matchAll(/ctx\.send\((['"])((?:Failed|Could not|Cannot|Couldn't)[^'"]*)\1/g)]
+      .map(m => m[2]);
+    const template = [...src.matchAll(/ctx\.send\(`((?:Failed|Could not|Cannot|Couldn't)[^`]*)`/g)]
+      .map(m => m[1]);
+    const all = [...quoted, ...template];
+
+    expect(quoted.length, 'expected quoted failure messages').toBeGreaterThan(5);
+    expect(template.length, 'expected template-literal failure messages').toBeGreaterThan(0);
+    for (const msg of all) {
+      expect(msg, `uncoded bot message: "${msg}"`).toMatch(/\[[A-Z]{2,4}-\d{3}\]/);
     }
   });
 });
