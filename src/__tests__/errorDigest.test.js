@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { addMock, sendMock, getMock, batchMock, commitMock, deleteMock, updateMock } = vi.hoisted(() => ({
+const { addMock, sendMock, getMock, batchMock, commitMock, deleteMock, updateMock, alertStore } = vi.hoisted(() => ({
+  alertStore: new Map(),
   addMock: vi.fn(),
   sendMock: vi.fn(async () => ({ ok: true })),
   getMock: vi.fn(),
@@ -13,7 +14,17 @@ const { addMock, sendMock, getMock, batchMock, commitMock, deleteMock, updateMoc
 // Minimal Firestore stand-in: query chain + batch.
 vi.mock('../../functions/lib/firestore.mjs', () => ({
   getDb: () => ({
-    collection: () => {
+    collection: (name) => {
+      // error_alerts is a real keyed store so the cooldown can be exercised;
+      // error_log keeps the query-chain stub the digest tests rely on.
+      if (name === 'error_alerts') {
+        return {
+          doc: (id) => ({
+            get: async () => ({ exists: alertStore.has(id), data: () => alertStore.get(id) }),
+            set: async (v) => { alertStore.set(id, v); },
+          }),
+        };
+      }
       const col = {
         add: addMock,
         doc: (id) => ({ id }),
@@ -175,5 +186,87 @@ describe('runErrorDigest', () => {
     const out = await runErrorDigest({ email: 'me@example.com' });
     expect(out).toMatchObject({ sent: false, reason: 'read_failed' });
     err.mockRestore();
+  });
+});
+
+/* ── Instant alerts for fatal errors ── */
+
+describe('reportError — instant fatal alert', () => {
+  beforeEach(() => {
+    vi.stubEnv('ALLOWED_EMAILS', 'me@example.com');
+    alertStore.clear();
+  });
+
+  it('alerts immediately on a fatal error', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await reportError('WAL-002', new Error('append blew up'), { vendor: 'Costco' });
+
+    expect(sendMock).toHaveBeenCalledOnce();
+    const text = sendMock.mock.calls[0][1];
+    expect(text).toContain('WAL-002 — Wallet transaction write failed');
+    expect(text).toContain('append blew up');
+    expect(text).toContain('vendor=Costco');
+    // The catalogue's fix text travels with the alert — the point is to be
+    // actionable at 2am without looking anything up.
+    expect(text).toContain('Add it manually');
+    err.mockRestore();
+  });
+
+  it('does NOT alert on degraded or config severities', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await reportError('DRV-002', new Error('drive down'));   // degraded
+    await reportError('CFG-005', new Error('no key'));       // config
+    expect(sendMock).not.toHaveBeenCalled();
+    err.mockRestore();
+  });
+
+  it('sends once per distinct failure per hour, not once per occurrence', async () => {
+    // The storm case: Sheets rate-limits and the same failure fires repeatedly.
+    // Forty messages would get the bot muted, and then the alert that matters
+    // is muted too.
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (let i = 0; i < 5; i++) {
+      await reportError('SHT-009', new Error(`Sheets API (500): row ${i}`));
+    }
+    expect(sendMock).toHaveBeenCalledOnce();
+    err.mockRestore();
+  });
+
+  it('still alerts for a DIFFERENT fatal failure during the cooldown', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await reportError('SHT-009', new Error('Sheets API (500): row 1'));
+    await reportError('WAL-002', new Error('totally different failure'));
+    expect(sendMock).toHaveBeenCalledTimes(2);
+    err.mockRestore();
+  });
+
+  it('alerts again once the cooldown has expired', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await reportError('SHT-009', new Error('Sheets API (500): row 1'));
+    expect(sendMock).toHaveBeenCalledOnce();
+
+    // Age the stored alert past the window.
+    for (const [k, v] of alertStore) {
+      alertStore.set(k, { ...v, lastAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() });
+    }
+    await reportError('SHT-009', new Error('Sheets API (500): row 2'));
+    expect(sendMock).toHaveBeenCalledTimes(2);
+    err.mockRestore();
+  });
+
+  it('stays silent when there is no Telegram mapping', async () => {
+    vi.stubEnv('ALLOWED_EMAILS', 'stranger@example.com');
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await reportError('WAL-002', new Error('boom'));
+    expect(sendMock).not.toHaveBeenCalled();
+    err.mockRestore();
+  });
+
+  it('never throws when Telegram is down — the digest is the backstop', async () => {
+    sendMock.mockRejectedValue(new Error('telegram unreachable'));
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(reportError('WAL-002', new Error('boom'))).resolves.toBeUndefined();
+    err.mockRestore(); warn.mockRestore();
   });
 });

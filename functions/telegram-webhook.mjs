@@ -24,7 +24,7 @@ import {
   handleAttachMedia,
 } from './lib/_bot-core.mjs';
 import {
-  TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_ALLOWED_USERS,
+  TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_ALLOWED_USERS, TELEGRAM_EMAIL_MAP,
   GEMINI_API_KEY, ANTHROPIC_API_KEY, GROQ_API_KEY, SHEETS_DRIVE_SECRETS,
 } from './lib/secrets.mjs';
 
@@ -121,7 +121,10 @@ export const telegramWebhook = onRequest(
   {
     region: 'us-central1',
     secrets: [
-      TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_ALLOWED_USERS,
+      // TELEGRAM_EMAIL_MAP is needed by reportError's instant fatal alert,
+      // which resolves the chat from ALLOWED_EMAILS. Without it a fatal error
+      // on the bot path records but cannot notify.
+      TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_ALLOWED_USERS, TELEGRAM_EMAIL_MAP,
       GEMINI_API_KEY, ANTHROPIC_API_KEY, GROQ_API_KEY, ...SHEETS_DRIVE_SECRETS,
     ],
     timeoutSeconds: 120,

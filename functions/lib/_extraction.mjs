@@ -106,6 +106,61 @@ Respond with ONLY the JSON object. No other text.`;
  * Conservative by design: a plausible year is never rewritten, and an
  * unparseable value is left alone for the caller to reject.
  */
+/**
+ * Coerce whatever the model returned into YYYY-MM-DD.
+ *
+ * The prompt asks for YYYY-MM-DD, but models drift — and every guard
+ * downstream assumed compliance. repairPurchaseYear matched strict ISO only,
+ * so a receipt dated "07/15/2024" sailed past the stale-year check with its
+ * wrong year intact, and then got written to the sheet in that shape too.
+ * That is how a real receipt ended up routed at "July 2024" and failed with
+ * SHT-002 (2026-07-29).
+ *
+ * Day/month order is read as US convention (MM/DD), matching the receipts this
+ * app actually sees — dollars, US cards. A date that cannot be read confidently
+ * is returned untouched rather than guessed at: a wrong date silently written
+ * to a budget is worse than one that fails loudly.
+ */
+export function normalizePurchaseDate(value) {
+  if (typeof value !== 'string') return value;
+  const s = value.trim();
+  if (!s) return value;
+
+  const pad = (n) => String(n).padStart(2, '0');
+  const iso = (y, m, d) => `${y}-${pad(m)}-${pad(d)}`;
+
+  // Already strict ISO — the common, compliant case.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  // Sloppy ISO: 2024-7-5
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+  if (m) return iso(m[1], m[2], m[3]);
+
+  // ISO timestamp: keep the date half.
+  m = /^(\d{4}-\d{2}-\d{2})[T ]/.exec(s);
+  if (m) return m[1];
+
+  // US slash/dash: 7/15/2024, 07-15-24
+  m = /^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2}|\d{4})$/.exec(s);
+  if (m) {
+    const [, mo, d, rawY] = m;
+    const y = rawY.length === 2 ? String(2000 + Number(rawY)) : rawY;
+    if (Number(mo) >= 1 && Number(mo) <= 12 && Number(d) >= 1 && Number(d) <= 31) {
+      return iso(y, mo, d);
+    }
+    return value; // out of range — do not guess
+  }
+
+  // Long form: "July 15, 2024" / "15 July 2024"
+  const parsed = Date.parse(s);
+  if (!Number.isNaN(parsed)) {
+    const dt = new Date(parsed);
+    return iso(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate());
+  }
+
+  return value;
+}
+
 export function repairPurchaseYear(dateStr, today = todayISO()) {
   if (typeof dateStr !== 'string') return dateStr;
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr.trim());
@@ -141,7 +196,9 @@ export function sanitizeExtraction(data) {
   const result = { ...data };
 
   if (typeof result.purchase_date === 'string') {
-    result.purchase_date = repairPurchaseYear(result.purchase_date);
+    // Normalize the shape BEFORE repairing the year — the year guard only
+    // recognises YYYY-MM-DD, so anything else silently bypassed it.
+    result.purchase_date = repairPurchaseYear(normalizePurchaseDate(result.purchase_date));
   }
 
   if (typeof result.store_name === 'string') {
