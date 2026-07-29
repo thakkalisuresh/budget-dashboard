@@ -17,10 +17,15 @@ import {
   createMonth,
 } from './_sheets.mjs';
 import { convertToUSD } from './_currency.mjs';
+import { reportError } from './_error-log.mjs';
+import { findErrorCodeInText, explainErrorCode } from './_error-codes.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
 import { buildRewardsLine, getEffectiveRates } from './_card-rewards.mjs';
+import { resolveCardName } from './_card-resolver.mjs';
+import { resolveCategory } from './_categorize.mjs';
+import { findDuplicates } from './_duplicate-match.mjs';
 import {
-  kbYesCancel, kbYesSkip, kbConfirmDelete, kbSplitCategory,
+  kbYesCancel, kbYesSkip, kbConfirmDelete, kbSplitCategory, kbCategoryConfirm, kbLogAnywayCancel,
   kbConfirmReceipt, kbEditMenu, kbCategoryPicker, kbCardPicker,
   kbLoggedActions, kbEditLoggedMenu,
 } from './_telegram.mjs';
@@ -31,21 +36,9 @@ const DAILY_LIMIT    = 50;
 const UNDO_WINDOW_MS = 10 * 60 * 1000;
 const DASHBOARD_URL  = process.env.SITE_URL || 'https://fundient-dashboard.web.app';
 
-/* ── Card resolution (server-side mirror of src/smartRules + resolveCardName) ── */
-
-const normCard = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-
-function resolveCardName(raw, cards = []) {
-  if (!raw || !cards.length) return '';
-  const r = normCard(raw);
-  if (!r) return '';
-  for (const c of cards) if (normCard(c) === r) return c;
-  for (const c of cards) {
-    const nc = normCard(c);
-    if (nc.length >= 5 && r.length >= 5 && (nc.includes(r) || r.includes(nc))) return c;
-  }
-  return '';
-}
+/* ── Card resolution (server-side mirror of src/smartRules + resolveCardName) ──
+   resolveCardName now lives in _card-resolver.mjs so wallet-webhook.mjs can
+   share it without importing this module. */
 
 function applyCardRules(vendor, category, rules = []) {
   if (!vendor || !rules.length) return '';
@@ -125,6 +118,7 @@ export async function handleTextReply(ctx, text) {
     for (const prefix of [
       `confirm:${userId}:`, `transfer_pending:${userId}:`,
       `split_pending:${userId}:`, `split_confirm:${userId}:`,
+      `category_pending:${userId}:`,
     ]) {
       const { blobs } = await store.list({ prefix });
       for (const b of (blobs || [])) {
@@ -136,9 +130,30 @@ export async function handleTextReply(ctx, text) {
     return ctx.send(cancelledAny ? 'Cancelled.' : 'Nothing to cancel.');
   }
 
+  // ── Error code lookup ──
+  // Placed before the query/agent router so a bare code is answered from the
+  // catalogue instead of being sent to an LLM that would guess at it. Codes
+  // are distinctive enough (DOMAIN-NNN) to detect anywhere in a message, so
+  // pasting one straight from the app — or asking "what does SHT-009 mean" —
+  // both work without a command to remember.
+  const codeLookup = findErrorCodeInText(text);
+  if (codeLookup) {
+    return ctx.send(explainErrorCode(codeLookup));
+  }
+
   // ── SPLITCAT callback (user picked a category for one split line item) ──
   if (text.startsWith('SPLITCAT:')) {
     return await handleSplitCategoryPick(ctx, text);
+  }
+
+  // ── CATFIX callback (user picked a category for an unconfident wallet charge) ──
+  if (text.startsWith('CATFIX:')) {
+    return await handleCategoryPick(ctx, text);
+  }
+
+  // ── AUDITFIX callback (user accepted a weekly-audit recategorization) ──
+  if (text.startsWith('AUDITFIX:')) {
+    return await handleAuditFix(ctx, text);
   }
 
   // ── NEW MONTH wizard / DELETE pending (R5: probe the two independent
@@ -194,9 +209,9 @@ export async function handleTextReply(ctx, text) {
       try {
         await writeSalaryAmount(salaryPending.sheetId, salaryPending.amount);
       } catch (e) {
-        console.error('bot-core: salary write failed', e.message);
+        await reportError('SHT-006', e, { flow: 'salary' });
         await store.delete(`salary_pending:${userId}`);
-        return ctx.send('Failed to update salary. Try again or use the dashboard.');
+        return ctx.send('Failed to update salary. Try again or use the dashboard. [SHT-006]');
       }
       await store.delete(`salary_pending:${userId}`);
       console.log(`bot-core: salary updated to ${salaryPending.amount} by ${userId}`);
@@ -209,9 +224,9 @@ export async function handleTextReply(ctx, text) {
       try {
         await writeBudgetAmount(budgetPending.sheetId, budgetPending.category, budgetPending.amount);
       } catch (e) {
-        console.error('bot-core: budget write failed', e.message);
+        await reportError('SHT-001', e, { flow: 'budget' });
         await store.delete(`budget_pending:${userId}`);
-        return ctx.send('Failed to update budget. Try again or use the dashboard.');
+        return ctx.send('Failed to update budget. Try again or use the dashboard. [SHT-001]');
       }
       await store.delete(`budget_pending:${userId}`);
       console.log(`bot-core: ${budgetPending.category} budget updated to ${budgetPending.amount} by ${userId}`);
@@ -265,7 +280,7 @@ export async function handleTextReply(ctx, text) {
     try {
       sheetId = await getCurrentMonthSheetId(monthName);
     } catch (e) {
-      console.error('bot-core: could not find month sheet', e.message);
+      await reportError('SHT-002', e, { flow: 'receipt-confirm' });
       return ctx.send(`Could not find sheet for ${monthName}. Please log this receipt via the dashboard.`);
     }
 
@@ -273,8 +288,8 @@ export async function handleTextReply(ctx, text) {
     try {
       result = await appendExpense({ category, vendor, amount, txDate, sheetId, monthName, paymentMethod, channel: ctx.channel, bookingMethod });
     } catch (e) {
-      console.error('bot-core: Sheets append failed', e.message);
-      return ctx.send('Failed to log receipt to spreadsheet. Please try via the dashboard.');
+      await reportError('SHT-009', e, { flow: 'receipt-confirm' });
+      return ctx.send('Failed to log receipt to spreadsheet. Please try via the dashboard. [SHT-009]');
     }
 
     if (driveFileId) {
@@ -365,7 +380,7 @@ export async function handleTextReply(ctx, text) {
           await deleteExpenseByUUID({ category: e.category, uuid: e.uuid, sheetId: e.sheetId || lastlog.sheetId });
         } catch (err) {
           failed++;
-          console.error('bot-core: UNDO split delete failed', err.message);
+          await reportError('BOT-002', err, { flow: 'undo-split' });
         }
       }
       await store.delete(`lastlog:${userId}`);
@@ -379,8 +394,8 @@ export async function handleTextReply(ctx, text) {
     try {
       await deleteExpenseByUUID({ category: lastlog.category, uuid: lastlog.uuid, sheetId: lastlog.sheetId });
     } catch (e) {
-      console.error('bot-core: UNDO delete failed', e.message);
-      return ctx.send('Could not undo. The entry may have been modified. Check the dashboard.');
+      await reportError('BOT-002', e, { flow: 'undo' });
+      return ctx.send('Could not undo. The entry may have been modified. Check the dashboard. [BOT-002]');
     }
 
     await store.delete(`lastlog:${userId}`);
@@ -453,7 +468,7 @@ export async function handleTextReply(ctx, text) {
       const answer = await answerQuery(text);
       return ctx.send(answer);
     } catch (e) {
-      console.error('bot-core: query failed', e.message);
+      await reportError('LLM-002', e, { flow: 'query' });
       return ctx.send("Couldn't answer that query right now. Try '? help' for examples.");
     }
   }
@@ -642,13 +657,18 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
   const rateKey = `rate:${userId}:${new Date().toISOString().slice(0, 10)}`;
   const rate = await store.incrementIfBelow(rateKey, DAILY_LIMIT);
   if (!rate.allowed) {
-    return ctx.send("You've reached 50 receipts today. Try again tomorrow.");
+    return ctx.send("You've reached 50 receipts today. Try again tomorrow. [BOT-006]");
   }
 
   const baseReceiptId = crypto.randomUUID();
   const now = new Date();
 
+  // Timing breakdown for the receipt path, so the remaining optimizations
+  // (retry counts, image downscaling) can be decided from real numbers instead
+  // of guesses. Grep the function logs for `bot-core: timing`.
+  const t0 = Date.now();
   const extraction = await extractReceiptBatch(base64, mediaType);
+  const tExtract = Date.now() - t0;
 
   if (!extraction.ok || extraction.transactions.length === 0) {
     await store.setJSON(`pending:${baseReceiptId}`, {
@@ -669,6 +689,26 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
       ? new Date(data.purchase_date).toLocaleString('en-US', { month: 'long' })
       : now.toLocaleString('en-US', { month: 'long' });
 
+    // Drive is the one consistently expensive call left on this path —
+    // maybeConvertCurrency short-circuits for USD and getUserSettings is cached
+    // (R3). Start the upload now and let it run underneath the card resolution
+    // and prompt building instead of blocking the user on it. Awaited later,
+    // never abandoned. Rejection is folded into the promise so an upload
+    // failure can't surface as an unhandled rejection while it's unowned.
+    const drivePromise = uploadReceiptImage({
+      year, month, category: null,
+      fileName: `receipt-${baseReceiptId.slice(0, 8)}.${mediaType === 'application/pdf' ? 'pdf' : 'jpg'}`,
+      mimeType: mediaType, base64,
+    }).catch(async e => {
+      await reportError('DRV-002', e, { userId, step: 'receipt' });
+      return null;
+    });
+
+    // Started here so the two sheet reads it needs overlap the Drive upload,
+    // the settings fetch and the Groq categorization rather than stacking on
+    // top of them — this path's perceived latency was deliberately tuned.
+    const dupPromise = findExistingDuplicates(`${month} ${year}`, data);
+
     const conversionInfo = await maybeConvertCurrency(data);
 
     let settings = {};
@@ -679,16 +719,17 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
       console.warn('bot-core: card resolution failed (non-fatal)', e.message);
     }
 
-    let driveResult = null;
-    try {
-      driveResult = await uploadReceiptImage({
-        year, month, category: null,
-        fileName: `receipt-${baseReceiptId.slice(0, 8)}.${mediaType === 'application/pdf' ? 'pdf' : 'jpg'}`,
-        mimeType: mediaType, base64,
-      });
-    } catch (e) {
-      console.error('bot-core: Drive upload failed', e.message);
-    }
+    // Correct the extractor's category before the user sees it. This path
+    // already ends in a YES/CANCEL confirm, so an unconfident answer needs no
+    // extra round-trip — it just changes what the prompt proposes.
+    data.reward_category = (await resolveCategory({
+      vendor: data.store_name,
+      amount: data.total_amount,
+      extractedCategory: data.reward_category,
+      categories: [...CATEGORIES, ...(settings.customCategories || [])],
+      settings,
+      enabled: settings.llmCategorize !== false,
+    })).category;
 
     // ── Split flow: itemized receipt from a configured split vendor (Costco,
     // Amazon…) OR a wallet-triggered split awaiting its receipt. Splits the
@@ -698,58 +739,84 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
     const isSplitVendor = matchesSplitVendor(data.store_name, settings.splitReceiptVendors || []);
     if (!data.is_transfer && Array.isArray(data.items) && data.items.length > 0 && (isSplitVendor || hasSplitPending)) {
       const pendingKey = hasSplitPending ? splitPendingBlobs[0].key : null;
+      // The split flow threads driveResult through its own per-category blobs,
+      // so it needs the real value rather than a deferred patch.
+      const driveResult = await drivePromise;
       return await handleSplitFlow(ctx, {
         data, year, month, conversionInfo, baseReceiptId, driveResult, pendingKey,
       });
     }
 
+    // Both remaining paths store the blob with null Drive ids, send the prompt,
+    // then patch the ids in. The user sees the prompt a full Drive round-trip
+    // sooner; the ids land before the handler returns.
     if (data.is_transfer) {
-      await store.setJSON(`transfer_pending:${userId}:${baseReceiptId}`, {
+      const transferKey = `transfer_pending:${userId}:${baseReceiptId}`;
+      await store.setJSON(transferKey, {
         id: baseReceiptId, phone: userId, mediaType, base64,
         extraction: data, conversionInfo,
-        driveFileId: driveResult?.fileId || null,
-        driveFolderId: driveResult?.folderId || null,
-        driveShareLink: driveResult?.shareLink || null,
+        driveFileId: null, driveFolderId: null, driveShareLink: null,
         year, month, receivedAt: now.toISOString(),
       });
-      return ctx.send(buildTransferPrompt(data, conversionInfo));
+      const sent = await ctx.send(buildTransferPrompt(data, conversionInfo));
+      await attachDriveResult(store, transferKey, drivePromise);
+      return sent;
     }
 
-    await store.setJSON(`confirm:${userId}:${baseReceiptId}`, {
+    const confirmKey = `confirm:${userId}:${baseReceiptId}`;
+    await store.setJSON(confirmKey, {
       id: baseReceiptId, phone: userId, mediaType, base64,
       extraction: data, conversionInfo,
-      driveFileId: driveResult?.fileId || null,
-      driveFolderId: driveResult?.folderId || null,
-      driveShareLink: driveResult?.shareLink || null,
+      driveFileId: null, driveFolderId: null, driveShareLink: null,
       year, month, receivedAt: now.toISOString(),
       status: 'awaiting_confirmation',
     });
 
     console.log(`bot-core: receipt ${baseReceiptId} extracted for ${userId} — ${data.store_name} $${data.total_amount}`);
-    return ctx.send(buildConfirmPrompt(data, conversionInfo), kbYesCancel());
+
+    // On a hit the prompt leads with the warning and the affirmative button
+    // changes from "YES" to "Log anyway", so confirming a duplicate is a
+    // deliberate act rather than the same reflex tap. Same callback_data, so
+    // the confirm handler is untouched.
+    const dups = await dupPromise;
+    if (dups.length > 0) {
+      console.log(`bot-core: ${dups.length} possible duplicate(s) for ${data.store_name} $${data.total_amount}`);
+    }
+    const promptText = dups.length > 0
+      ? `${buildDuplicateWarning(dups)}\n\n${buildConfirmPrompt(data, conversionInfo)}`
+      : buildConfirmPrompt(data, conversionInfo);
+    const sent = await ctx.send(promptText, dups.length > 0 ? kbLogAnywayCancel() : kbYesCancel());
+    // Perceived latency ends at the send; Drive now lands after it.
+    console.log(`bot-core: timing ${baseReceiptId} extract=${tExtract}ms toPrompt=${Date.now() - t0}ms`);
+    await attachDriveResult(store, confirmKey, drivePromise);
+    console.log(`bot-core: timing ${baseReceiptId} total=${Date.now() - t0}ms (drive after prompt)`);
+    return sent;
   }
 
   // Multiple transactions — upload image once, queue all items as confirm blobs.
   const batchTotal = transactions.length;
 
-  let driveResult = null;
-  try {
-    const first = transactions[0];
-    const firstYear  = first.purchase_date ? new Date(first.purchase_date).getFullYear() : now.getFullYear();
-    const firstMonth = first.purchase_date
-      ? new Date(first.purchase_date).toLocaleString('en-US', { month: 'long' })
-      : now.toLocaleString('en-US', { month: 'long' });
-    driveResult = await uploadReceiptImage({
+  // The batch loop threads driveResult into every per-item blob, so deferring
+  // the upload here would mean patching N blobs afterwards — more Firestore
+  // writes than the one round-trip it would save. Overlap it with the settings
+  // fetch instead and await both together.
+  const first = transactions[0];
+  const firstYear  = first.purchase_date ? new Date(first.purchase_date).getFullYear() : now.getFullYear();
+  const firstMonth = first.purchase_date
+    ? new Date(first.purchase_date).toLocaleString('en-US', { month: 'long' })
+    : now.toLocaleString('en-US', { month: 'long' });
+
+  const [driveResult, settings] = await Promise.all([
+    uploadReceiptImage({
       year: firstYear, month: firstMonth, category: null,
       fileName: `receipt-${baseReceiptId.slice(0, 8)}.${mediaType === 'application/pdf' ? 'pdf' : 'jpg'}`,
       mimeType: mediaType, base64,
-    });
-  } catch (e) {
-    console.error('bot-core: Drive upload failed (batch)', e.message);
-  }
-
-  let settings = {};
-  try { settings = await getUserSettings(); } catch { /* non-fatal */ }
+    }).catch(async e => {
+      await reportError('DRV-002', e, { userId, step: 'batch' });
+      return null;
+    }),
+    getUserSettings().catch(() => ({})),
+  ]);
 
   for (let i = 0; i < transactions.length; i++) {
     const data = transactions[i];
@@ -784,7 +851,7 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
   // R2: reuse the conversionInfo already computed + stored for item 0 instead of
   // re-running maybeConvertCurrency (which double-converted foreign currencies
   // and fired a redundant FX call).
-  const first = transactions[0];
+  // `first` is already in scope — hoisted above for the Drive folder path.
   const firstItemId = `${baseReceiptId}_000`;
   const firstBlob = await store.get(`confirm:${userId}:${firstItemId}`, { type: 'json' });
   const firstConvInfo = firstBlob?.conversionInfo || null;
@@ -812,8 +879,8 @@ export async function handleAttachMedia(ctx, base64, mediaType, attachState) {
       year, month, category, fileName, mimeType: mediaType, base64,
     });
   } catch (e) {
-    console.error('bot-core: ATTACH Drive upload failed', e.message);
-    return ctx.send('Failed to upload receipt to Drive. Try again.');
+    await reportError('DRV-002', e, { userId, step: 'attach' });
+    return ctx.send('Failed to upload receipt to Drive. Try again. [DRV-002]');
   }
 
   const lastlog = await store.get(`lastlog:${userId}`, { type: 'json' }).catch(() => null);
@@ -898,6 +965,117 @@ async function askNextSplitItem(ctx, key, state) {
   return ctx.send(lines.join('\n'), kbSplitCategory(state.currentIndex, CATEGORIES, item.suggestion));
 }
 
+/**
+ * Handle a `CATFIX:<pendingId>:<category>` pick.
+ *
+ * The wallet webhook parked this charge instead of writing it, because the
+ * categorizer wasn't confident. The tap supplies the category and the expense
+ * is written now — this is the only place that charge ever gets logged, so a
+ * failure here has to say so plainly rather than fail silently.
+ */
+async function handleCategoryPick(ctx, text) {
+  const { store, userId } = ctx;
+  const m = text.match(/^CATFIX:([^:]+):(.+)$/);
+  if (!m) return; // malformed — ignore
+
+  const [, pendingId, category] = m;
+  const key = `category_pending:${userId}:${pendingId}`;
+  const pending = await store.get(key, { type: 'json' }).catch(() => null);
+  if (!pending) {
+    return ctx.send('That charge is no longer waiting — it may have been logged or cancelled already.');
+  }
+
+  try {
+    const { uuid } = await appendExpense({
+      category,
+      vendor: pending.vendor,
+      amount: pending.amount,
+      txDate: pending.txDate,
+      sheetId: pending.sheetId,
+      monthName: pending.monthName,
+      paymentMethod: pending.paymentMethod || '',
+      channel: 'wallet',
+    });
+    await store.delete(key);
+    await store.setJSON(`lastlog:${userId}`, {
+      uuid, category, vendor: pending.vendor, amount: pending.amount,
+      sheetId: pending.sheetId, monthName: pending.monthName,
+      loggedAt: new Date().toISOString(),
+    });
+    console.log(`bot-core: CATFIX logged ${pending.vendor} $${pending.amount} as ${category} for ${userId}`);
+    return ctx.send(`Logged ${pending.vendor} · $${Number(pending.amount).toFixed(2)} as ${category}.`);
+  } catch (e) {
+    await reportError('BOT-007', e, { userId, vendor: pending?.vendor });
+    // Leave the pending blob in place so the charge isn't lost — the user can
+    // tap again once whatever broke is back.
+    return ctx.send(`Couldn't log that: ${e.message}. Tap a category again to retry.`);
+  }
+}
+
+/**
+ * Handle an `AUDITFIX:<uuid>:<category>` tap from the weekly digest — move an
+ * already-logged expense to a different category.
+ *
+ * Categories are separate sheet tabs, so a move is an append plus a delete.
+ * Append FIRST, on purpose: if the delete then fails the user has a visible
+ * duplicate they can remove, whereas deleting first and failing to append
+ * would silently destroy the expense. Neither half is atomic and a duplicate
+ * is the cheaper failure.
+ */
+async function handleAuditFix(ctx, text) {
+  const { store, userId } = ctx;
+  const m = text.match(/^AUDITFIX:([^:]+):(.+)$/);
+  if (!m) return;
+
+  const [, uuid, newCategory] = m;
+  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+  let sheetId;
+  try {
+    sheetId = await getCurrentMonthSheetId(monthName);
+  } catch {
+    return ctx.send(`No sheet found for ${monthName}.`);
+  }
+
+  const recent = await getRecentExpenses(sheetId, 100).catch(() => []);
+  const expense = recent.find(e => e.uuid === uuid);
+  if (!expense) {
+    return ctx.send('Could not find that expense — it may have been edited or deleted already. [SHT-004]');
+  }
+  if (expense.category === newCategory) {
+    return ctx.send(`${expense.vendor} is already in ${newCategory}.`);
+  }
+
+  try {
+    await appendExpense({
+      category: newCategory,
+      vendor: expense.vendor,
+      amount: expense.amount,
+      txDate: expense.txDate || undefined,
+      sheetId,
+      monthName,
+      channel: 'audit',
+    });
+  } catch (e) {
+    await reportError('SHT-009', e, { flow: 'auditfix', uuid });
+    return ctx.send(`Couldn't move that: ${e.message}. Nothing was changed.`);
+  }
+
+  try {
+    await deleteExpenseByUUID({ category: expense.category, uuid, sheetId });
+  } catch (e) {
+    // The new row exists; the old one didn't go. Say so rather than claim success.
+    await reportError('BOT-008', e, { flow: 'auditfix', uuid });
+    return ctx.send(
+      `Added ${expense.vendor} to ${newCategory}, but couldn't remove the old ${expense.category} entry — ` +
+      `please delete it in the dashboard so it isn't counted twice.`
+    );
+  }
+
+  console.log(`bot-core: AUDITFIX moved ${expense.vendor} ${expense.category} → ${newCategory} for ${userId}`);
+  return ctx.send(`Moved ${expense.vendor} · $${Number(expense.amount).toFixed(2)} from ${expense.category} to ${newCategory}.`);
+}
+
 /** Handle a `SPLITCAT:<idx>:<category>` pick from the inline keyboard. */
 async function handleSplitCategoryPick(ctx, text) {
   const { store, userId } = ctx;
@@ -941,7 +1119,7 @@ async function finalizeSplit(ctx, key, state) {
   try {
     sheetId = await getCurrentMonthSheetId(monthName);
   } catch (e) {
-    console.error('bot-core: split — month sheet missing', e.message);
+    await reportError('SHT-002', e, { flow: 'split' });
     return ctx.send(`Could not find sheet for ${monthName}. Log this via the dashboard.`);
   }
 
@@ -971,12 +1149,12 @@ async function finalizeSplit(ctx, key, state) {
       });
       entries.push({ category, uuid: result.uuid, sheetId, amount });
     } catch (e) {
-      console.error(`bot-core: split append failed for ${category}`, e.message);
+      await reportError('BOT-005', e, { category });
     }
   }
 
   if (entries.length === 0) {
-    return ctx.send('Failed to log the split to the spreadsheet. Try again or use the dashboard.');
+    return ctx.send('Failed to log the split to the spreadsheet. Try again or use the dashboard. [BOT-005]');
   }
 
   // Move the receipt into the largest group's Drive folder (best-effort).
@@ -1027,7 +1205,7 @@ async function handleSplitSkip(ctx, key) {
     sheetId = await getCurrentMonthSheetId(monthName);
   } catch (e) {
     await store.delete(key);
-    console.error('bot-core: split skip — month sheet missing', e.message);
+    await reportError('SHT-002', e, { flow: 'split-skip' });
     return ctx.send(`Could not find sheet for ${monthName}. Log this via the dashboard.`);
   }
 
@@ -1040,8 +1218,8 @@ async function handleSplitSkip(ctx, key) {
       paymentMethod: pending.paymentMethod || '', channel: ctx.channel,
     });
   } catch (e) {
-    console.error('bot-core: split skip append failed', e.message);
-    return ctx.send('Failed to log. Try again or use the dashboard.');
+    await reportError('SHT-009', e, { flow: 'split-skip' });
+    return ctx.send('Failed to log. Try again or use the dashboard. [SHT-009]');
   }
 
   await store.setJSON(`lastlog:${userId}`, {
@@ -1072,6 +1250,76 @@ function buildSplitSummary(state) {
 }
 
 /* ── Helpers: currency + prompts ─────────────────────────────────────────── */
+
+/**
+ * Await an in-flight Drive upload and patch its ids onto an already-stored
+ * blob.
+ *
+ * Called AFTER the confirm prompt has been sent, so the user never waits on
+ * Drive I/O they don't need yet — but still awaited before the handler
+ * returns, because Cloud Functions does not guarantee execution once the
+ * response is flushed.
+ *
+ * If the blob is gone the user confirmed or cancelled inside the upload
+ * window; there is nothing left to attach, and the expense simply carries no
+ * Drive link. That race is narrow (the upload starts well before the prompt is
+ * sent, and a reply needs a human plus a round-trip) and costs a receipt image,
+ * not an expense.
+ */
+/**
+ * Look for an already-logged transaction matching this receipt.
+ *
+ * Reads History once rather than scanning category tabs: History carries
+ * vendor/amount/date/category for every tab in a single request, so a wallet
+ * charge filed under Misc is found even though this receipt is headed for
+ * Grocery. Cross-tab is the entire point — the duplicate this exists to catch
+ * is "the wallet logged it instantly, then I photographed the receipt".
+ *
+ * Never throws. A failing duplicate check must not stop someone logging an
+ * expense; the worst case is the duplicate the review half then picks up.
+ */
+async function findExistingDuplicates(monthName, data) {
+  try {
+    const sheetId = await getCurrentMonthSheetId(monthName);
+    const recent  = await getRecentExpenses(sheetId, 100);
+    return findDuplicates(
+      recent.map(e => ({
+        vendor: e.vendor,
+        amount: e.amount,
+        // txDate is the real purchase date; timestamp is when it was logged,
+        // which is the best available stand-in for older rows without one.
+        date: e.txDate || e.timestamp,
+        category: e.category,
+      })),
+      { vendor: data.store_name, amount: data.total_amount, date: data.purchase_date }
+    );
+  } catch (e) {
+    console.warn('bot-core: duplicate check failed (non-fatal)', e.message);
+    return [];
+  }
+}
+
+/** One line per already-logged match, shown above the confirm prompt. */
+function buildDuplicateWarning(dups) {
+  const lines = [`⚠️ Possible duplicate — already logged:`];
+  for (const d of dups.slice(0, 3)) {
+    const when = d.date ? ` on ${String(d.date).slice(0, 10)}` : '';
+    lines.push(`• ${d.vendor} · $${Number(d.amount).toFixed(2)}${when} (${d.category || 'Misc'})`);
+  }
+  if (dups.length > 3) lines.push(`• …and ${dups.length - 3} more`);
+  return lines.join('\n');
+}
+
+async function attachDriveResult(store, key, drivePromise) {
+  const driveResult = await drivePromise;
+  if (!driveResult) return;
+  const blob = await store.get(key, { type: 'json' }).catch(() => null);
+  if (!blob) return;
+  blob.driveFileId    = driveResult.fileId    || null;
+  blob.driveFolderId  = driveResult.folderId  || null;
+  blob.driveShareLink = driveResult.shareLink || null;
+  await store.setJSON(key, blob);
+}
 
 async function maybeConvertCurrency(data) {
   if (!data.currency || data.currency === 'USD') return null;
@@ -1158,8 +1406,8 @@ async function handleSetSalary(ctx, amountStr) {
   try {
     await writeSalaryAmount(sheetId, amount);
   } catch (e) {
-    console.error('bot-core: salary write failed', e.message);
-    return ctx.send('Failed to set salary. Try again or use the dashboard.');
+    await reportError('SHT-006', e, { flow: 'salary' });
+    return ctx.send('Failed to set salary. Try again or use the dashboard. [SHT-006]');
   }
   console.log(`bot-core: salary set to ${amount} for ${monthName} by ${userId}`);
   return ctx.send(`✅ Salary set to $${amount} for ${monthName}.`);
@@ -1207,8 +1455,8 @@ async function handleSetBudget(ctx, categoryInput, amountStr) {
   try {
     await writeBudgetAmount(sheetId, matchedCat.name, amount);
   } catch (e) {
-    console.error('bot-core: budget write failed', e.message);
-    return ctx.send('Failed to set budget. Try again or use the dashboard.');
+    await reportError('SHT-001', e, { flow: 'budget' });
+    return ctx.send('Failed to set budget. Try again or use the dashboard. [SHT-001]');
   }
   console.log(`bot-core: ${matchedCat.name} budget set to ${amount} for ${monthName} by ${userId}`);
   return ctx.send(`✅ ${matchedCat.name} budget set to $${amount} for ${monthName}.`);
@@ -1245,8 +1493,8 @@ async function handleAddCategory(ctx, nameInput, budgetStr, type) {
     if (e.message.includes('full')) {
       return ctx.send('Totals sheet is full (max 20 categories). Remove one first.');
     }
-    console.error('bot-core: add category failed', e.message);
-    return ctx.send('Failed to add category. Try again or use the dashboard.');
+    await reportError('SHT-007', e, { flow: 'add-category' });
+    return ctx.send('Failed to add category. Try again or use the dashboard. [SHT-007]');
   }
 
   const typeLabel = { need: 'Need', want: 'Want', saving: 'Saving' }[type] || 'Want';
@@ -1299,6 +1547,24 @@ function buildGuideMessage() {
 
 /* ── DELETE handler (3-layer security) ───────────────────────────────────── */
 
+/**
+ * Short date for the DELETE list. Two rows with the same vendor AND amount are
+ * otherwise indistinguishable in the numbered list, so the date is what makes
+ * `DELETE #2` a deliberate choice instead of a guess. Prefers the real
+ * transaction date; falls back to the History log timestamp for legacy 8-col
+ * bot rows that predate the TxDate column. Returns '' when neither parses, so
+ * callers can omit the segment rather than print "Invalid Date".
+ */
+export function shortDate(expense) {
+  const raw = expense?.txDate || expense?.timestamp || '';
+  if (!raw) return '';
+  const ms = Date.parse(typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.trim())
+    ? `${raw.trim()}T00:00:00Z`
+    : raw);
+  if (Number.isNaN(ms)) return '';
+  return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
 async function handleDelete(ctx, target) {
   const { store, userId } = ctx;
   const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
@@ -1316,7 +1582,8 @@ async function handleDelete(ctx, target) {
     }
     const lines = ['Recent expenses:'];
     expenses.forEach((e, i) => {
-      lines.push(`#${i + 1} ${e.vendor} · $${Number(e.amount).toFixed(2)} (${e.category})`);
+      const when = shortDate(e);
+      lines.push(`#${i + 1} ${e.vendor} · $${Number(e.amount).toFixed(2)}${when ? ` · ${when}` : ''} (${e.category})`);
     });
     lines.push('', 'Reply DELETE #N or DELETE last.');
     return ctx.send(lines.join('\n'));
@@ -1347,7 +1614,7 @@ async function handleDelete(ctx, target) {
   }
 
   if (!expense.uuid) {
-    return ctx.send('Cannot delete this entry (no tracking ID). Use the dashboard instead.');
+    return ctx.send('Cannot delete this entry (no tracking ID). Use the dashboard instead. [BOT-004]');
   }
 
   await store.setJSON(`delete_pending:${userId}`, {
@@ -1359,8 +1626,11 @@ async function handleDelete(ctx, target) {
   });
 
   const displayAmt = Number(expense.amount).toFixed(2);
+  // Repeat the date here too: this is the last screen before a destructive,
+  // irreversible write, and it's where picking the wrong duplicate gets caught.
+  const when = shortDate(expense);
   return ctx.send(
-    `⚠️ Delete this expense?\n\n${expense.vendor} · $${displayAmt}\nCategory: ${expense.category}\n\nType CONFIRM DELETE to proceed, or CANCEL.`,
+    `⚠️ Delete this expense?\n\n${expense.vendor} · $${displayAmt}${when ? `\nDate: ${when}` : ''}\nCategory: ${expense.category}\n\nType CONFIRM DELETE to proceed, or CANCEL.`,
     kbConfirmDelete()
   );
 }
@@ -1400,9 +1670,9 @@ async function handleDeletePending(ctx, text, pending) {
         sheetId: pending.sheetId,
       });
     } catch (e) {
-      console.error('bot-core: DELETE failed', e.message);
+      await reportError('BOT-003', e, { userId });
       await store.delete(key);
-      return ctx.send('Failed to delete. The entry may have been modified. Check the dashboard.');
+      return ctx.send('Failed to delete. The entry may have been modified. Check the dashboard. [BOT-003]');
     }
 
     const lastlog = await store.get(`lastlog:${userId}`, { type: 'json' }).catch(() => null);
@@ -1558,7 +1828,7 @@ async function handleNewMonthWizard(ctx, text, wizard) {
         budgetChanges: wizard.budgetChanges,
       });
     } catch (e) {
-      console.error('bot-core: createMonth failed', e.message);
+      await reportError('SHT-002', e, { flow: 'create-month' });
       await store.delete(key);
       return ctx.send(`Failed to create ${wizard.monthName}. Try again or use the dashboard.`);
     }
@@ -1860,8 +2130,8 @@ async function editLoggedExpense(ctx, changes) {
   try {
     await deleteExpenseByUUID({ category: lastlog.category, uuid: lastlog.uuid, sheetId: lastlog.sheetId });
   } catch (e) {
-    console.error('bot-core: edit (delete) failed', e.message);
-    return ctx.send('Could not edit — the entry may have changed. Check the dashboard.');
+    await reportError('SHT-004', e, { flow: 'edit' });
+    return ctx.send('Could not edit — the entry may have changed. Check the dashboard. [SHT-004]');
   }
 
   let result;
@@ -1873,8 +2143,8 @@ async function editLoggedExpense(ctx, changes) {
       channel: ctx.channel,
     });
   } catch (e) {
-    console.error('bot-core: edit (append) failed', e.message);
-    return ctx.send('Edit failed while saving. Check the dashboard.');
+    await reportError('SHT-009', e, { flow: 'edit' });
+    return ctx.send('Edit failed while saving. Check the dashboard. [SHT-009]');
   }
 
   await store.setJSON(`lastlog:${userId}`, {

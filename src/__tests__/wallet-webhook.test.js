@@ -24,7 +24,10 @@ const { extractMock, appendMock, sheetIdMock, webpushSend, getSettingsMock, tele
   ctl: { pushDoc: null, deleted: false },
 }));
 
-vi.mock('../../functions/lib/_extraction.mjs', () => ({ extractTransactionText: extractMock }));
+vi.mock('../../functions/lib/_extraction.mjs', () => ({
+  extractTransactionText: extractMock,
+  CATEGORIES: ['Grocery', 'Eating Out', 'Misc', 'Travel', 'Entertainment', 'Health', 'Utilities'],
+}));
 vi.mock('../../functions/lib/_sheets.mjs', () => ({
   appendExpense: appendMock,
   getCurrentMonthSheetId: sheetIdMock,
@@ -36,7 +39,17 @@ vi.mock('web-push', () => ({ default: { setVapidDetails: vi.fn(), sendNotificati
 // The wallet split path builds a bot store + sends Telegram; stub both so the
 // import chain doesn't pull in firebase-admin and no real network calls fire.
 vi.mock('../../functions/lib/bot-store.mjs', () => ({ createBotStore: () => splitStore }));
-vi.mock('../../functions/lib/_telegram.mjs', () => ({ sendMessage: telegramSend }));
+vi.mock('../../functions/lib/_telegram.mjs', () => ({
+  sendMessage: telegramSend,
+  kbCategoryConfirm: (id, cats, suggestion) => [[{ text: suggestion, callback_data: `CATFIX:${id}:${suggestion}` }]],
+  resolveTelegramChatId: (email) => {
+    for (const pair of (process.env.TELEGRAM_EMAIL_MAP || '').split(',')) {
+      const [e, id] = pair.split(':').map(s => s.trim());
+      if (e && id && email && e.toLowerCase() === email.toLowerCase()) return id;
+    }
+    return null;
+  },
+}));
 vi.mock('../../functions/lib/firestore.mjs', () => ({
   getDb: () => ({
     collection: () => ({
@@ -103,7 +116,9 @@ describe('wallet-webhook — method & auth', () => {
   it('rejects a request with no key (401)', async () => {
     const res = await call(req({ key: null, body: validBody }));
     expect(res.status).toBe(401);
-    expect(res.json).toEqual({ ok: false, error: 'Unauthorized' });
+    // Error responses now carry the code so it is visible wherever the
+    // response is seen — phone automation logs included.
+    expect(res.json).toEqual({ ok: false, code: 'AUTH-002', error: 'Unauthorized' });
   });
 
   it('rejects a wrong key (401)', async () => {
@@ -303,5 +318,145 @@ describe('wallet-webhook — split vendors', () => {
     expect(res.status).toBe(200);
     expect(appendMock).toHaveBeenCalledTimes(1);
     expect(telegramSend).not.toHaveBeenCalled();
+  });
+});
+
+/* ── Card-name resolution on the wallet path ── */
+
+describe('wallet-webhook — resolves the card against the user card list', () => {
+  const CARDS = ['American Express Blue Cash Preferred', 'Chase Sapphire Reserve'];
+
+  it('canonicalizes the shortened name the Wallet notification sends', async () => {
+    // The Android macro forwards the bank notification title verbatim. This
+    // path never called the resolver, so "Blue Cash Preferred" was written as
+    // its own card, splitting the bucket from the canonical AmEx name.
+    getSettingsMock.mockResolvedValue({ cards: CARDS });
+    const res = await call(req({ body: { ...validBody, card: 'Blue Cash Preferred' } }));
+    expect(res.status).toBe(200);
+    expect(appendMock.mock.calls[0][0].paymentMethod)
+      .toBe('American Express Blue Cash Preferred');
+  });
+
+  it('resolves an abbreviation via the alias map', async () => {
+    getSettingsMock.mockResolvedValue({ cards: CARDS });
+    await call(req({ body: { ...validBody, card: 'BCP' } }));
+    expect(appendMock.mock.calls[0][0].paymentMethod)
+      .toBe('American Express Blue Cash Preferred');
+  });
+
+  it('keeps the raw card when it matches nothing', async () => {
+    // Better to log an unrecognised card than to blank it.
+    getSettingsMock.mockResolvedValue({ cards: CARDS });
+    await call(req({ body: { ...validBody, card: 'Some Other Card' } }));
+    expect(appendMock.mock.calls[0][0].paymentMethod).toBe('Some Other Card');
+  });
+
+  it('keeps the raw card when the settings lookup fails', async () => {
+    // getUserSettingsByEmail throwing leaves userSettings empty; resolving to
+    // '' there would wipe a perfectly good card name.
+    getSettingsMock.mockRejectedValue(new Error('firestore down'));
+    await call(req({ body: { ...validBody, card: 'Blue Cash Preferred' } }));
+    expect(appendMock.mock.calls[0][0].paymentMethod).toBe('Blue Cash Preferred');
+  });
+
+  it('leaves an absent card absent', async () => {
+    getSettingsMock.mockResolvedValue({ cards: CARDS });
+    await call(req({ body: { ...validBody, card: undefined } }));
+    expect(appendMock.mock.calls[0][0].paymentMethod).toBe('');
+  });
+});
+
+/* ── LLM category correction on the wallet path ── */
+
+describe('wallet-webhook — LLM category correction', () => {
+  const groqFetch = vi.fn();
+
+  function groqSays(category, confidence) {
+    groqFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        choices: [{ message: { content: JSON.stringify({ category, confidence }) } }],
+      }),
+    });
+  }
+
+  beforeEach(() => {
+    groqFetch.mockReset();
+    global.fetch = groqFetch;
+    vi.stubEnv('GROQ_API_KEY', 'test-groq-key');
+    vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-bot-token');
+    vi.stubEnv('TELEGRAM_EMAIL_MAP', 'nair.sabarish97@gmail.com:111222333');
+    // Extractor says Misc so the LLM has something to disagree with.
+    extractMock.mockResolvedValue({ ok: true, data: { reward_category: 'Misc', store_name: 'Chipotle' } });
+  });
+
+  it('writes a confident correction straight through, no Telegram round-trip', async () => {
+    groqSays('Eating Out', 0.95);
+    const res = await call(req({ body: validBody }));
+
+    expect(res.status).toBe(200);
+    expect(appendMock).toHaveBeenCalledOnce();
+    expect(appendMock.mock.calls[0][0].category).toBe('Eating Out');
+    expect(telegramSend).not.toHaveBeenCalled();
+  });
+
+  it('parks the charge and asks when the LLM is unsure', async () => {
+    groqSays('Travel', 0.4);
+    const res = await call(req({ body: validBody }));
+
+    expect(res.status).toBe(200);
+    expect(res.json).toMatchObject({ ok: true, pendingCategory: true });
+    // Nothing written yet — the tap decides.
+    expect(appendMock).not.toHaveBeenCalled();
+    expect(telegramSend).toHaveBeenCalledOnce();
+
+    const pending = [...splitStore.data.entries()].find(([k]) => k.startsWith('category_pending:111222333:'));
+    expect(pending).toBeDefined();
+    expect(pending[1]).toMatchObject({ vendor: 'Chipotle', amount: 89.5, suggested: 'Travel' });
+  });
+
+  it('logs the best guess rather than dropping the charge when Telegram is unreachable', async () => {
+    groqSays('Travel', 0.4);
+    vi.stubEnv('TELEGRAM_EMAIL_MAP', 'someone-else@x.com:999'); // no mapping for this user
+    const res = await call(req({ body: validBody }));
+
+    expect(res.status).toBe(200);
+    expect(appendMock).toHaveBeenCalledOnce();
+    expect(appendMock.mock.calls[0][0].category).toBe('Travel');
+  });
+
+  it('logs the best guess when sending the Telegram prompt throws', async () => {
+    groqSays('Travel', 0.4);
+    telegramSend.mockRejectedValue(new Error('telegram down'));
+    const res = await call(req({ body: validBody }));
+
+    // A dead notification channel must not cost the user a transaction.
+    expect(appendMock).toHaveBeenCalledOnce();
+    expect(appendMock.mock.calls[0][0].category).toBe('Travel');
+  });
+
+  it('a smart rule wins outright and never calls the LLM', async () => {
+    getSettingsMock.mockResolvedValue({ smartRules: [{ pattern: 'chipotle', category: 'Eating Out' }] });
+    const res = await call(req({ body: validBody }));
+
+    expect(appendMock.mock.calls[0][0].category).toBe('Eating Out');
+    expect(groqFetch).not.toHaveBeenCalled();
+    expect(telegramSend).not.toHaveBeenCalled();
+  });
+
+  it('respects the llmCategorize=false setting', async () => {
+    getSettingsMock.mockResolvedValue({ llmCategorize: false });
+    const res = await call(req({ body: validBody }));
+
+    expect(appendMock.mock.calls[0][0].category).toBe('Misc'); // extractor's answer, untouched
+    expect(groqFetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps the extractor category when Groq is unavailable', async () => {
+    groqFetch.mockRejectedValue(new Error('groq down'));
+    const res = await call(req({ body: validBody }));
+
+    expect(res.status).toBe(200);
+    expect(appendMock.mock.calls[0][0].category).toBe('Misc');
   });
 });

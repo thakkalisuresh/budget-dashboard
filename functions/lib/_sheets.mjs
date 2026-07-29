@@ -235,6 +235,9 @@ export async function getRecentExpenses(sheetId, limit = 10) {
   //   • bot      (8 cols): … Details, UUID(6), 'whatsapp-bot'  (no TxDate)
   // Detect per row: a web row has the uuid at index 8; a bot row only reaches
   // index 6 (so row[8] is undefined and we fall back to index 6).
+  // TxDate lives at index 9 in BOTH layouts — the Phase-7 padded bot row writes
+  // it too (appendHistory pads index 8 to '' so the uuid stays at 6). Only the
+  // legacy 8-col bot row genuinely lacks it, and there row[9] is undefined.
   const mapped = rows.slice(1)
     .map(row => {
       const isWebLayout = row[8] != null && row[8] !== '';
@@ -245,7 +248,7 @@ export async function getRecentExpenses(sheetId, limit = 10) {
         vendor:    row[3] || '',
         amount:    typeof row[4] === 'number' ? row[4] : null,
         uuid:      (isWebLayout ? row[8] : row[6]) || '',
-        txDate:    isWebLayout ? (row[9] || '') : '',
+        txDate:    row[9] || '',
       };
     })
     // A real expense entry always carries a uuid + amount; admin actions

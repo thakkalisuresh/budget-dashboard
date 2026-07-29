@@ -136,7 +136,6 @@ function Dashboard({ auth }) {
   const [chatOpen, setChatOpen]         = useState(false);
   const [chatInitialQuery, setChatInitialQuery] = useState('');
   const [fabOpen, setFabOpen]           = useState(false);
-  const userMenuRef = useRef(null);
 
   // Per-user settings (saved to Google Sheets)
   const isReadOnly = user.role === 'viewer';
@@ -173,11 +172,20 @@ function Dashboard({ auth }) {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Close user menu on outside click
+  // Close user menu on outside click.
+  //
+  // Matched by attribute rather than by ref: HeaderBar renders TWO UserMenu
+  // instances (desktop and mobile, shown by breakpoint). A single shared ref
+  // can only ever point at whichever mounted last — the mobile one, which is
+  // `lg:hidden` but still in the DOM. On a desktop viewport that made every
+  // click on the visible menu look "outside", so mousedown unmounted the
+  // dropdown before mouseup and its buttons' onClick never fired at all.
+  // That is what made Settings unopenable. An attribute selector is true for
+  // whichever instance was actually clicked, however many exist.
   useEffect(() => {
     if (!showUserMenu) return;
     const handler = (e) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) {
+      if (!e.target.closest?.('[data-user-menu]')) {
         setShowUserMenu(false);
       }
     };
@@ -459,7 +467,6 @@ function Dashboard({ auth }) {
           clearMessages={clearMessages}
           showUserMenu={showUserMenu}
           setShowUserMenu={setShowUserMenu}
-          userMenuRef={userMenuRef}
           user={user}
           signOut={signOut}
           setShowSettings={setShowSettings}

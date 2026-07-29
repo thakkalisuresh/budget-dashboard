@@ -7,32 +7,24 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import webpush from 'web-push';
 import crypto from 'node:crypto';
-import { extractTransactionText } from './lib/_extraction.mjs';
-import { appendExpense, getCurrentMonthSheetId, getUserSettingsByEmail } from './lib/_sheets.mjs';
+import { extractTransactionText, CATEGORIES } from './lib/_extraction.mjs';
+import { resolveCategory } from './lib/_categorize.mjs';
+import { findDuplicates } from './lib/_duplicate-match.mjs';
+import { appendExpense, getCurrentMonthSheetId, getUserSettingsByEmail, getRecentExpenses } from './lib/_sheets.mjs';
 import { getDb } from './lib/firestore.mjs';
 import { createBotStore } from './lib/bot-store.mjs';
-import { sendMessage } from './lib/_telegram.mjs';
+import { sendMessage, kbCategoryConfirm, resolveTelegramChatId } from './lib/_telegram.mjs';
 import { matchesSplitVendor } from './lib/_item-categorizer.mjs';
+import { resolveCardName } from './lib/_card-resolver.mjs';
 import { sha256Hex } from './lib/http-common.mjs';
+import { reportError } from './lib/_error-log.mjs';
 import {
   WALLET_WEBHOOK_SECRET,
   VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_EMAIL,
-  ANTHROPIC_API_KEY, GEMINI_API_KEY,
+  ANTHROPIC_API_KEY, GEMINI_API_KEY, GROQ_API_KEY,
   TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP,
   SHEETS_DRIVE_SECRETS,
 } from './lib/secrets.mjs';
-
-/** Resolve a requester email → Telegram chat id via the TELEGRAM_EMAIL_MAP secret. */
-function resolveTelegramChatId(email) {
-  const raw = process.env.TELEGRAM_EMAIL_MAP || '';
-  for (const pair of raw.split(',')) {
-    const [mappedEmail, chatId] = pair.split(':').map(s => s.trim());
-    if (mappedEmail && chatId && mappedEmail.toLowerCase() === email.toLowerCase()) {
-      return chatId;
-    }
-  }
-  return null;
-}
 
 async function keyMatches(provided, expected) {
   const [a, b] = await Promise.all([sha256Hex(provided), sha256Hex(expected)]);
@@ -54,7 +46,7 @@ export const walletWebhook = onRequest(
     secrets: [
       WALLET_WEBHOOK_SECRET,
       VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_EMAIL,
-      ANTHROPIC_API_KEY, GEMINI_API_KEY,
+      ANTHROPIC_API_KEY, GEMINI_API_KEY, GROQ_API_KEY,
       TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP,
       ...SHEETS_DRIVE_SECRETS,
     ],
@@ -70,7 +62,7 @@ export const walletWebhook = onRequest(
     const key = extractKey(req);
     const secret = process.env.WALLET_WEBHOOK_SECRET;
     if (!key || !secret || !(await keyMatches(key, secret))) {
-      res.status(401).json({ ok: false, error: 'Unauthorized' });
+      res.status(401).json({ ok: false, code: 'AUTH-002', error: 'Unauthorized' });
       return;
     }
 
@@ -99,7 +91,7 @@ export const walletWebhook = onRequest(
           if (!txDate && parsed.purchase_date) txDate = parsed.purchase_date;
         }
       } catch (e) {
-        console.error('Text parse failed:', e.message);
+        await reportError('WAL-003', e, { textLength: rawText.length });
       }
     }
 
@@ -109,15 +101,15 @@ export const walletWebhook = onRequest(
     const amount = parseFloat(String(amountRaw ?? '').replace(/[^\d.-]/g, ''));
 
     if (!merchant || typeof merchant !== 'string') {
-      res.status(400).json({ ok: false, error: 'Missing or invalid merchant' });
+      res.status(400).json({ ok: false, code: 'WAL-001', error: 'Missing or invalid merchant' });
       return;
     }
     if (isNaN(amount) || amount <= 0) {
-      res.status(400).json({ ok: false, error: 'Missing or invalid amount' });
+      res.status(400).json({ ok: false, code: 'WAL-001', error: 'Missing or invalid amount' });
       return;
     }
     if (!email || !email.includes('@')) {
-      res.status(400).json({ ok: false, error: 'Missing or invalid email' });
+      res.status(400).json({ ok: false, code: 'WAL-001', error: 'Missing or invalid email' });
       return;
     }
     const monthName = new Date(txDate + 'T00:00:00').toLocaleString('en-US', {
@@ -134,7 +126,7 @@ export const walletWebhook = onRequest(
       try {
         sheetId = await getCurrentMonthSheetId(monthName);
       } catch (e) {
-        res.status(422).json({ ok: false, error: 'month_not_found', monthName });
+        res.status(422).json({ ok: false, code: 'SHT-002', error: 'month_not_found', monthName });
         return;
       }
     }
@@ -153,7 +145,7 @@ export const walletWebhook = onRequest(
           vendor = result.data.store_name || vendor;
         }
       } catch (e) {
-        console.error('Categorization error (falling back to Misc):', e.message);
+        await reportError('EXTR-002', e, { vendor });
       }
     }
 
@@ -170,7 +162,71 @@ export const walletWebhook = onRequest(
         return;
       }
     } catch (e) {
-      console.error('Disabled-vendor check failed (continuing to log):', e.message);
+      await reportError('SHT-001', e, { step: 'disabled-vendor check', email });
+    }
+
+    // Both sources of `card` are raw: the Android Wallet macro sends the bank
+    // notification title verbatim, and the parsed-text path assigns
+    // parsed.payment_method as-is. Neither had ever been resolved against the
+    // user's card list, so "Blue Cash Preferred" landed in a separate bucket
+    // from "American Express Blue Cash Preferred".
+    //
+    // Fall back to the raw string when nothing matches: an unrecognised card is
+    // still better data than a blank, and getUserSettingsByEmail above may have
+    // failed, leaving userSettings.cards empty — resolving to '' there would
+    // wipe a card name that was perfectly good.
+    if (card) {
+      card = resolveCardName(card, userSettings.cards || []) || card;
+    }
+
+    // ── Category resolution: smart rules → Groq → whatever the extractor said.
+    // A confident answer is written straight through, preserving the instant
+    // logging this path exists for. An unconfident one is parked and asked
+    // about over Telegram rather than guessed at.
+    const allCategories = [...CATEGORIES, ...(userSettings.customCategories || [])];
+    const decision = await resolveCategory({
+      vendor,
+      amount,
+      extractedCategory: category,
+      categories: allCategories,
+      settings: userSettings,
+      enabled: userSettings.llmCategorize !== false,
+    });
+    if (decision.category !== category) {
+      console.log(`wallet-webhook: category ${category} → ${decision.category} (${decision.source}, conf ${decision.confidence})`);
+    }
+    category = decision.category;
+
+    if (decision.needsConfirm) {
+      const chatId = resolveTelegramChatId(email);
+      if (chatId) {
+        try {
+          const store = createBotStore(getDb());
+          // Short id: callback_data must stay under Telegram's 64-byte limit
+          // once the category name is appended.
+          const id = crypto.randomUUID().slice(0, 8);
+          await store.setJSON(`category_pending:${chatId}:${id}`, {
+            id, vendor, amount, txDate, monthName, sheetId,
+            paymentMethod: card ?? '',
+            suggested: decision.category,
+            createdAt: new Date().toISOString(),
+          });
+          await sendMessage(
+            chatId,
+            `🤔 ${vendor} · $${amount.toFixed(2)}\n\n` +
+            `Not sure which category — best guess is ${decision.category}. Pick one:`,
+            kbCategoryConfirm(id, allCategories, decision.category)
+          );
+          res.status(200).json({ ok: true, pendingCategory: true, vendor, amount });
+          return;
+        } catch (e) {
+          // Falling through logs it with the best guess, which is strictly
+          // better than dropping the transaction because Telegram was down.
+          console.error('Category confirm prompt failed (logging with best guess):', e.message);
+        }
+      } else {
+        console.warn(`No Telegram mapping for ${email}; logging best-guess category ${category}.`);
+      }
     }
 
     // ── Split-receipt vendor (Costco, Amazon…): don't log a lump sum. Stash the
@@ -201,11 +257,40 @@ export const walletWebhook = onRequest(
           res.status(200).json({ ok: true, split: true, vendor, amount });
           return;
         } catch (e) {
-          console.error('Split prompt failed (falling back to normal logging):', e.message);
+          await reportError('TG-001', e, { flow: 'split-prompt', vendor });
         }
       } else {
         console.warn(`No Telegram mapping for ${email}; logging split vendor normally.`);
       }
+    }
+
+    // Duplicate check — notify, don't gate.
+    //
+    // The bot side blocks duplicates at the confirm prompt because a human is
+    // already in the loop there. Nobody is here: this fires off a bank push
+    // notification, and holding the charge for a tap would cost exactly the
+    // instant logging this path exists for, on top of the category hold added
+    // above. So log it and say so; the Duplicates review surface is where it
+    // gets resolved. Wrapped separately so a failed check can't stop the write.
+    let dupNotice = null;
+    try {
+      const recent = await getRecentExpenses(sheetId, 100);
+      const dups = findDuplicates(
+        recent.map(e => ({ vendor: e.vendor, amount: e.amount, date: e.txDate || e.timestamp, category: e.category })),
+        { vendor, amount, date: txDate }
+      );
+      if (dups.length > 0) {
+        const first = dups[0];
+        dupNotice =
+          `⚠️ Possible duplicate — logged anyway:\n` +
+          `${vendor} · $${amount.toFixed(2)}\n` +
+          `Already have ${first.vendor} · $${Number(first.amount).toFixed(2)}` +
+          `${first.date ? ` on ${String(first.date).slice(0, 10)}` : ''} (${first.category || 'Misc'}).\n\n` +
+          `Open History → Duplicates in the dashboard to remove one.`;
+        console.log(`wallet-webhook: ${dups.length} possible duplicate(s) for ${vendor} $${amount}`);
+      }
+    } catch (e) {
+      console.warn('wallet-webhook: duplicate check failed (non-fatal)', e.message);
     }
 
     try {
@@ -221,12 +306,27 @@ export const walletWebhook = onRequest(
       });
     } catch (e) {
       if (e.message?.includes('No sheet found for month')) {
-        res.status(422).json({ ok: false, error: 'month_not_found', monthName });
+        res.status(422).json({ ok: false, code: 'SHT-002', error: 'month_not_found', monthName });
         return;
       }
-      console.error('appendExpense failed:', e.message);
-      res.status(500).json({ ok: false, error: 'Failed to write transaction' });
+      // WAL-002 is the single most important error in the system: the charge
+      // arrived and is now lost unless it's re-entered by hand.
+      await reportError('WAL-002', e, { vendor, amount, category, monthName });
+      res.status(500).json({ ok: false, code: 'WAL-002', error: 'Failed to write transaction' });
       return;
+    }
+
+    // Only after the write succeeded — warning about a charge that never
+    // landed would be worse than not warning at all.
+    if (dupNotice) {
+      const dupChatId = resolveTelegramChatId(email);
+      if (dupChatId) {
+        try {
+          await sendMessage(dupChatId, dupNotice);
+        } catch (e) {
+          console.warn('wallet-webhook: duplicate notice failed to send', e.message);
+        }
+      }
     }
 
     const vapidPublic  = process.env.VAPID_PUBLIC_KEY;
@@ -252,7 +352,7 @@ export const walletWebhook = onRequest(
         if (e.statusCode === 410) {
           await getDb().collection('push_subscriptions').doc(email).delete().catch(() => {});
         }
-        console.error('Push notification failed (non-fatal):', e.message);
+        await reportError('PUSH-002', e, { vendor });
       }
     }
 

@@ -43,7 +43,7 @@ export async function sendMessage(chatId, text, markup = null) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    console.error('telegram sendMessage failed:', err.description || res.status);
+    console.error('TG-001 — Telegram sendMessage failed:', err.description || res.status);
   }
   return res;
 }
@@ -59,7 +59,7 @@ export async function answerCallback(callbackQueryId) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    console.error('telegram answerCallbackQuery failed:', err.description || res.status);
+    console.error('TG-001 — Telegram answerCallbackQuery failed:', err.description || res.status);
   }
   return res;
 }
@@ -98,6 +98,19 @@ export function isAllowedUser(userId, allowedList) {
 export function kbYesCancel() {
   return [[
     { text: '✅ YES', callback_data: 'YES' },
+    { text: '❌ CANCEL', callback_data: 'CANCEL' },
+  ]];
+}
+
+/**
+ * Confirmation for something we think is already logged. Same callback_data as
+ * kbYesCancel — the confirm handler is unchanged — but the affirmative button
+ * is relabelled so accepting a duplicate is a deliberate act, not the same
+ * reflex tap as a normal receipt.
+ */
+export function kbLogAnywayCancel() {
+  return [[
+    { text: '⚠️ Log anyway', callback_data: 'YES' },
     { text: '❌ CANCEL', callback_data: 'CANCEL' },
   ]];
 }
@@ -201,6 +214,25 @@ export function kbEditLoggedMenu() {
 }
 
 /**
+ * Category picker for a wallet charge the categorizer wasn't confident about.
+ * callback_data is `CATFIX:<pendingId>:<category>`; pendingId is a short id
+ * (not a UUID) so the whole payload stays inside Telegram's 64-byte limit.
+ * The suggested category is pinned first so the common case is one tap.
+ */
+export function kbCategoryConfirm(pendingId, categories, suggestion = null) {
+  const rows = [];
+  if (suggestion && categories.includes(suggestion)) {
+    rows.push([{ text: `⭐ ${suggestion}`, callback_data: `CATFIX:${pendingId}:${suggestion}` }]);
+  }
+  const rest = categories.filter(c => c !== suggestion);
+  for (let i = 0; i < rest.length; i += 2) {
+    rows.push(rest.slice(i, i + 2).map(c => ({ text: c, callback_data: `CATFIX:${pendingId}:${c}` })));
+  }
+  rows.push([{ text: '❌ CANCEL', callback_data: 'CANCEL' }]);
+  return rows;
+}
+
+/**
  * Inline keyboard for picking the category of one uncategorized split item.
  * Each button's callback_data is `SPLITCAT:<itemIndex>:<category>` (well under
  * Telegram's 64-byte limit). Categories are laid out two per row; an optional
@@ -218,4 +250,22 @@ export function kbSplitCategory(itemIndex, categories, suggestion = null) {
   }
   rows.push([{ text: '❌ CANCEL', callback_data: 'CANCEL' }]);
   return rows;
+}
+
+/**
+ * Resolve a user email → Telegram chat id via the TELEGRAM_EMAIL_MAP secret
+ * ("email:chatId,email:chatId"). Returns null when the user has no mapping.
+ * Shared by the wallet webhook and the scheduled jobs (category audit, error
+ * digest) so the parsing lives in one place.
+ */
+export function resolveTelegramChatId(email) {
+  const raw = process.env.TELEGRAM_EMAIL_MAP || '';
+  if (!email) return null;
+  for (const pair of raw.split(',')) {
+    const [mappedEmail, chatId] = pair.split(':').map(s => s.trim());
+    if (mappedEmail && chatId && mappedEmail.toLowerCase() === email.toLowerCase()) {
+      return chatId;
+    }
+  }
+  return null;
 }

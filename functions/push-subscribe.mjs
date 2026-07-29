@@ -51,7 +51,7 @@ export const pushSubscribe = onRequest(
 
       sendJson(res, 200, { ok: true }, corsOrigin);
     } catch (e) {
-      console.error('push-subscribe error:', e);
+      console.error('PUSH-001 — Push subscription change failed (subscribe):', e);
       sendJson(res, 500, { error: 'Internal error' }, corsOrigin);
     }
   }

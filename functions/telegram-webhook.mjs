@@ -9,6 +9,7 @@
 import { onRequest } from 'firebase-functions/v2/https';
 import { getDb } from './lib/firestore.mjs';
 import { createBotStore } from './lib/bot-store.mjs';
+import { reportError } from './lib/_error-log.mjs';
 import {
   validateTelegramWebhook,
   sendMessage,
@@ -84,7 +85,7 @@ async function handleTelegramMedia(ctx, message) {
   try {
     buffer = await downloadTelegramFile(fileId);
   } catch (e) {
-    console.error('telegram-webhook: file download failed', e.message);
+    await reportError('TG-002', e, { userId: ctx.userId });
     return ctx.send('Could not download your file. Please try sending it again.');
   }
 
@@ -188,7 +189,7 @@ export const telegramWebhook = onRequest(
         return;
       }
     } catch (e) {
-      console.error('telegram-webhook: processing failed', e.message);
+      await reportError('BOT-001', e, { flow: 'webhook' });
       // Release the idempotency claim so Telegram's retry is processed rather
       // than silently deduped as already-seen.
       if (updateId != null) await store.delete(`seen:${updateId}`).catch(() => {});

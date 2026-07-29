@@ -25,3 +25,9 @@ export { mcp } from './mcp-server.mjs';
 
 // Phase 7 — wallet webhook (iOS Shortcuts / Android MacroDroid).
 export { walletWebhook } from './wallet-webhook.mjs';
+
+// Weekly LLM category audit (scheduled).
+export { categoryAudit } from './category-audit.mjs';
+
+// Daily backend error digest (scheduled). See docs/ERROR_CODES.md.
+export { errorDigest } from './error-digest.mjs';

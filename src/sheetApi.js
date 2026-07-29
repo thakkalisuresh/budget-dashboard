@@ -1,13 +1,14 @@
 import { colLetter } from './sheetHelpers.js';
+import { codedError } from './errorCodes.js';
 
 export async function apiFetch(sheetId, path, options = {}) {
   const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}${path}`, options);
   if (!res.ok) {
     const status = res.status;
-    if (status === 401 || status === 403) throw new Error('Access denied. Please sign in again.');
-    if (status === 404) throw new Error('Spreadsheet not found. Please check your setup.');
-    if (status === 429) throw new Error('Too many requests. Please wait a moment.');
-    throw new Error('Failed to save. Please try again.');
+    if (status === 401 || status === 403) throw codedError('AUTH-005', 'Access denied. Please sign in again.');
+    if (status === 404) throw codedError('SHT-002', 'Spreadsheet not found. Please check your setup.');
+    if (status === 429) throw codedError('SHT-001', 'Too many requests. Please wait a moment.');
+    throw codedError('SHT-001', 'Failed to save. Please try again.');
   }
   return res.json();
 }
