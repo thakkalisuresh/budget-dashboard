@@ -284,6 +284,10 @@ describe('getRecentExpenses', () => {
     expect(out).toHaveLength(1);
     // row[8] is '' so this stays "bot layout" — uuid must still come from index 6
     expect(out[0]).toMatchObject({ vendor: 'Costco', uuid: 'bot-uuid-2' });
+    // …but the padded bot row DOES carry TxDate at index 9. It used to be
+    // dropped because the mapper gated txDate on isWebLayout, which left the
+    // bot's DELETE list unable to tell two same-vendor/same-amount rows apart.
+    expect(out[0].txDate).toBe('2026-06-02');
   });
 
   it('returns expenses from both layouts mixed in one sheet', async () => {
