@@ -31,7 +31,7 @@ vi.mock('../../functions/lib/_telegram.mjs', () => ({
   resolveTelegramChatId: (email) => (email === 'me@example.com' ? '111' : null),
 }));
 vi.mock('firebase-functions/v2/scheduler', () => ({ onSchedule: (_o, fn) => fn }));
-vi.mock('../../functions/lib/secrets.mjs', () => ({ TELEGRAM_BOT_TOKEN: 'k', TELEGRAM_EMAIL_MAP: 'k' }));
+vi.mock('../../functions/lib/secrets.mjs', () => ({ TELEGRAM_BOT_TOKEN: 'k', TELEGRAM_EMAIL_MAP: 'k', ALLOWED_EMAILS: 'k' }));
 
 const { reportError, fingerprint, groupErrors, buildDigest, sanitizeContext } =
   await import('../../functions/lib/_error-log.mjs');

@@ -18,7 +18,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { getDb } from './lib/firestore.mjs';
 import { sendMessage, resolveTelegramChatId } from './lib/_telegram.mjs';
 import { ERROR_COLLECTION, RETENTION_DAYS, groupErrors, buildDigest } from './lib/_error-log.mjs';
-import { TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP } from './lib/secrets.mjs';
+import { TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP, ALLOWED_EMAILS } from './lib/secrets.mjs';
 
 /** Cap the read: a runaway loop could log thousands and we only need the shape. */
 const MAX_DOCS = 500;
@@ -105,7 +105,10 @@ export const errorDigest = onSchedule(
     schedule: 'every day 08:00',
     timeZone: 'America/Los_Angeles',
     region: 'us-central1',
-    secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP],
+    // ALLOWED_EMAILS is read below to pick the household account. It has to be
+    // bound here or process.env.ALLOWED_EMAILS is undefined at runtime and the
+    // digest silently returns without sending anything, forever.
+    secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP, ALLOWED_EMAILS],
     timeoutSeconds: 120,
   },
   async () => {
