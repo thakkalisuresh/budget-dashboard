@@ -21,8 +21,9 @@ import { looksLikeQuery, answerQuery } from './_query.mjs';
 import { buildRewardsLine, getEffectiveRates } from './_card-rewards.mjs';
 import { resolveCardName } from './_card-resolver.mjs';
 import { resolveCategory } from './_categorize.mjs';
+import { findDuplicates } from './_duplicate-match.mjs';
 import {
-  kbYesCancel, kbYesSkip, kbConfirmDelete, kbSplitCategory, kbCategoryConfirm,
+  kbYesCancel, kbYesSkip, kbConfirmDelete, kbSplitCategory, kbCategoryConfirm, kbLogAnywayCancel,
   kbConfirmReceipt, kbEditMenu, kbCategoryPicker, kbCardPicker,
   kbLoggedActions, kbEditLoggedMenu,
 } from './_telegram.mjs';
@@ -690,6 +691,11 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
       return null;
     });
 
+    // Started here so the two sheet reads it needs overlap the Drive upload,
+    // the settings fetch and the Groq categorization rather than stacking on
+    // top of them — this path's perceived latency was deliberately tuned.
+    const dupPromise = findExistingDuplicates(`${month} ${year}`, data);
+
     const conversionInfo = await maybeConvertCurrency(data);
 
     let settings = {};
@@ -754,7 +760,19 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
     });
 
     console.log(`bot-core: receipt ${baseReceiptId} extracted for ${userId} — ${data.store_name} $${data.total_amount}`);
-    const sent = await ctx.send(buildConfirmPrompt(data, conversionInfo), kbYesCancel());
+
+    // On a hit the prompt leads with the warning and the affirmative button
+    // changes from "YES" to "Log anyway", so confirming a duplicate is a
+    // deliberate act rather than the same reflex tap. Same callback_data, so
+    // the confirm handler is untouched.
+    const dups = await dupPromise;
+    if (dups.length > 0) {
+      console.log(`bot-core: ${dups.length} possible duplicate(s) for ${data.store_name} $${data.total_amount}`);
+    }
+    const promptText = dups.length > 0
+      ? `${buildDuplicateWarning(dups)}\n\n${buildConfirmPrompt(data, conversionInfo)}`
+      : buildConfirmPrompt(data, conversionInfo);
+    const sent = await ctx.send(promptText, dups.length > 0 ? kbLogAnywayCancel() : kbYesCancel());
     // Perceived latency ends at the send; Drive now lands after it.
     console.log(`bot-core: timing ${baseReceiptId} extract=${tExtract}ms toPrompt=${Date.now() - t0}ms`);
     await attachDriveResult(store, confirmKey, drivePromise);
@@ -1235,6 +1253,50 @@ function buildSplitSummary(state) {
  * sent, and a reply needs a human plus a round-trip) and costs a receipt image,
  * not an expense.
  */
+/**
+ * Look for an already-logged transaction matching this receipt.
+ *
+ * Reads History once rather than scanning category tabs: History carries
+ * vendor/amount/date/category for every tab in a single request, so a wallet
+ * charge filed under Misc is found even though this receipt is headed for
+ * Grocery. Cross-tab is the entire point — the duplicate this exists to catch
+ * is "the wallet logged it instantly, then I photographed the receipt".
+ *
+ * Never throws. A failing duplicate check must not stop someone logging an
+ * expense; the worst case is the duplicate the review half then picks up.
+ */
+async function findExistingDuplicates(monthName, data) {
+  try {
+    const sheetId = await getCurrentMonthSheetId(monthName);
+    const recent  = await getRecentExpenses(sheetId, 100);
+    return findDuplicates(
+      recent.map(e => ({
+        vendor: e.vendor,
+        amount: e.amount,
+        // txDate is the real purchase date; timestamp is when it was logged,
+        // which is the best available stand-in for older rows without one.
+        date: e.txDate || e.timestamp,
+        category: e.category,
+      })),
+      { vendor: data.store_name, amount: data.total_amount, date: data.purchase_date }
+    );
+  } catch (e) {
+    console.warn('bot-core: duplicate check failed (non-fatal)', e.message);
+    return [];
+  }
+}
+
+/** One line per already-logged match, shown above the confirm prompt. */
+function buildDuplicateWarning(dups) {
+  const lines = [`⚠️ Possible duplicate — already logged:`];
+  for (const d of dups.slice(0, 3)) {
+    const when = d.date ? ` on ${String(d.date).slice(0, 10)}` : '';
+    lines.push(`• ${d.vendor} · $${Number(d.amount).toFixed(2)}${when} (${d.category || 'Misc'})`);
+  }
+  if (dups.length > 3) lines.push(`• …and ${dups.length - 3} more`);
+  return lines.join('\n');
+}
+
 async function attachDriveResult(store, key, drivePromise) {
   const driveResult = await drivePromise;
   if (!driveResult) return;

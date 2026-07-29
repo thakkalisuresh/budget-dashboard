@@ -9,7 +9,8 @@ import webpush from 'web-push';
 import crypto from 'node:crypto';
 import { extractTransactionText, CATEGORIES } from './lib/_extraction.mjs';
 import { resolveCategory } from './lib/_categorize.mjs';
-import { appendExpense, getCurrentMonthSheetId, getUserSettingsByEmail } from './lib/_sheets.mjs';
+import { findDuplicates } from './lib/_duplicate-match.mjs';
+import { appendExpense, getCurrentMonthSheetId, getUserSettingsByEmail, getRecentExpenses } from './lib/_sheets.mjs';
 import { getDb } from './lib/firestore.mjs';
 import { createBotStore } from './lib/bot-store.mjs';
 import { sendMessage, kbCategoryConfirm, resolveTelegramChatId } from './lib/_telegram.mjs';
@@ -262,6 +263,35 @@ export const walletWebhook = onRequest(
       }
     }
 
+    // Duplicate check — notify, don't gate.
+    //
+    // The bot side blocks duplicates at the confirm prompt because a human is
+    // already in the loop there. Nobody is here: this fires off a bank push
+    // notification, and holding the charge for a tap would cost exactly the
+    // instant logging this path exists for, on top of the category hold added
+    // above. So log it and say so; the Duplicates review surface is where it
+    // gets resolved. Wrapped separately so a failed check can't stop the write.
+    let dupNotice = null;
+    try {
+      const recent = await getRecentExpenses(sheetId, 100);
+      const dups = findDuplicates(
+        recent.map(e => ({ vendor: e.vendor, amount: e.amount, date: e.txDate || e.timestamp, category: e.category })),
+        { vendor, amount, date: txDate }
+      );
+      if (dups.length > 0) {
+        const first = dups[0];
+        dupNotice =
+          `⚠️ Possible duplicate — logged anyway:\n` +
+          `${vendor} · $${amount.toFixed(2)}\n` +
+          `Already have ${first.vendor} · $${Number(first.amount).toFixed(2)}` +
+          `${first.date ? ` on ${String(first.date).slice(0, 10)}` : ''} (${first.category || 'Misc'}).\n\n` +
+          `Open History → Duplicates in the dashboard to remove one.`;
+        console.log(`wallet-webhook: ${dups.length} possible duplicate(s) for ${vendor} $${amount}`);
+      }
+    } catch (e) {
+      console.warn('wallet-webhook: duplicate check failed (non-fatal)', e.message);
+    }
+
     try {
       await appendExpense({
         category,
@@ -281,6 +311,19 @@ export const walletWebhook = onRequest(
       console.error('appendExpense failed:', e.message);
       res.status(500).json({ ok: false, error: 'Failed to write transaction' });
       return;
+    }
+
+    // Only after the write succeeded — warning about a charge that never
+    // landed would be worse than not warning at all.
+    if (dupNotice) {
+      const dupChatId = resolveTelegramChatId(email);
+      if (dupChatId) {
+        try {
+          await sendMessage(dupChatId, dupNotice);
+        } catch (e) {
+          console.warn('wallet-webhook: duplicate notice failed to send', e.message);
+        }
+      }
     }
 
     const vapidPublic  = process.env.VAPID_PUBLIC_KEY;
