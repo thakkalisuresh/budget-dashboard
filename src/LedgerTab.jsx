@@ -10,17 +10,15 @@ import { getAllCategoryNames, fetchDetailRows, fetchHistory, fuzzyNamesMatch, fo
 import { downloadBlob, downloadCSV, transactionsToJson } from './exportHelpers.js';
 import { CategoryPickerSheet } from './CategoryPickerSheet.jsx';
 import { userMessage } from './errorCodes.js';
-
-const METHOD_LABELS = {
-  'Receipt Scan': 'Scan',
-  'Import':       'Import',
-  'Added':        'Manual',
-};
+import { readMemoryCache, loadCachedLedger, storeLedger } from './ledgerCache.js';
+import { txNoteKey } from './transactionNotes.js';
+import { WRITE_ACTIONS, METHOD_LABELS } from './historyActions.js';
 
 const METHOD_STYLE = {
   'Scan':   { background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' },
   'Import': { background: 'oklch(62% 0.20 295 / 15%)', color: 'oklch(72% 0.18 295)', border: '1px solid oklch(62% 0.20 295 / 25%)' },
   'Manual': { background: 'oklch(70% 0.15 145 / 12%)', color: 'var(--color-success)', border: '1px solid oklch(70% 0.15 145 / 25%)' },
+  'Recurring': { background: 'oklch(66% 0.17 220 / 15%)', color: 'oklch(72% 0.15 220)', border: '1px solid oklch(66% 0.17 220 / 25%)' },
 };
 
 const SORT_OPTIONS = [
@@ -54,9 +52,10 @@ async function buildLedger(sheetId, accessToken, monthName = '') {
     ),
   ]);
 
-  const addEvents = historyEntries.filter(e =>
-    ['Added', 'Receipt Scan', 'Import'].includes(e.action)
-  );
+  // WRITE_ACTIONS is shared with the writer (historyActions.js) so the two
+  // can't drift — a missing action costs the row its date and badge, not its
+  // existence, which reads as "my transaction vanished".
+  const addEvents = historyEntries.filter(e => WRITE_ACTIONS.includes(e.action));
 
   const transactions = [];
   for (const { cat, rows } of categoryRows) {
@@ -102,41 +101,33 @@ async function buildLedger(sheetId, accessToken, monthName = '') {
   return transactions;
 }
 
-const CACHE_MS = 2 * 60 * 1000; // 2 minutes
-const LOCAL_CACHE_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour — matches SEC-05 SW Sheets-cache convention
-export const ledgerCache = new Map(); // sheetId → { data, fetchedAt }
-
-const ledgerCacheKey = (sheetId) => `budget_ledger_cache_${sheetId}`;
-
-function loadCachedLedger(sheetId) {
-  try {
-    const raw = localStorage.getItem(ledgerCacheKey(sheetId));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed?.data || Date.now() - parsed.fetchedAt > LOCAL_CACHE_MAX_AGE_MS) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
 // Shared row renderer — used by both the animated .map() path and the
 // virtualized List path so the markup stays identical. `style`/`animate` differ
 // per path: virtualized rows get react-window's absolute-positioning style and
 // no entrance animation; animated rows get the staggered --enter-delay.
 const LedgerRow = React.memo(function LedgerRow({
-  t, index, sheetId, transactionNotes, currencySymbol, style, animate = false, onMove,
+  t, index, sheetId, transactionNotes, currencySymbol, style, animate = false, onMove, onOpen,
 }) {
-  const noteKey = `${sheetId}_${t.category}_${(t.vendor || '').toLowerCase()}_${t.amount.toFixed(2)}`;
+  const noteKey = txNoteKey(sheetId, t.category, t.vendor, t.amount);
   const noteData = transactionNotes[noteKey];
   return (
     <div
-      className={`flex items-center gap-3 px-5 py-4 transition-colors hover:bg-[var(--sur-5)]${animate ? ' animate-enter' : ''}`}
+      className={`flex items-center gap-3 px-5 py-4 transition-colors hover:bg-[var(--sur-5)]${animate ? ' animate-enter' : ''}${onOpen ? ' cursor-pointer' : ''}`}
       style={{
         ...style,
         ...(animate ? { '--enter-delay': `${Math.min(index, 14) * 25}ms` } : {}),
         ...(index > 0 ? { borderTop: '1px solid var(--sur-6)' } : {}),
       }}
+      {...(onOpen ? {
+        role: 'button',
+        tabIndex: 0,
+        onClick: () => onOpen(t),
+        // Keyboard parity for the desktop PWA — a div with a click handler is
+        // otherwise unreachable without a mouse.
+        onKeyDown: (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(t); }
+        },
+      } : {})}
     >
       <div className="flex-1 min-w-0">
         <p className="text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>{t.vendor}</p>
@@ -173,7 +164,9 @@ const LedgerRow = React.memo(function LedgerRow({
         {t.user && <p className="text-[10px] font-bold" style={{ color: 'var(--color-text-muted)' }}>{t.user}</p>}
       </div>
       {onMove && (
-        <button onClick={() => onMove(t)}
+        // stopPropagation: the whole row is now clickable, and moving a
+        // transaction must not also open the panel behind the picker.
+        <button onClick={(e) => { e.stopPropagation(); onMove(t); }}
           className="flex-shrink-0 p-1.5 rounded-lg transition-colors hover:bg-[var(--sur-5)]"
           title="Move to another category" style={{ color: 'var(--color-text-muted)' }}>
           <FolderInput className="w-3.5 h-3.5" />
@@ -184,7 +177,7 @@ const LedgerRow = React.memo(function LedgerRow({
 });
 
 // react-window row adapter — receives { index, style, ...rowProps } from <List>.
-function VirtualLedgerRow({ index, style, items, sheetId, transactionNotes, currencySymbol, onMove }) {
+function VirtualLedgerRow({ index, style, items, sheetId, transactionNotes, currencySymbol, onMove, onOpen }) {
   return (
     <LedgerRow
       t={items[index]}
@@ -194,14 +187,17 @@ function VirtualLedgerRow({ index, style, items, sheetId, transactionNotes, curr
       transactionNotes={transactionNotes}
       currencySymbol={currencySymbol}
       onMove={onMove}
+      onOpen={onOpen}
     />
   );
 }
 
-export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthName = '', expenses = [], salaryReceived = 0, transactionNotes = {}, onUpdateNote, refreshKey = 0, months = [] }) {
+export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthName = '', expenses = [], salaryReceived = 0, transactionNotes = {}, onUpdateNote, refreshKey = 0, months = [], onOpen }) {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading]           = useState(true);
   const [refreshing, setRefreshing]     = useState(false);
+  // True when a background refresh failed and what's on screen came from cache.
+  const [stale, setStale]               = useState(false);
 
   const [sortBy, setSortBy]             = useState('date-desc');
   const [showSortMenu, setShowSortMenu] = useState(false);
@@ -225,8 +221,8 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
 
   const load = async (isRefresh = false, silent = false) => {
     // Serve from cache if fresh (unless explicit refresh)
-    const cached = ledgerCache.get(sheetId);
-    if (!isRefresh && cached && (Date.now() - cached.fetchedAt < CACHE_MS)) {
+    const cached = readMemoryCache(sheetId);
+    if (!isRefresh && cached) {
       setTransactions(cached.data);
       setLoading(false);
       return;
@@ -235,12 +231,18 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
     else if (!silent) setLoading(true);
     try {
       const data = await buildLedger(sheetId, accessToken, monthName);
-      const fetchedAt = Date.now();
-      ledgerCache.set(sheetId, { data, fetchedAt });
-      try { localStorage.setItem(ledgerCacheKey(sheetId), JSON.stringify({ data, fetchedAt })); } catch { /* ignore quota errors */ }
+      storeLedger(sheetId, data);
       setTransactions(data);
+      setStale(false);
     }
-    catch { if (!silent) setTransactions([]); }
+    catch {
+      if (!silent) setTransactions([]);
+      // A silent refresh is the warm-start path: we're already showing cached
+      // rows, so blanking them would be worse than keeping them. But failing
+      // invisibly is how a stale ledger looks identical to an up-to-date one —
+      // flag it so the header can say so and offer a retry.
+      else setStale(true);
+    }
     finally { setLoading(false); setRefreshing(false); }
   };
 
@@ -581,6 +583,24 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
         </div>
       </div>
 
+      {/* Stale notice — a background refresh failed, so these rows came from
+          cache and may be missing anything added since. Silent failure is how a
+          stale ledger becomes indistinguishable from a current one. */}
+      {stale && !refreshing && (
+        <button
+          onClick={() => load(true)}
+          className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-colors"
+          style={{
+            background: 'oklch(75% 0.15 85 / 12%)',
+            color: 'oklch(75% 0.15 85)',
+            border: '1px solid oklch(75% 0.15 85 / 25%)',
+          }}
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          Showing cached data — tap to retry
+        </button>
+      )}
+
       {/* Search bar */}
       <div className="relative">
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--color-text-muted)' }} />
@@ -655,7 +675,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
               rowComponent={VirtualLedgerRow}
               rowCount={displayed.length}
               rowHeight={rowHeightCache}
-              rowProps={{ items: displayed, sheetId, transactionNotes, currencySymbol, onMove: setMovingTx }}
+              rowProps={{ items: displayed, sheetId, transactionNotes, currencySymbol, onMove: setMovingTx, onOpen }}
               overscanCount={8}
               style={{ height: 'min(70vh, 760px)' }}
             />
@@ -673,6 +693,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
                 transactionNotes={transactionNotes}
                 currencySymbol={currencySymbol}
                 onMove={setMovingTx}
+                onOpen={onOpen}
               />
             ))}
           </div>

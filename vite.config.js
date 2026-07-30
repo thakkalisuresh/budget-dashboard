@@ -15,6 +15,33 @@ try {
     || execSync('git rev-parse --short HEAD', { stdio: ['pipe', 'pipe', 'ignore'] }).toString().trim()
 } catch { /* non-git environment */ }
 
+// Single source of truth for the build stamp — the same value goes into the
+// __BUILD_TIME__ define and into version.json, so the running bundle and the
+// manifest it polls can never disagree about which build they describe.
+const buildTime = new Date().toISOString()
+
+/**
+ * Emit /version.json alongside the bundle.
+ *
+ * This is the service-worker-independent half of update detection: installed iOS
+ * PWAs and Safari can't be relied on to notice a new worker, so the app polls
+ * this file and compares `commit` against its own __COMMIT_SHA__. Must be served
+ * with no-cache (see firebase.json) or the poll reads a stale commit forever.
+ */
+function versionManifest() {
+  return {
+    name: 'fundient-version-manifest',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'version.json',
+        source: JSON.stringify({ version: pkg.version, commit: commitSha, buildTime }),
+      })
+    },
+  }
+}
+
 export default defineConfig({
   // Dev-only: `vite dev` doesn't know about Firebase Hosting's /api/* rewrites,
   // so forward them to the deployed Cloud Functions. The claude proxy already
@@ -40,18 +67,29 @@ export default defineConfig({
     alias: {
       'firebase-functions/v2/https': new URL('./test-stubs/firebase-functions-https.mjs', import.meta.url).pathname,
       'firebase-functions/params':   new URL('./test-stubs/firebase-functions-params.mjs', import.meta.url).pathname,
+      // vite-plugin-pwa's virtual module only exists during a real Vite build,
+      // so anything importing useAppUpdate would fail to resolve under vitest.
+      'virtual:pwa-register/react':  new URL('./test-stubs/pwa-register-react.mjs', import.meta.url).pathname,
     },
   },
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
     __COMMIT_SHA__:  JSON.stringify(commitSha),
-    __BUILD_TIME__:  JSON.stringify(new Date().toISOString()),
+    __BUILD_TIME__:  JSON.stringify(buildTime),
   },
   plugins: [
     react(),
     tailwindcss(),
+    versionManifest(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'prompt', not 'autoUpdate'. Under strategies:'injectManifest' the plugin
+      // injects only the precache manifest into our custom sw.js — it does NOT
+      // inject the skipWaiting/clientsClaim lifecycle it generates under
+      // generateSW. So 'autoUpdate' was inert: new workers installed, sat in
+      // `waiting` forever, and every deploy needed a manual cache clear.
+      // 'prompt' + useRegisterSW (see useAppUpdate.js) sends the SKIP_WAITING
+      // message sw.js has always been listening for.
+      registerType: 'prompt',
       strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'sw.js',

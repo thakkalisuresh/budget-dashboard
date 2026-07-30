@@ -4,6 +4,7 @@ import {
   generateTransactionUUID, uuidStart, detectV2, coerceTxDate,
 } from './sheetHelpers.js';
 import { invalidateDetailCache } from './sheetDetail.js';
+import { historyAction } from './historyActions.js';
 import { appendHistoryEntry } from './sheetHistory.js';
 import { enqueue } from './offlineQueue.js';
 import { codedError } from './errorCodes.js';
@@ -75,7 +76,7 @@ export async function addOrUpdateExpense(
       body: JSON.stringify({ values: [newRow] }),
     });
     await appendHistoryEntry(sheetId, accessToken, {
-      action: source === 'scan' ? 'Receipt Scan' : source === 'import' ? 'Import' : 'Added',
+      action: historyAction(source),
       category: categoryName, vendor: vendorName, amount, uuid: newUUID, txDate: dateVal,
       paymentMethod, bookingMethod,
     });
@@ -122,7 +123,7 @@ export async function addOrUpdateExpense(
         body: JSON.stringify({ values: [newRow] }),
       });
       await appendHistoryEntry(sheetId, accessToken, {
-        action: source === 'scan' ? 'Receipt Scan' : source === 'import' ? 'Import' : 'Added',
+        action: historyAction(source),
         category: categoryName, vendor: vendorName, amount, uuid: newUUID,
       });
     }

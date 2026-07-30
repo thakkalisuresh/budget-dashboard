@@ -17,7 +17,7 @@ function ExpenseTable({
   handleTableDragStart, handleTableDragOver, handleTableDrop, handleTableDragEnd, handleGripTouchStart,
   setIconPickerFor, setRenamingCategory, setDeletingCategory, setCategoryActionFor,
   onAddCategory, onAddExpense,
-  accessToken, sheetId, monthName, onRefresh, scanTriggerRef, smartRules, cards, cardRules, onSaveRecurring, splitReceiptVendors,
+  accessToken, sheetId, monthName, onRefresh, scanTriggerRef, smartRules, cards, cardRules, onSaveRecurring, onSaveTransactionNotes, splitReceiptVendors,
 }) {
   return (
     <div
@@ -42,6 +42,7 @@ function ExpenseTable({
             cards={cards}
             cardRules={cardRules}
             onSaveRecurring={onSaveRecurring}
+            onSaveTransactionNotes={onSaveTransactionNotes}
             splitReceiptVendors={splitReceiptVendors}
           />
           <button

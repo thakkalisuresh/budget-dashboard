@@ -9,6 +9,8 @@ import {
 import { startScanTiming } from './scanTiming.js';
 import { resolveMCC } from './vendorMCC.js';
 import { categorizeItems, matchesSplitVendor } from './itemCategorizer.js';
+import { buildCategoryItems, buildSplitNote } from './splitNotes.js';
+import { txNoteKey } from './transactionNotes.js';
 
 // How many receipt/statement images to extract at once when several files are
 // selected. The Vision proxy allows 20 req/min per user, so 4 in flight stays
@@ -18,7 +20,7 @@ const EXTRACT_CONCURRENCY = 4;
 const CSR = 'Chase Sapphire Reserve';
 const TRAVEL_MCCS = new Set(['4511', '7011', 'CHASE_PORTAL']);
 
-export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, activeCategories = [], scanTriggerRef, smartRules = [], cards = [], cardRules = [], onSaveRecurring, splitReceiptVendors = [] }) {
+export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, activeCategories = [], scanTriggerRef, smartRules = [], cards = [], cardRules = [], onSaveRecurring, onSaveTransactionNotes, splitReceiptVendors = [] }) {
   const [phase, setPhase]         = useState('idle');
   const [scanError, setScanError] = useState('');
   const [processingProgress, setProcessingProgress] = useState(null);
@@ -49,6 +51,9 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
   const [splitPaymentMethod, setSplitPaymentMethod] = useState('');
   const [splitGroups, setSplitGroups]       = useState({});   // { category: subtotal } auto-sorted
   const [splitItems, setSplitItems]         = useState([]);   // [{ name, amount, suggestion, category }]
+  // Line items behind each auto-categorized group, kept so the written
+  // transaction can carry a note saying what it was made of.
+  const [splitAutoGroups, setSplitAutoGroups] = useState([]); // [{ category, items, subtotal }]
   const [splitSavedSummary, setSplitSavedSummary] = useState(null);
 
   const [editingIndex, setEditingIndex]   = useState(null);
@@ -112,6 +117,7 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
         const { autoGrouped, uncategorized } = categorizeItems(result.items);
         const groups = {};
         for (const g of autoGrouped) groups[g.category] = g.subtotal;
+        setSplitAutoGroups(autoGrouped);
         setSplitVendor(result.vendor);
         setSplitTotal(result.amount);
         setSplitPaymentMethod(resolveCard(result.paymentMethod, result.vendor, result.category || 'Misc'));
@@ -367,14 +373,15 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
       groups[it.category] = Math.round(((groups[it.category] || 0) + it.amount) * 100) / 100;
     }
     const cats = Object.keys(groups);
-    if (cats.length === 0) return groups;
+    if (cats.length === 0) return { groups, remainder: 0, remainderCategory: null };
     const sum = Math.round(cats.reduce((s, c) => s + groups[c], 0) * 100) / 100;
     const remainder = Math.round((splitTotal - sum) * 100) / 100;
+    let remainderCategory = null;
     if (Math.abs(remainder) >= 0.01) {
-      const largest = cats.reduce((a, b) => (groups[b] > groups[a] ? b : a), cats[0]);
-      groups[largest] = Math.round((groups[largest] + remainder) * 100) / 100;
+      remainderCategory = cats.reduce((a, b) => (groups[b] > groups[a] ? b : a), cats[0]);
+      groups[remainderCategory] = Math.round((groups[remainderCategory] + remainder) * 100) / 100;
     }
-    return groups;
+    return { groups, remainder, remainderCategory };
   };
 
   const splitReady = splitItems.every(it => !!it.category);
@@ -384,13 +391,26 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     if (!splitReady) { setFormErr('Pick a category for every item first.'); return; }
     setPhase('split-saving');
     try {
-      const groups = computeSplitGroups();
+      const { groups, remainder, remainderCategory } = computeSplitGroups();
+      const itemsByCategory = buildCategoryItems(splitAutoGroups, splitItems);
+      const vendor = splitVendor.trim();
       const logged = [];
+      const notes  = {};
       for (const [category, amount] of Object.entries(groups)) {
         if (amount <= 0) continue;
-        await addOrUpdateExpense(category, splitVendor.trim(), amount, accessToken, sheetId, monthName, 'scan', null, splitPaymentMethod, '');
+        await addOrUpdateExpense(category, vendor, amount, accessToken, sheetId, monthName, 'scan', null, splitPaymentMethod, '');
         logged.push({ category, amount });
+        // Key off the amount actually written — the remainder has already been
+        // folded in, and a key built from the pre-fold subtotal would never be
+        // read back. Only categories that actually saved get a note.
+        const note = buildSplitNote(itemsByCategory[category] || [], {
+          remainder: category === remainderCategory ? remainder : 0,
+        });
+        if (note) notes[txNoteKey(sheetId, category, vendor, amount)] = note;
       }
+      // One settings write for the whole split: updateSettings is async and
+      // batched, so calling it per category would queue N saves of the same blob.
+      if (Object.keys(notes).length > 0) onSaveTransactionNotes?.(notes);
       setSplitSavedSummary({ vendor: splitVendor, groups: logged });
       setSavedReceipts(prev => [...prev, ...logged.map(g => ({ vendor: splitVendor.trim(), amount: g.amount, category: g.category }))]);
       onSuccess?.();

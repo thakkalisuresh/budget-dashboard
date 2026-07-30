@@ -1,7 +1,10 @@
-import React, { useState } from 'react';
-import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Repeat, Plus, CreditCard, ChevronRight, ChevronDown, FolderInput } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Repeat, CalendarX, Plus, CreditCard, ChevronRight, ChevronDown, FolderInput } from 'lucide-react';
 import { updateVendorName, updateVendorAmounts, updateTransactionDate, unmarkNonMonthly, renameNonMonthly, markNonMonthly, formatTxDate, todayIso, updatePaymentMethod, updateHistoryPaymentMethod, moveTransactionCategory } from './sheetsApi.js';
 import { CategoryPickerSheet } from './CategoryPickerSheet.jsx';
+import { findHighlightTarget, uuidSelector } from './txHighlight.js';
+import { txNoteKey } from './transactionNotes.js';
+import { isRecurring } from './recurringExpenses.js';
 
 // ── Vendor logo helpers ───────────────────────────────────────────────────────
 
@@ -128,8 +131,10 @@ function VendorLogo({ name, size = 22, onEditDomain }) {
 /**
  * rows: Array of { rowIndex, description, amounts: number[] }
  */
-export function DetailPanel({ expense, rows, loading, onClose, accessToken, sheetId, onRefresh, currencySymbol = '$', onVendorRenamed, monthName, transactionNotes = {}, onUpdateNote, nonMonthlyVendors = [], onNonMonthlyChanged, onAddExpense, cards = [] }) {
+export function DetailPanel({ expense, rows, loading, onClose, accessToken, sheetId, onRefresh, currencySymbol = '$', onVendorRenamed, monthName, transactionNotes = {}, onUpdateNote, nonMonthlyVendors = [], onNonMonthlyChanged, onAddExpense, onAddForVendor, highlight = null, recurringExpenses = [], onToggleRecurring, cards = [] }) {
   const total = rows ? rows.reduce((s, r) => s + r.amounts.reduce((a, b) => a + b, 0), 0) : 0;
+  // Scroll container, so the arrive-from-ledger highlight can find its row.
+  const listRef = useRef(null);
 
   // Editing state
   const [editingVendor, setEditingVendor]   = useState(null);
@@ -154,11 +159,12 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
   // Move-to-category picker: { members: [row, …], vendor, subtitle }
   const [movingTx, setMovingTx]             = useState(null);
 
-  const txNoteKey = (vendor, amt) =>
-    `${sheetId}_${expense}_${(vendor || '').toLowerCase()}_${Number(amt).toFixed(2)}`;
+  // Shared with the ledger and the split flow so the three can't drift — a note
+  // written under a key nothing reads back is invisible, not broken.
+  const noteKeyFor = (vendor, amt) => txNoteKey(sheetId, expense, vendor, amt);
 
   const openNoteDialog = (vendor, amt) => {
-    const key  = txNoteKey(vendor, amt);
+    const key  = noteKeyFor(vendor, amt);
     const data = transactionNotes[key] || { note: '', tags: [] };
     setNoteDraft({ ...data });
     setNoteTagInput('');
@@ -277,7 +283,59 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
   );
   const groupTotal = (g) => g.members.reduce((s, r) => s + r.amounts.reduce((a, b) => a + b, 0), 0);
 
+  // ── Arrive-from-ledger highlight ──────────────────────────────────────────
+  // Tapping a ledger row opens this panel pointed at one transaction. Expand its
+  // vendor group if collapsed, scroll it into view and flash it — otherwise a
+  // search result drops you at the top of a long list with no clue which row you
+  // came for.
+  useEffect(() => {
+    if (!highlight?.uuid && !highlight?.vendor) return;
+    if (loading || !rows?.length) return;
+
+    const owner = findHighlightTarget(groups, highlight);
+    if (!owner) return;
+
+    let scrollTimer;
+    // Deferred rather than run inline: expanding is a state update, and the
+    // scroll needs the expanded rows laid out before it can measure anything.
+    const expandTimer = setTimeout(() => {
+      if (owner.members.length > 1) setOpenVendor(owner.key);
+      scrollTimer = setTimeout(() => {
+        const uuid = highlight.uuid
+          || (owner.members.flatMap(m => m.uuids || []).filter(Boolean)[0]);
+        const el = uuid ? listRef.current?.querySelector(uuidSelector(uuid)) : null;
+        if (!el) return;
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        el.classList.add('tx-flash');
+        // Removing the class lets a second arrival re-trigger the animation.
+        scrollTimer = setTimeout(() => el.classList.remove('tx-flash'), 1600);
+      }, 60);
+    }, 0);
+
+    return () => { clearTimeout(expandTimer); clearTimeout(scrollTimer); };
+    // `groups` is derived from rows each render; depending on rows is equivalent
+    // and avoids re-running the scroll on every unrelated re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlight?.uuid, highlight?.vendor, highlight?.amount, loading, rows]);
+
   const isVendorNonMonthly = (name) => nonMonthlyVendors.includes((name || '').toLowerCase());
+  const isVendorRecurring  = (name) => isRecurring(recurringExpenses, expense, name);
+
+  // Recurring is a property of the VENDOR, not of one month's charge: the
+  // template list is keyed (category, vendor) with no per-transaction identity.
+  // So the toggle sits on the vendor header, where the one-time flag already is.
+  const toggleRecurring = (vendorName, amount, txDate) => {
+    onToggleRecurring?.({
+      category: expense,
+      vendor: vendorName,
+      amount,
+      // Carried so imports land on the right day with the right card instead of
+      // always the 1st with no card.
+      dayOfMonth: /^\d{4}-\d{2}-(\d{2})/.exec(txDate || '')?.[1] ? Number(/^\d{4}-\d{2}-(\d{2})/.exec(txDate)[1]) : undefined,
+      card: (rows || []).find(r => r.description === vendorName)?.paymentMethod || '',
+      on: !isVendorRecurring(vendorName),
+    });
+  };
 
   // Rename a whole vendor group → fan out across every member row.
   const saveGroupName = (g) => {
@@ -458,7 +516,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
               {single && (
                 <div className="flex gap-0.5 items-center opacity-0 group-hover:opacity-100 transition-opacity">
                   {(() => {
-                    const key = txNoteKey(row.description, row.amounts[0]);
+                    const key = noteKeyFor(row.description, row.amounts[0]);
                     const data = transactionNotes[key];
                     const has = data?.note || data?.tags?.length > 0;
                     return (
@@ -516,8 +574,10 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
     const expanded = openVendor === g.key;
     const total    = groupTotal(g);
     const isNm      = isVendorNonMonthly(g.vendor);
+    const isRec     = isVendorRecurring(g.vendor);
     return (
-      <div key={g.key} className="rounded-2xl overflow-hidden" style={{ background: 'var(--sur-4)', border: '1px solid var(--sur-8)' }}>
+      <div key={g.key} data-tx-uuid={g.members.flatMap(m => m.uuids || []).filter(Boolean).join(' ')}
+        className="rounded-2xl overflow-hidden" style={{ background: 'var(--sur-4)', border: '1px solid var(--sur-8)' }}>
         {deletingGroup === g.key ? (
           <div className="flex items-center gap-2 px-4 py-2.5"
             style={{ background: 'oklch(62% 0.22 25 / 12%)', borderBottom: '1px solid oklch(62% 0.22 25 / 20%)' }}>
@@ -560,12 +620,27 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
             <span className="text-sm font-black tabular-nums ml-2 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
               {currencySymbol}{total.toFixed(2)}
             </span>
+            {onToggleRecurring && (
+              <button onClick={() => toggleRecurring(g.vendor, g.members[g.members.length - 1]?.amounts?.[0] ?? 0, g.members[g.members.length - 1]?.date)} disabled={saving}
+                title={isRec ? `Stop importing ${g.vendor} into new months` : `Import ${g.vendor} into every new month`}
+                className="p-1.5 rounded-lg transition-colors flex-shrink-0"
+                style={isRec ? { color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)' } : { color: 'var(--color-text-muted)' }}>
+                <Repeat className="w-3.5 h-3.5" />
+              </button>
+            )}
             <button onClick={() => toggleGroupNonMonthly(g)} disabled={saving}
               title={isNm ? 'Remove one-time flag' : 'Mark as one-time expense'}
               className="p-1.5 rounded-lg transition-colors flex-shrink-0"
               style={isNm ? { color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)' } : { color: 'var(--color-text-muted)' }}>
-              <Repeat className="w-3.5 h-3.5" />
+              <CalendarX className="w-3.5 h-3.5" />
             </button>
+            {onAddForVendor && (
+              <button onClick={() => onAddForVendor(g.vendor)}
+                className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]"
+                title={`Add another ${g.vendor} transaction`} style={{ color: 'var(--color-text-muted)' }}>
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            )}
             <button onClick={() => openMoveFor(g.members, g.vendor)}
               className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Move all to another category" style={{ color: 'var(--color-text-muted)' }}>
               <FolderInput className="w-3.5 h-3.5" />
@@ -637,7 +712,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
         )}
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+        <div ref={listRef} className="flex-1 overflow-y-auto p-4 space-y-2">
 
           {loading && (
             <div className="space-y-3 p-2">
@@ -657,7 +732,8 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
             // Single-transaction vendors render exactly as before.
             const row = g.members[0];
             return (
-            <div key={row.rowIndex} className="rounded-2xl overflow-hidden"
+            <div key={row.rowIndex} data-tx-uuid={(row.uuids || []).filter(Boolean).join(' ')}
+              className="rounded-2xl overflow-hidden"
               style={{ background: 'var(--sur-4)', border: '1px solid var(--sur-8)' }}>
 
               {/* ── Vendor name row ── */}
@@ -817,8 +893,30 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                       ? { color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)' }
                       : { color: 'var(--color-text-muted)' }}
                   >
-                    <Repeat className="w-3.5 h-3.5" />
+                    <CalendarX className="w-3.5 h-3.5" />
                   </button>
+                  {onToggleRecurring && (
+                    <button
+                      onClick={() => toggleRecurring(row.description, row.amounts?.[0] ?? 0, row.date)}
+                      disabled={saving}
+                      title={isVendorRecurring(row.description)
+                        ? `Stop importing ${row.description} into new months`
+                        : `Import ${row.description} into every new month`}
+                      className="p-1.5 rounded-lg transition-colors flex-shrink-0"
+                      style={isVendorRecurring(row.description)
+                        ? { color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)' }
+                        : { color: 'var(--color-text-muted)' }}
+                    >
+                      <Repeat className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  {onAddForVendor && (
+                    <button onClick={() => onAddForVendor(row.description)}
+                      className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]"
+                      title={`Add another ${row.description} transaction`} style={{ color: 'var(--color-text-muted)' }}>
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <button onClick={() => openMoveFor([row], row.description)}
                     className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Move to another category"
                     style={{ color: 'var(--color-text-muted)' }}>
@@ -870,7 +968,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                       </span>
                       <div className="flex gap-1 items-center opacity-0 group-hover:opacity-100 transition-opacity">
                         {(() => {
-                          const key  = txNoteKey(row.description, amt);
+                          const key  = noteKeyFor(row.description, amt);
                           const data = transactionNotes[key];
                           const has  = data?.note || data?.tags?.length > 0;
                           return (

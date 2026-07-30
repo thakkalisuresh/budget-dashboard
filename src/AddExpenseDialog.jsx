@@ -5,6 +5,8 @@ import { addOrUpdateExpense } from './useExpense.js';
 import { applySmartRules, applyCardRules } from './smartRules.js';
 import { DEFAULT_SETTINGS } from './useSettings.js';
 import { resolveMCC } from './vendorMCC.js';
+import { txNoteKey } from './transactionNotes.js';
+import { useBusyWhile } from './busyRegistry.js';
 
 const CSR = 'Chase Sapphire Reserve';
 const TRAVEL_MCCS = new Set(['4511', '7011', 'CHASE_PORTAL']);
@@ -27,6 +29,10 @@ const VENDOR_EXAMPLES = {
 };
 
 export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess, categories: categoriesProp, onSaveRecurring, onSaveTransactionNote, smartRules = [], cardRules = [], cards = DEFAULT_SETTINGS.cards, prefillCategory = null, lockCategory = false, prefillVendor = '', prefillAmount = '', geoTagEnabled = false, geoPrivacyBlur = true }) {
+  // This dialog only exists while it's open, and everything in it is unsaved —
+  // hold the update gate back so a deploy can't reload a half-typed expense away.
+  useBusyWhile(true);
+
   const categoryList = categoriesProp?.length ? categoriesProp : CATEGORIES;
   const [category, setCategory]         = useState(prefillCategory || '');
   const [vendor, setVendor]             = useState(prefillVendor);
@@ -218,7 +224,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
       if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
       // Save transaction note/tags/location if provided
       if ((txNote.trim() || txTags.length > 0 || geoLocation) && onSaveTransactionNote) {
-        const key = `${sheetId}_${category}_${vendor.trim().toLowerCase()}_${amt.toFixed(2)}`;
+        const key = txNoteKey(sheetId, category, vendor, amt);
         onSaveTransactionNote(key, {
           note: txNote.trim(),
           tags: txTags,
@@ -249,7 +255,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
         if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
         // Save transaction note/tags/location if provided
         if ((txNote.trim() || txTags.length > 0 || geoLocation) && onSaveTransactionNote) {
-          const key = `${sheetId}_${category}_${vendor.trim().toLowerCase()}_${amt.toFixed(2)}`;
+          const key = txNoteKey(sheetId, category, vendor, amt);
           onSaveTransactionNote(key, {
             note: txNote.trim(),
             tags: txTags,
