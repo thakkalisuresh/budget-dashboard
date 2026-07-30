@@ -143,6 +143,15 @@ describe('txNoteKey', () => {
   it('accepts a string amount', () => {
     expect(txNoteKey('s', 'C', 'v', '12.5')).toBe('s_C_v_12.50');
   });
+
+  it('trims the vendor', () => {
+    // addOrUpdateExpense writes vendor.trim() to the sheet, so a padded vendor
+    // here would key the note differently from what the ledger reads back —
+    // and a note under an unread key is invisible, not broken. AddExpenseDialog
+    // already trimmed; nothing else did, so the two disagreed.
+    expect(txNoteKey('s', 'C', '  Costco  ', 5)).toBe('s_C_costco_5.00');
+    expect(txNoteKey('s', 'C', 'Costco', 5)).toBe(txNoteKey('s', 'C', ' Costco ', 5));
+  });
 });
 
 describe('end-to-end shape from a real categorizeItems call', () => {

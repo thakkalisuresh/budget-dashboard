@@ -16,5 +16,9 @@
  * been folded in, not the raw category subtotal.
  */
 export function txNoteKey(sheetId, category, vendor, amount) {
-  return `${sheetId}_${category}_${(vendor || '').toLowerCase()}_${Number(amount).toFixed(2)}`;
+  // Trimmed as well as lowercased: addOrUpdateExpense writes vendor.trim() to
+  // the sheet, so a padded vendor here would key the note differently from the
+  // value the ledger reads back — and a note under an unread key is invisible
+  // rather than broken. AddExpenseDialog already trimmed; nothing else did.
+  return `${sheetId}_${category}_${(vendor || '').trim().toLowerCase()}_${Number(amount).toFixed(2)}`;
 }
