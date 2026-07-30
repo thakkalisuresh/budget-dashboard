@@ -2,21 +2,27 @@ import { useState } from 'react';
 import { hasDetail } from './fetchDetail.js';
 import { fetchDetailRows, updateCategoryBudget, writeSalary } from './sheetsApi.js';
 
-export function useDashboardHandlers({ accessToken, sheetId, monthName, refresh, updateSettings }) {
+export function useDashboardHandlers({ accessToken, sheetId, monthName, refresh, updateSettings, onLedgerChanged }) {
   const [detail, setDetail]                 = useState(null);
   const [editingBudgetId, setEditingBudgetId] = useState(null);
   const [budgetDraft, setBudgetDraft]       = useState('');
   const [editingSalary, setEditingSalary]   = useState(false);
   const [iconPickerFor, setIconPickerFor]   = useState(null);
 
-  const handleExpenseClick = async (name) => {
+  /**
+   * Open a category's detail panel. `highlight` (optional) identifies the specific
+   * transaction to scroll to and flash — set when arriving from a ledger row, so
+   * tapping a search result lands on that exact charge rather than the top of a
+   * long list.
+   */
+  const handleExpenseClick = async (name, highlight = null) => {
     if (!hasDetail(name)) return;
-    setDetail({ expense: name, rows: null, loading: true });
+    setDetail({ expense: name, rows: null, loading: true, highlight });
     try {
       const rows = await fetchDetailRows(name, accessToken, sheetId, monthName);
-      setDetail({ expense: name, rows, loading: false });
+      setDetail({ expense: name, rows, loading: false, highlight });
     } catch {
-      setDetail({ expense: name, rows: [], loading: false });
+      setDetail({ expense: name, rows: [], loading: false, highlight });
     }
   };
 
@@ -26,6 +32,10 @@ export function useDashboardHandlers({ accessToken, sheetId, monthName, refresh,
       const rows = await fetchDetailRows(detail.expense, accessToken, sheetId, monthName);
       setDetail(d => ({ ...d, rows, loading: false }));
       refresh();
+      // Every in-panel mutation lands here — edits, deletes, card changes, vendor
+      // renames. Without this the Ledger kept serving its own cache (2 min in
+      // memory, an hour in localStorage) and silently disagreed with the panel.
+      onLedgerChanged?.();
     } catch {
       // keep existing rows on failure
     }

@@ -30,7 +30,8 @@ const AddExpenseDialog = lazy(() => import('./AddExpenseDialog.jsx').then(m => (
 const NewMonthDialog   = lazy(() => import('./NewMonthDialog.jsx').then(m => ({ default: m.NewMonthDialog })));
 const ChatAgent        = lazy(() => import('./ChatAgent.jsx').then(m => ({ default: m.ChatAgent })));
 import { HistoryTab } from './HistoryTab.jsx';
-import { LedgerTab, ledgerCache } from './LedgerTab.jsx';
+import { LedgerTab } from './LedgerTab.jsx';
+import { invalidateLedger } from './ledgerCache.js';
 const SettingsPanel    = lazy(() => import('./SettingsPanel.jsx').then(m => ({ default: m.SettingsPanel })));
 const CardsTab         = lazy(() => import('./CardsTab.jsx').then(m => ({ default: m.CardsTab })));
 const SplitTab         = lazy(() => import('./SplitTab.jsx').then(m => ({ default: m.SplitTab })));
@@ -263,6 +264,7 @@ function Dashboard({ auth }) {
     monthName: selectedMonth?.name,
     refresh,
     updateSettings,
+    onLedgerChanged: () => { invalidateLedger(selectedSheetId); setRefreshKey(k => k + 1); },
   });
 
   // Global Escape key — moved here so all referenced state is declared above
@@ -498,6 +500,7 @@ function Dashboard({ auth }) {
             }))}
             refreshKey={refreshKey}
             months={months}
+            onOpen={t => handleExpenseClick(t.category, { uuid: t.uuid, vendor: t.vendor, amount: t.amount })}
           />
         )}
 
@@ -672,7 +675,7 @@ function Dashboard({ auth }) {
                 accessToken={user.accessToken}
                 sheetId={selectedSheetId}
                 monthName={selectedMonth?.name}
-                onRefresh={() => { ledgerCache.delete(selectedSheetId); setRefreshKey(k => k + 1); refresh(); }}
+                onRefresh={() => { invalidateLedger(selectedSheetId); setRefreshKey(k => k + 1); refresh(); }}
                 scanTriggerRef={scanTriggerRef}
                 onSaveRecurring={item => updateSettings(prev => ({
                   ...prev,
@@ -780,6 +783,11 @@ function Dashboard({ auth }) {
           nonMonthlyVendors={nonMonthlyItems.map(i => i.vendor.toLowerCase())}
           onNonMonthlyChanged={refreshNonMonthly}
           onAddExpense={!isReadOnly ? () => { setShowAddDialog({ prefillCategory: detail.expense }); setDetail(null); } : undefined}
+          // Same dialog, but pre-filled with the vendor you tapped — date, card
+          // and amount are already fields on it, so logging another charge to an
+          // existing vendor no longer means retyping its name.
+          onAddForVendor={!isReadOnly ? (vendor) => { setShowAddDialog({ prefillCategory: detail.expense, prefillVendor: vendor }); setDetail(null); } : undefined}
+          highlight={detail.highlight || null}
           cards={settings.cards || []}
         /></Suspense>
       )}
@@ -796,7 +804,7 @@ function Dashboard({ auth }) {
           onClose={() => setShowAddDialog(false)}
           lockCategory={typeof showAddDialog === 'object' && !!showAddDialog.prefillCategory}
           onSuccess={(result) => {
-            ledgerCache.delete(selectedSheetId);
+            invalidateLedger(selectedSheetId);
             setRefreshKey(k => k + 1);
             if (result?.queued) {
               setData(prev => prev.map(d => {

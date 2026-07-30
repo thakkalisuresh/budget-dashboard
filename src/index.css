@@ -382,8 +382,24 @@
   color: var(--color-accent-text);
 }
 
+/* ── Arrive-from-ledger highlight ─────────────────────────────────────────────
+   Flashes the transaction you tapped in the Ledger once its category panel
+   opens. Deliberately animates only box-shadow and background: the detail rows
+   feed a measured-height virtualized list elsewhere, and anything that changed
+   the element's box would make the list jump mid-scroll. */
+@keyframes tx-flash {
+  0%   { box-shadow: 0 0 0 0 var(--color-accent-border); background: var(--color-accent-subtle); }
+  70%  { box-shadow: 0 0 0 3px var(--color-accent-border); background: var(--color-accent-subtle); }
+  100% { box-shadow: 0 0 0 0 transparent; background: var(--sur-4); }
+}
+
+.tx-flash {
+  animation: tx-flash 1.6s var(--ease-out);
+}
+
 /* ── Reduced motion: kill all animations ──────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
+  .tx-flash,
   .animate-enter,
   .animate-fade-in,
   .animate-dropdown,
