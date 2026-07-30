@@ -11,6 +11,7 @@ import { downloadBlob, downloadCSV, transactionsToJson } from './exportHelpers.j
 import { CategoryPickerSheet } from './CategoryPickerSheet.jsx';
 import { userMessage } from './errorCodes.js';
 import { readMemoryCache, loadCachedLedger, storeLedger } from './ledgerCache.js';
+import { txNoteKey } from './transactionNotes.js';
 
 const METHOD_LABELS = {
   'Receipt Scan': 'Scan',
@@ -110,7 +111,7 @@ async function buildLedger(sheetId, accessToken, monthName = '') {
 const LedgerRow = React.memo(function LedgerRow({
   t, index, sheetId, transactionNotes, currencySymbol, style, animate = false, onMove, onOpen,
 }) {
-  const noteKey = `${sheetId}_${t.category}_${(t.vendor || '').toLowerCase()}_${t.amount.toFixed(2)}`;
+  const noteKey = txNoteKey(sheetId, t.category, t.vendor, t.amount);
   const noteData = transactionNotes[noteKey];
   return (
     <div

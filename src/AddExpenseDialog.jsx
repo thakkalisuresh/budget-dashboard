@@ -5,6 +5,7 @@ import { addOrUpdateExpense } from './useExpense.js';
 import { applySmartRules, applyCardRules } from './smartRules.js';
 import { DEFAULT_SETTINGS } from './useSettings.js';
 import { resolveMCC } from './vendorMCC.js';
+import { txNoteKey } from './transactionNotes.js';
 import { useBusyWhile } from './busyRegistry.js';
 
 const CSR = 'Chase Sapphire Reserve';
@@ -223,7 +224,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
       if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
       // Save transaction note/tags/location if provided
       if ((txNote.trim() || txTags.length > 0 || geoLocation) && onSaveTransactionNote) {
-        const key = `${sheetId}_${category}_${vendor.trim().toLowerCase()}_${amt.toFixed(2)}`;
+        const key = txNoteKey(sheetId, category, vendor, amt);
         onSaveTransactionNote(key, {
           note: txNote.trim(),
           tags: txTags,
@@ -254,7 +255,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
         if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
         // Save transaction note/tags/location if provided
         if ((txNote.trim() || txTags.length > 0 || geoLocation) && onSaveTransactionNote) {
-          const key = `${sheetId}_${category}_${vendor.trim().toLowerCase()}_${amt.toFixed(2)}`;
+          const key = txNoteKey(sheetId, category, vendor, amt);
           onSaveTransactionNote(key, {
             note: txNote.trim(),
             tags: txTags,
