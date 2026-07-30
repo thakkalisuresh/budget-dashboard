@@ -18,6 +18,7 @@ import {
 } from './_sheets.mjs';
 import { convertToUSD } from './_currency.mjs';
 import { reportError } from './_error-log.mjs';
+import { trail } from './_error-context.mjs';
 import { findErrorCodeInText, explainErrorCode } from './_error-codes.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
 import { buildRewardsLine, getEffectiveRates } from './_card-rewards.mjs';
@@ -767,8 +768,10 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
   // (retry counts, image downscaling) can be decided from real numbers instead
   // of guesses. Grep the function logs for `bot-core: timing`.
   const t0 = Date.now();
+  trail('receipt received');
   const extraction = await extractReceiptBatch(base64, mediaType);
   const tExtract = Date.now() - t0;
+  trail(`extracted ${extraction?.transactions?.length ?? 0} tx`);
 
   if (!extraction.ok || extraction.transactions.length === 0) {
     await store.setJSON(`pending:${baseReceiptId}`, {
