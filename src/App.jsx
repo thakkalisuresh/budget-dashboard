@@ -690,6 +690,12 @@ function Dashboard({ auth }) {
                 cards={settings.cards || []}
                 cardRules={cardRules}
                 splitReceiptVendors={splitReceiptVendors}
+                // Split receipts write one note per resulting transaction, all
+                // in a single settings save — see splitNotes.js.
+                onSaveTransactionNotes={notes => updateSettings(prev => ({
+                  ...prev,
+                  transactionNotes: { ...(prev.transactionNotes || {}), ...notes },
+                }))}
               />
 
               {/* Insight cards */}

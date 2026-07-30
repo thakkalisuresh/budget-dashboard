@@ -3,6 +3,7 @@ import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Repeat, Plus, Cr
 import { updateVendorName, updateVendorAmounts, updateTransactionDate, unmarkNonMonthly, renameNonMonthly, markNonMonthly, formatTxDate, todayIso, updatePaymentMethod, updateHistoryPaymentMethod, moveTransactionCategory } from './sheetsApi.js';
 import { CategoryPickerSheet } from './CategoryPickerSheet.jsx';
 import { findHighlightTarget, uuidSelector } from './txHighlight.js';
+import { txNoteKey } from './transactionNotes.js';
 
 // ── Vendor logo helpers ───────────────────────────────────────────────────────
 
@@ -157,11 +158,12 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
   // Move-to-category picker: { members: [row, …], vendor, subtitle }
   const [movingTx, setMovingTx]             = useState(null);
 
-  const txNoteKey = (vendor, amt) =>
-    `${sheetId}_${expense}_${(vendor || '').toLowerCase()}_${Number(amt).toFixed(2)}`;
+  // Shared with the ledger and the split flow so the three can't drift — a note
+  // written under a key nothing reads back is invisible, not broken.
+  const noteKeyFor = (vendor, amt) => txNoteKey(sheetId, expense, vendor, amt);
 
   const openNoteDialog = (vendor, amt) => {
-    const key  = txNoteKey(vendor, amt);
+    const key  = noteKeyFor(vendor, amt);
     const data = transactionNotes[key] || { note: '', tags: [] };
     setNoteDraft({ ...data });
     setNoteTagInput('');
@@ -496,7 +498,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
               {single && (
                 <div className="flex gap-0.5 items-center opacity-0 group-hover:opacity-100 transition-opacity">
                   {(() => {
-                    const key = txNoteKey(row.description, row.amounts[0]);
+                    const key = noteKeyFor(row.description, row.amounts[0]);
                     const data = transactionNotes[key];
                     const has = data?.note || data?.tags?.length > 0;
                     return (
@@ -924,7 +926,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                       </span>
                       <div className="flex gap-1 items-center opacity-0 group-hover:opacity-100 transition-opacity">
                         {(() => {
-                          const key  = txNoteKey(row.description, amt);
+                          const key  = noteKeyFor(row.description, amt);
                           const data = transactionNotes[key];
                           const has  = data?.note || data?.tags?.length > 0;
                           return (
