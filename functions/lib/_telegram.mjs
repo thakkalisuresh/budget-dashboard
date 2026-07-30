@@ -144,6 +144,45 @@ export function kbConfirmReceipt() {
   ];
 }
 
+/**
+ * Duplicate-suspect variant of kbConfirmReceipt. Same callback_data throughout,
+ * so the handlers are untouched; only the affirmative label changes, matching
+ * how kbLogAnywayCancel relates to kbYesCancel.
+ *
+ * Exists because kbYesCancel/kbLogAnywayCancel are shared with the salary,
+ * budget, new-month and split flows, where an Edit button would be meaningless —
+ * so the Edit row is added here rather than to those.
+ */
+export function kbLogAnywayReceipt() {
+  return [
+    [
+      { text: '⚠️ Log anyway', callback_data: 'YES' },
+      { text: '❌ CANCEL', callback_data: 'CANCEL' },
+    ],
+    [{ text: '✏️ Edit', callback_data: 'edit:menu' }],
+  ];
+}
+
+/**
+ * Confirmation for one item of a multi-transaction batch.
+ *
+ * SKIP drops only this item and moves to the next; CANCEL ALL abandons the whole
+ * queue. Plain CANCEL is deliberately absent: it used to wipe every queued item,
+ * so the destructive action now has to be named explicitly.
+ */
+export function kbBatchReceipt() {
+  return [
+    [
+      { text: '✅ YES', callback_data: 'YES' },
+      { text: '⏭ SKIP', callback_data: 'SKIP' },
+    ],
+    [
+      { text: '✏️ Edit', callback_data: 'edit:menu' },
+      { text: '❌ CANCEL ALL', callback_data: 'CANCEL ALL' },
+    ],
+  ];
+}
+
 /** Field picker for a pending (unconfirmed) receipt. */
 export function kbEditMenu() {
   return [
