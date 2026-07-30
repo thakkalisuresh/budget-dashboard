@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Repeat, Plus, CreditCard, ChevronRight, ChevronDown, FolderInput } from 'lucide-react';
+import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Repeat, CalendarX, Plus, CreditCard, ChevronRight, ChevronDown, FolderInput } from 'lucide-react';
 import { updateVendorName, updateVendorAmounts, updateTransactionDate, unmarkNonMonthly, renameNonMonthly, markNonMonthly, formatTxDate, todayIso, updatePaymentMethod, updateHistoryPaymentMethod, moveTransactionCategory } from './sheetsApi.js';
 import { CategoryPickerSheet } from './CategoryPickerSheet.jsx';
 import { findHighlightTarget, uuidSelector } from './txHighlight.js';
 import { txNoteKey } from './transactionNotes.js';
+import { isRecurring } from './recurringExpenses.js';
 
 // ── Vendor logo helpers ───────────────────────────────────────────────────────
 
@@ -130,7 +131,7 @@ function VendorLogo({ name, size = 22, onEditDomain }) {
 /**
  * rows: Array of { rowIndex, description, amounts: number[] }
  */
-export function DetailPanel({ expense, rows, loading, onClose, accessToken, sheetId, onRefresh, currencySymbol = '$', onVendorRenamed, monthName, transactionNotes = {}, onUpdateNote, nonMonthlyVendors = [], onNonMonthlyChanged, onAddExpense, onAddForVendor, highlight = null, cards = [] }) {
+export function DetailPanel({ expense, rows, loading, onClose, accessToken, sheetId, onRefresh, currencySymbol = '$', onVendorRenamed, monthName, transactionNotes = {}, onUpdateNote, nonMonthlyVendors = [], onNonMonthlyChanged, onAddExpense, onAddForVendor, highlight = null, recurringExpenses = [], onToggleRecurring, cards = [] }) {
   const total = rows ? rows.reduce((s, r) => s + r.amounts.reduce((a, b) => a + b, 0), 0) : 0;
   // Scroll container, so the arrive-from-ledger highlight can find its row.
   const listRef = useRef(null);
@@ -318,6 +319,23 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
   }, [highlight?.uuid, highlight?.vendor, highlight?.amount, loading, rows]);
 
   const isVendorNonMonthly = (name) => nonMonthlyVendors.includes((name || '').toLowerCase());
+  const isVendorRecurring  = (name) => isRecurring(recurringExpenses, expense, name);
+
+  // Recurring is a property of the VENDOR, not of one month's charge: the
+  // template list is keyed (category, vendor) with no per-transaction identity.
+  // So the toggle sits on the vendor header, where the one-time flag already is.
+  const toggleRecurring = (vendorName, amount, txDate) => {
+    onToggleRecurring?.({
+      category: expense,
+      vendor: vendorName,
+      amount,
+      // Carried so imports land on the right day with the right card instead of
+      // always the 1st with no card.
+      dayOfMonth: /^\d{4}-\d{2}-(\d{2})/.exec(txDate || '')?.[1] ? Number(/^\d{4}-\d{2}-(\d{2})/.exec(txDate)[1]) : undefined,
+      card: (rows || []).find(r => r.description === vendorName)?.paymentMethod || '',
+      on: !isVendorRecurring(vendorName),
+    });
+  };
 
   // Rename a whole vendor group → fan out across every member row.
   const saveGroupName = (g) => {
@@ -556,6 +574,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
     const expanded = openVendor === g.key;
     const total    = groupTotal(g);
     const isNm      = isVendorNonMonthly(g.vendor);
+    const isRec     = isVendorRecurring(g.vendor);
     return (
       <div key={g.key} data-tx-uuid={g.members.flatMap(m => m.uuids || []).filter(Boolean).join(' ')}
         className="rounded-2xl overflow-hidden" style={{ background: 'var(--sur-4)', border: '1px solid var(--sur-8)' }}>
@@ -601,11 +620,19 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
             <span className="text-sm font-black tabular-nums ml-2 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
               {currencySymbol}{total.toFixed(2)}
             </span>
+            {onToggleRecurring && (
+              <button onClick={() => toggleRecurring(g.vendor, g.members[g.members.length - 1]?.amounts?.[0] ?? 0, g.members[g.members.length - 1]?.date)} disabled={saving}
+                title={isRec ? `Stop importing ${g.vendor} into new months` : `Import ${g.vendor} into every new month`}
+                className="p-1.5 rounded-lg transition-colors flex-shrink-0"
+                style={isRec ? { color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)' } : { color: 'var(--color-text-muted)' }}>
+                <Repeat className="w-3.5 h-3.5" />
+              </button>
+            )}
             <button onClick={() => toggleGroupNonMonthly(g)} disabled={saving}
               title={isNm ? 'Remove one-time flag' : 'Mark as one-time expense'}
               className="p-1.5 rounded-lg transition-colors flex-shrink-0"
               style={isNm ? { color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)' } : { color: 'var(--color-text-muted)' }}>
-              <Repeat className="w-3.5 h-3.5" />
+              <CalendarX className="w-3.5 h-3.5" />
             </button>
             {onAddForVendor && (
               <button onClick={() => onAddForVendor(g.vendor)}
@@ -866,8 +893,23 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                       ? { color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)' }
                       : { color: 'var(--color-text-muted)' }}
                   >
-                    <Repeat className="w-3.5 h-3.5" />
+                    <CalendarX className="w-3.5 h-3.5" />
                   </button>
+                  {onToggleRecurring && (
+                    <button
+                      onClick={() => toggleRecurring(row.description, row.amounts?.[0] ?? 0, row.date)}
+                      disabled={saving}
+                      title={isVendorRecurring(row.description)
+                        ? `Stop importing ${row.description} into new months`
+                        : `Import ${row.description} into every new month`}
+                      className="p-1.5 rounded-lg transition-colors flex-shrink-0"
+                      style={isVendorRecurring(row.description)
+                        ? { color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)' }
+                        : { color: 'var(--color-text-muted)' }}
+                    >
+                      <Repeat className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   {onAddForVendor && (
                     <button onClick={() => onAddForVendor(row.description)}
                       className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]"

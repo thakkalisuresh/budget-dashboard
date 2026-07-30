@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { resolveImportDate } from './recurringExpenses.js';
 import { X, Plus, ChevronRight, ChevronLeft, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   fetchTotalsForEdit, writeSalary, writeBudgetAmounts,
@@ -35,6 +36,8 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
   const [selectedRecurring, setSelectedRecurring] = useState(() =>
     new Set(recurringExpenses.map((_, i) => i))
   );
+  // index → edited amount string. Absent means "use the template's amount".
+  const [recurringAmounts, setRecurringAmounts] = useState({});
 
   const hasRecurring   = recurringExpenses.length > 0;
   const totalSteps     = hasRecurring ? 3 : 2;
@@ -133,12 +136,18 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
       }
 
       // Write selected recurring expenses into the new month's detail sheets
-      const firstOfMonth = `${year}-${String(MONTHS.indexOf(month) + 1).padStart(2, '0')}-01`;
+      const monthIndex = MONTHS.indexOf(month);
       for (const [i, exp] of recurringExpenses.entries()) {
         if (!selectedRecurring.has(i)) continue;
+        const edited = parseFloat(recurringAmounts[i]);
+        const amount = Number.isFinite(edited) && edited > 0 ? edited : exp.amount;
+        // Entries saved before day/card existed have neither; resolveImportDate
+        // falls back to the 1st and clamps into the target month.
         await addOrUpdateExpense(
-          exp.category, exp.vendor, exp.amount,
-          accessToken, newMonth.sheetId, name, 'recurring', firstOfMonth
+          exp.category, exp.vendor, amount,
+          accessToken, newMonth.sheetId, name, 'recurring',
+          resolveImportDate(exp, Number(year), monthIndex),
+          exp.card || ''
         );
       }
 
@@ -366,9 +375,22 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
                           <p className="text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>{exp.vendor}</p>
                           <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{exp.category}</p>
                         </div>
-                        <span className="text-sm font-black flex-shrink-0" style={{ color: 'var(--color-text)' }}>
-                          ${exp.amount.toFixed(2)}
-                        </span>
+                        {/* Editable rather than fixed: the template stores one
+                            amount, so a variable bill (utilities) would import
+                            last month's number. Tick and ignore for a fixed
+                            subscription; overwrite for anything that moves. */}
+                        <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.preventDefault()}>
+                          <span className="text-sm font-black" style={{ color: 'var(--color-text-muted)' }}>$</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={recurringAmounts[i] ?? exp.amount}
+                            onChange={e => setRecurringAmounts(prev => ({ ...prev, [i]: e.target.value }))}
+                            className="w-20 rounded-lg px-2 py-1 text-sm font-black text-right outline-none"
+                            style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}
+                          />
+                        </div>
                       </label>
                     );
                   })}

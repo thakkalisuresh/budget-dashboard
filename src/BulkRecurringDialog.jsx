@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import { X, RefreshCw, Check } from 'lucide-react';
 import { addOrUpdateExpense } from './useExpense.js';
+import { resolveImportDate } from './recurringExpenses.js';
+
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 export function BulkRecurringDialog({ recurringExpenses = [], accessToken, sheetId, monthName, onClose, onSuccess }) {
   const [selected, setSelected]   = useState(() => new Set(recurringExpenses.map((_, i) => i)));
@@ -8,19 +11,35 @@ export function BulkRecurringDialog({ recurringExpenses = [], accessToken, sheet
   const [progress, setProgress]   = useState({ current: 0, total: 0 });
   const [done, setDone]           = useState(false);
   const [failed, setFailed]       = useState(0);
+  // index → edited amount string. Absent means "use the template's amount".
+  const [amounts, setAmounts]     = useState({});
 
   const toggle = (i) =>
     setSelected(prev => { const next = new Set(prev); next.has(i) ? next.delete(i) : next.add(i); return next; });
 
   const handleImport = async () => {
-    const toImport = recurringExpenses.filter((_, i) => selected.has(i));
+    const toImport = recurringExpenses
+      .map((exp, i) => ({ exp, i }))
+      .filter(({ i }) => selected.has(i));
     if (toImport.length === 0) return;
     setImporting(true);
     setProgress({ current: 0, total: toImport.length });
+
+    // monthName is "Aug 2026"; match it against full month names for the date.
+    const [mLabel, yLabel] = String(monthName || '').trim().split(/\s+/);
+    const monthIndex = MONTHS.findIndex(m => m.toLowerCase().startsWith((mLabel || '').toLowerCase().slice(0, 3)));
+    const year = Number(yLabel) || new Date().getFullYear();
+
     let failCount = 0;
-    for (const exp of toImport) {
+    for (const { exp, i } of toImport) {
+      const edited = parseFloat(amounts[i]);
+      const amount = Number.isFinite(edited) && edited > 0 ? edited : exp.amount;
       try {
-        await addOrUpdateExpense(exp.category, exp.vendor, exp.amount, accessToken, sheetId, monthName, 'recurring');
+        await addOrUpdateExpense(
+          exp.category, exp.vendor, amount, accessToken, sheetId, monthName, 'recurring',
+          monthIndex >= 0 ? resolveImportDate(exp, year, monthIndex) : null,
+          exp.card || ''
+        );
       } catch { failCount++; }
       setProgress(p => ({ ...p, current: p.current + 1 }));
     }
@@ -136,9 +155,20 @@ export function BulkRecurringDialog({ recurringExpenses = [], accessToken, sheet
                         <p className="text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>{exp.vendor}</p>
                         <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{exp.category}</p>
                       </div>
-                      <span className="text-sm font-black flex-shrink-0" style={{ color: 'var(--color-text)' }}>
-                        ${exp.amount.toFixed(2)}
-                      </span>
+                      {/* Editable — a variable bill would otherwise import
+                          whatever it cost the month it was tagged. */}
+                      <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.preventDefault()}>
+                        <span className="text-sm font-black" style={{ color: 'var(--color-text-muted)' }}>$</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={amounts[i] ?? exp.amount}
+                          onChange={e => setAmounts(prev => ({ ...prev, [i]: e.target.value }))}
+                          className="w-20 rounded-lg px-2 py-1 text-sm font-black text-right outline-none"
+                          style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' }}
+                        />
+                      </div>
                     </label>
                   );
                 })}
