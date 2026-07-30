@@ -26,7 +26,7 @@ import { resolveCategory } from './_categorize.mjs';
 import { findDuplicates } from './_duplicate-match.mjs';
 import {
   kbYesCancel, kbYesSkip, kbConfirmDelete, kbSplitCategory, kbCategoryConfirm, kbLogAnywayCancel,
-  kbConfirmReceipt, kbEditMenu, kbCategoryPicker, kbCardPicker,
+  kbConfirmReceipt, kbLogAnywayReceipt, kbBatchReceipt, kbEditMenu, kbCategoryPicker, kbCardPicker,
   kbLoggedActions, kbEditLoggedMenu,
 } from './_telegram.mjs';
 import { categorizeItems, matchesSplitVendor } from './_item-categorizer.mjs';
@@ -77,6 +77,103 @@ async function getRateCount(store, userId) {
   } catch { return 0; }
 }
 
+/* ── Batch queue ───────────────────────────────────────────────────────────────
+   A multi-transaction screenshot queues one `confirm:` blob per item. Both YES
+   and SKIP consume the current item and move to the next, so the advance lives
+   here rather than being written twice — two copies would drift, and the caller
+   only differs in the line it prefixes.
+
+   `batch_skipped:` counts drops so the closing message can report what actually
+   happened. Without it the queue can only report batchTotal, which would claim
+   "All 5 logged" after one was skipped. */
+
+const batchSkipKey = (userId) => `batch_skipped:${userId}`;
+
+/**
+ * Right keyboard for whichever kind of pending receipt this is. A batch item has
+ * to keep offering SKIP — after an edit or a category pick the prompt is redrawn,
+ * and falling back to the single-receipt keyboard would strand the user with only
+ * YES and a CANCEL that no longer means what it used to.
+ */
+const kbForPending = (pending) => (pending?.batchTotal ? kbBatchReceipt() : kbConfirmReceipt());
+
+async function bumpBatchSkipped(store, userId) {
+  let count = 0;
+  try { count = (await store.get(batchSkipKey(userId), { type: 'json' }))?.count || 0; }
+  catch { /* first skip of the batch */ }
+  await store.setJSON(batchSkipKey(userId), { count: count + 1 });
+  return count + 1;
+}
+
+/**
+ * Consume the current batch item and prompt for the next, or close out the batch.
+ * `prefixLine` describes what just happened to the item being left behind.
+ */
+async function advanceBatch(ctx, pending, prefixLine) {
+  const { store, userId } = ctx;
+  const { blobs: remaining } = await store.list({ prefix: `confirm:${userId}:` });
+
+  if (remaining?.length > 0) {
+    // store.list ordering isn't guaranteed, and item ids are zero-padded on
+    // purpose — sort so "next" is the same item every caller would pick.
+    const nextKey = remaining.sort((a, b) => a.key.localeCompare(b.key))[0].key;
+    const next    = await store.get(nextKey, { type: 'json' });
+    if (next) {
+      const lead = `${prefixLine}\n\n`;
+      if (next.extraction?.is_transfer) {
+        return ctx.send(lead + buildTransferPrompt(next.extraction, next.conversionInfo));
+      }
+      return ctx.send(
+        lead + buildConfirmPrompt(next.extraction, next.conversionInfo, { index: next.batchIndex, total: next.batchTotal }),
+        kbBatchReceipt()
+      );
+    }
+  }
+
+  // Queue drained — report what actually happened rather than assuming all were
+  // logged, since any number of them may have been skipped.
+  const total = pending.batchTotal;
+  let skipped = 0;
+  try { skipped = (await store.get(batchSkipKey(userId), { type: 'json' }))?.count || 0; }
+  catch { /* none skipped */ }
+  await store.delete(batchSkipKey(userId)).catch(() => {});
+
+  const logged = Math.max(total - skipped, 0);
+  return ctx.send(skipped > 0
+    ? `${prefixLine}\n\n✅ ${logged} logged, ⏭ ${skipped} skipped of ${total}.`
+    : `${prefixLine}\n\n✅ All ${total} transactions logged!`);
+}
+
+/**
+ * Drop just the current batch item and move on.
+ *
+ * Returns the send result when it handled a batch item, or null when there is no
+ * batch in progress — so callers can fall through to whatever SKIP/CANCEL means
+ * in their own flow. A single pending receipt (no batchTotal) is deliberately
+ * left alone: cancelling one of one is the wholesale path, not this one.
+ */
+async function skipCurrentBatchItem(ctx) {
+  const { store, userId } = ctx;
+
+  const { blobs } = await store.list({ prefix: `confirm:${userId}:` });
+  if (!blobs || blobs.length === 0) return null;
+
+  const key     = blobs.sort((a, b) => a.key.localeCompare(b.key))[0].key;
+  const pending = await store.get(key, { type: 'json' });
+  if (!pending?.batchTotal) return null;   // not a batch — leave it to the caller
+
+  await store.delete(key);
+  await bumpBatchSkipped(store, userId);
+
+  const e      = pending.extraction || {};
+  const vendor = e.store_name || 'that charge';
+  const amount = e.total_amount != null ? ` $${e.total_amount}` : '';
+  console.log(`bot-core: batch item ${pending.id} skipped by ${userId}`);
+
+  return await advanceBatch(ctx, pending,
+    `⏭ ${pending.batchIndex}/${pending.batchTotal} skipped: ${vendor}${amount}`);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════════
    PUBLIC: handleTextReply
    ══════════════════════════════════════════════════════════════════════════════ */
@@ -92,7 +189,9 @@ export async function handleTextReply(ctx, text) {
   const normalized = text.trim().toUpperCase();
 
   // ── R10: capturing a typed value for a button-driven field edit ──
-  if (normalized !== 'CANCEL') {
+  // CANCEL ALL is excluded alongside CANCEL — both are control words, and
+  // swallowing either as a field value would leave the edit state stuck.
+  if (normalized !== 'CANCEL' && normalized !== 'CANCEL ALL') {
     const awaitingEdit = await store.get(`awaiting_edit:${userId}`, { type: 'json' }).catch(() => null);
     if (awaitingEdit) {
       return await applyAwaitingEdit(ctx, text, awaitingEdit);
@@ -103,7 +202,16 @@ export async function handleTextReply(ctx, text) {
   await store.delete(`awaiting_attach:${userId}`).catch(() => {});
 
   // ── CANCEL ──
+  // A bare CANCEL on a queued batch item used to delete every remaining
+  // `confirm:` blob, so cancelling one transaction of five threw away the other
+  // four. On a batch it now means "skip this one"; wiping the queue has to be
+  // asked for by name.
   if (normalized === 'CANCEL') {
+    const skipped = await skipCurrentBatchItem(ctx);
+    if (skipped) return skipped;
+  }
+
+  if (normalized === 'CANCEL' || normalized === 'CANCEL ALL') {
     let cancelledAny = false;
     for (const key of [
       `salary_pending:${userId}`, `budget_pending:${userId}`,
@@ -126,7 +234,11 @@ export async function handleTextReply(ctx, text) {
         cancelledAny = true;
       }
     }
-    console.log(`bot-core: CANCEL by ${userId} (cleaned ${cancelledAny ? 'pending' : 'nothing'})`);
+    // Bookkeeping, not a pending action — cleared silently so an abandoned
+    // batch's counter can't turn "Nothing to cancel" into "Cancelled."
+    await store.delete(batchSkipKey(userId)).catch(() => {});
+
+    console.log(`bot-core: ${normalized} by ${userId} (cleaned ${cancelledAny ? 'pending' : 'nothing'})`);
     return ctx.send(cancelledAny ? 'Cancelled.' : 'Nothing to cancel.');
   }
 
@@ -183,7 +295,10 @@ export async function handleTextReply(ctx, text) {
     if (blobs && blobs.length > 0) {
       return await handleSplitSkip(ctx, blobs[0].key);
     }
-    // No split awaiting — fall through (SKIP may belong to another flow / be noise)
+    // No split awaiting — try the batch queue before falling through.
+    const skipped = await skipCurrentBatchItem(ctx);
+    if (skipped) return skipped;
+    // Neither — fall through (SKIP may belong to another flow / be noise)
   }
 
   // ── YES ──
@@ -314,23 +429,8 @@ export async function handleTextReply(ctx, text) {
 
     // Batch: if more transactions are queued, show the next one instead of the full summary.
     if (pending.batchTotal) {
-      const { blobs: remaining } = await store.list({ prefix: `confirm:${userId}:` });
-      if (remaining?.length > 0) {
-        const nextKey  = remaining.sort((a, b) => a.key.localeCompare(b.key))[0].key;
-        const next     = await store.get(nextKey, { type: 'json' });
-        if (next) {
-          const logged = `✅ ${pending.batchIndex}/${pending.batchTotal} logged: ${vendor} $${amount} → ${category}\n\n`;
-          if (next.extraction?.is_transfer) {
-            return ctx.send(logged + buildTransferPrompt(next.extraction, next.conversionInfo));
-          }
-          return ctx.send(
-            logged + buildConfirmPrompt(next.extraction, next.conversionInfo, { index: next.batchIndex, total: next.batchTotal }),
-            kbConfirmReceipt()
-          );
-        }
-      }
-      // All batch items confirmed.
-      return ctx.send(`✅ All ${pending.batchTotal} transactions logged!`);
+      return await advanceBatch(ctx, pending,
+        `✅ ${pending.batchIndex}/${pending.batchTotal} logged: ${vendor} $${amount} → ${category}`);
     }
 
     const hints = ['UNDO to reverse'];
@@ -496,7 +596,7 @@ export async function handleTextReply(ctx, text) {
           lines.push(`(Converted from ${pending.conversionInfo.originalCurrency} ${pending.conversionInfo.original} · rate ${pending.conversionInfo.rate.toFixed(4)})`);
         }
         lines.push('', 'Reply YES to log, or CANCEL');
-        return ctx.send(lines.join('\n'), kbConfirmReceipt());
+        return ctx.send(lines.join('\n'), kbForPending(pending));
       }
     }
   }
@@ -517,7 +617,7 @@ export async function handleTextReply(ctx, text) {
     if (!res.ok) return ctx.send(res.error);
 
     await store.setJSON(key, pending);
-    return ctx.send(buildUpdatedPrompt(pending), kbConfirmReceipt());
+    return ctx.send(buildUpdatedPrompt(pending), kbForPending(pending));
   }
 
   // ── Manual entry: "Walmart 45.23 Grocery" ──
@@ -785,7 +885,11 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
     const promptText = dups.length > 0
       ? `${buildDuplicateWarning(dups)}\n\n${buildConfirmPrompt(data, conversionInfo)}`
       : buildConfirmPrompt(data, conversionInfo);
-    const sent = await ctx.send(promptText, dups.length > 0 ? kbLogAnywayCancel() : kbYesCancel());
+    // Receipt-specific keyboards: same YES/CANCEL callback_data as the generic
+    // kbYesCancel pair, plus the Edit button. Edit was previously only offered on
+    // batch items, so a single receipt could only be logged or thrown away —
+    // even though the edit handlers already supported it.
+    const sent = await ctx.send(promptText, dups.length > 0 ? kbLogAnywayReceipt() : kbConfirmReceipt());
     // Perceived latency ends at the send; Drive now lands after it.
     console.log(`bot-core: timing ${baseReceiptId} extract=${tExtract}ms toPrompt=${Date.now() - t0}ms`);
     await attachDriveResult(store, confirmKey, drivePromise);
@@ -795,6 +899,10 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
 
   // Multiple transactions — upload image once, queue all items as confirm blobs.
   const batchTotal = transactions.length;
+
+  // Clear any skip count left behind by a batch that was never finished, so its
+  // tally can't be attributed to this one.
+  await store.delete(batchSkipKey(userId)).catch(() => {});
 
   // The batch loop threads driveResult into every per-item blob, so deferring
   // the upload here would mean patching N blobs afterwards — more Firestore
@@ -860,7 +968,7 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
   }
   return ctx.send(
     buildConfirmPrompt(first, firstConvInfo, { index: 1, total: batchTotal }),
-    kbConfirmReceipt()
+    kbBatchReceipt()
   );
 }
 
@@ -1517,6 +1625,12 @@ function buildGuideMessage() {
     '• Edit pending: "category: Travel" or "amount: 52.10"',
     '• Confirm: YES · Cancel: CANCEL',
     '',
+    'MULTIPLE TRANSACTIONS (one screenshot)',
+    '• Each is confirmed in turn: 1/5, 2/5…',
+    '• SKIP drops just that one, the rest carry on',
+    '• CANCEL on a queued item also means skip',
+    '• CANCEL ALL abandons the whole queue',
+    '',
     'BUDGET MANAGEMENT',
     '• SET SALARY 5500',
     '• SET BUDGET Grocery 400',
@@ -2012,7 +2126,7 @@ async function getCurrentPending(store, userId) {
 
 function renderPendingConfirm(ctx, pending) {
   const batchInfo = pending.batchTotal ? { index: pending.batchIndex, total: pending.batchTotal } : undefined;
-  return ctx.send(buildConfirmPrompt(pending.extraction, pending.conversionInfo, batchInfo), kbConfirmReceipt());
+  return ctx.send(buildConfirmPrompt(pending.extraction, pending.conversionInfo, batchInfo), kbForPending(pending));
 }
 
 /** Routes an `edit:*` inline-keyboard callback (the `edit:` prefix is stripped). */
@@ -2070,7 +2184,7 @@ async function handleEditCallback(ctx, rest) {
     if (!category) return ctx.send('Unknown category.');
     pending.extraction.reward_category = category;
     await store.setJSON(key, pending);
-    return ctx.send(buildUpdatedPrompt(pending), kbConfirmReceipt());
+    return ctx.send(buildUpdatedPrompt(pending), kbForPending(pending));
   }
   if (rest.startsWith('setcard:')) {
     const idx = parseInt(rest.slice('setcard:'.length), 10);
@@ -2084,7 +2198,7 @@ async function handleEditCallback(ctx, rest) {
       pending.extraction.payment_method = card;
     }
     await store.setJSON(key, pending);
-    return ctx.send(buildUpdatedPrompt(pending), kbConfirmReceipt());
+    return ctx.send(buildUpdatedPrompt(pending), kbForPending(pending));
   }
 
   return ctx.send('Unknown edit action.');
@@ -2114,7 +2228,7 @@ async function applyAwaitingEdit(ctx, text, state) {
     return ctx.send(`${res.error}\n(or CANCEL)`);
   }
   await store.setJSON(key, pending);
-  return ctx.send(buildUpdatedPrompt(pending), kbConfirmReceipt());
+  return ctx.send(buildUpdatedPrompt(pending), kbForPending(pending));
 }
 
 /** Edits an already-logged expense by delete + re-append (no in-place update
