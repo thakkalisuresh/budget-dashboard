@@ -16,6 +16,11 @@ import { GoogleOAuthProvider } from '@react-oauth/google'
 import './index.css'
 // Our actual application — everything the user sees lives under this component.
 import App from './App.jsx'
+// Cache/service-worker teardown, shared with the update flow (see useAppUpdate.js)
+// so there's only one implementation of "throw everything away and come back fresh".
+import { resetAndReload } from './resetAppCaches.js'
+// Detects a new deploy and blocks the stale build. Also owns SW registration.
+import { UpdateGate } from './UpdateGate.jsx'
 
 // The Google OAuth client ID, read from a build-time environment variable.
 // `import.meta.env` is how Vite exposes env vars (only ones prefixed with VITE_).
@@ -111,17 +116,11 @@ class ErrorBoundary extends Component {
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
           {/* Recovery button: wipe every cache + unregister service workers, then
-              reload. This clears out any corrupted offline state before retrying. */}
+              reload. This clears out any corrupted offline state before retrying.
+              Same teardown the update gate falls back to when the version poll
+              spots a deploy the service worker never noticed. */}
           <button
-            onClick={async () => {
-              try {
-                const keys = await caches.keys();                 // names of all caches
-                await Promise.all(keys.map(k => caches.delete(k))); // delete them in parallel
-                const regs = await navigator.serviceWorker.getRegistrations();
-                await Promise.all(regs.map(r => r.unregister()));  // remove the workers too
-              } catch { /* ignore — best-effort cleanup */ }
-              window.location.reload(true);                        // then reload fresh
-            }}
+            onClick={resetAndReload}
             style={{
               padding: '10px 20px', borderRadius: 12, border: 'none', cursor: 'pointer',
               background: '#6366f1', color: '#fff', fontSize: 13, fontWeight: 700,
@@ -161,6 +160,10 @@ createRoot(document.getElementById('root')).render(
   <StrictMode>
     <ErrorBoundary>
       <GoogleOAuthProvider clientId={CLIENT_ID}>
+        {/* Mounted beside <App /> rather than inside it: this is also what
+            registers the service worker, so it must mount exactly once and stay
+            mounted across login/logout. */}
+        <UpdateGate />
         <App />
       </GoogleOAuthProvider>
     </ErrorBoundary>
