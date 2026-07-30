@@ -18,6 +18,7 @@ import { matchesSplitVendor } from './lib/_item-categorizer.mjs';
 import { resolveCardName } from './lib/_card-resolver.mjs';
 import { sha256Hex } from './lib/http-common.mjs';
 import { reportError } from './lib/_error-log.mjs';
+import { withErrorContext, setActor, trail } from './lib/_error-context.mjs';
 import {
   WALLET_WEBHOOK_SECRET,
   VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_EMAIL,
@@ -53,7 +54,7 @@ export const walletWebhook = onRequest(
     timeoutSeconds: 30,
     cors: false,
   },
-  async (req, res) => {
+  async (req, res) => withErrorContext({ channel: 'wallet' }, async () => {
     if (req.method !== 'POST') {
       res.status(405).send('Method Not Allowed');
       return;
@@ -67,6 +68,8 @@ export const walletWebhook = onRequest(
     }
 
     let { merchant, card, email } = req.body || {};
+    if (email) setActor(email);
+    trail('charge received');
     let amountRaw = req.body?.amount;
     let txDate = req.body?.date || null;
 
@@ -184,6 +187,7 @@ export const walletWebhook = onRequest(
     // logging this path exists for. An unconfident one is parked and asked
     // about over Telegram rather than guessed at.
     const allCategories = [...CATEGORIES, ...(userSettings.customCategories || [])];
+    trail(`resolved card ${card || 'none'}`);
     const decision = await resolveCategory({
       vendor,
       amount,
@@ -293,6 +297,7 @@ export const walletWebhook = onRequest(
       console.warn('wallet-webhook: duplicate check failed (non-fatal)', e.message);
     }
 
+    trail(`category ${category}`);
     try {
       await appendExpense({
         category,
@@ -357,5 +362,5 @@ export const walletWebhook = onRequest(
     }
 
     res.status(200).json({ ok: true, category, vendor, amount });
-  }
+  })
 );

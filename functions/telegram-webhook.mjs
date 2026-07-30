@@ -10,6 +10,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { getDb } from './lib/firestore.mjs';
 import { createBotStore } from './lib/bot-store.mjs';
 import { reportError } from './lib/_error-log.mjs';
+import { withErrorContext, setActor, trail, describeActor } from './lib/_error-context.mjs';
 import {
   validateTelegramWebhook,
   sendMessage,
@@ -132,7 +133,10 @@ export const telegramWebhook = onRequest(
     maxInstances: 5,
     cors: false,
   },
-  async (req, res) => {
+  // Every failure inside inherits channel/actor/steps without threading a
+  // parameter through bot-core. AsyncLocalStorage scopes it per invocation,
+  // which matters because Cloud Functions reuse instances across requests.
+  async (req, res) => withErrorContext({ channel: 'bot' }, async () => {
     if (req.method !== 'POST') { res.status(405).send('Method Not Allowed'); return; }
 
     if (!validateTelegramWebhook(req)) { res.status(403).send('Forbidden'); return; }
@@ -140,6 +144,14 @@ export const telegramWebhook = onRequest(
     const update = req.body || {};
     const allowedUsers = (process.env.TELEGRAM_ALLOWED_USERS || '')
       .split(',').map(u => u.trim()).filter(Boolean);
+
+    // Identify who this update is from before any work happens, so a failure
+    // anywhere below already knows which of the two of us hit it.
+    const fromId = update.message?.from?.id ?? update.callback_query?.from?.id;
+    if (fromId) setActor(describeActor(fromId));
+    if (update.message?.photo || update.message?.document) trail('sent a photo');
+    else if (update.callback_query) trail(`tapped ${String(update.callback_query.data || '').slice(0, 24)}`);
+    else if (update.message?.text) trail(`sent "${String(update.message.text).slice(0, 24)}"`);
     const store = createBotStore(getDb());
 
     // ── R1: idempotency — Telegram re-delivers an update if it doesn't get a
@@ -201,5 +213,5 @@ export const telegramWebhook = onRequest(
     }
 
     res.status(200).send('ok');
-  }
+  })
 );
