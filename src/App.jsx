@@ -32,6 +32,7 @@ const ChatAgent        = lazy(() => import('./ChatAgent.jsx').then(m => ({ defau
 import { HistoryTab } from './HistoryTab.jsx';
 import { LedgerTab } from './LedgerTab.jsx';
 import { invalidateLedger } from './ledgerCache.js';
+import { upsertRecurring, removeRecurring } from './recurringExpenses.js';
 const SettingsPanel    = lazy(() => import('./SettingsPanel.jsx').then(m => ({ default: m.SettingsPanel })));
 const CardsTab         = lazy(() => import('./CardsTab.jsx').then(m => ({ default: m.CardsTab })));
 const SplitTab         = lazy(() => import('./SplitTab.jsx').then(m => ({ default: m.SplitTab })));
@@ -794,6 +795,15 @@ function Dashboard({ auth }) {
           // existing vendor no longer means retyping its name.
           onAddForVendor={!isReadOnly ? (vendor) => { setShowAddDialog({ prefillCategory: detail.expense, prefillVendor: vendor }); setDetail(null); } : undefined}
           highlight={detail.highlight || null}
+          recurringExpenses={settings.recurringExpenses || []}
+          // Recurring is a vendor-level template list, not a per-transaction
+          // flag — see recurringExpenses.js. Toggling writes/removes the entry.
+          onToggleRecurring={!isReadOnly ? ({ on, ...entry }) => updateSettings(prev => ({
+            ...prev,
+            recurringExpenses: on
+              ? upsertRecurring(prev.recurringExpenses || [], entry)
+              : removeRecurring(prev.recurringExpenses || [], entry.category, entry.vendor),
+          })) : undefined}
           cards={settings.cards || []}
         /></Suspense>
       )}
@@ -970,6 +980,7 @@ function Dashboard({ auth }) {
           pushHook={pushHook}
           sheetId={selectedSheetId}
           accessToken={user.accessToken}
+          months={months}
         /></Suspense>
       )}
 

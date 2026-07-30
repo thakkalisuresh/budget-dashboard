@@ -12,17 +12,13 @@ import { CategoryPickerSheet } from './CategoryPickerSheet.jsx';
 import { userMessage } from './errorCodes.js';
 import { readMemoryCache, loadCachedLedger, storeLedger } from './ledgerCache.js';
 import { txNoteKey } from './transactionNotes.js';
-
-const METHOD_LABELS = {
-  'Receipt Scan': 'Scan',
-  'Import':       'Import',
-  'Added':        'Manual',
-};
+import { WRITE_ACTIONS, METHOD_LABELS } from './historyActions.js';
 
 const METHOD_STYLE = {
   'Scan':   { background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' },
   'Import': { background: 'oklch(62% 0.20 295 / 15%)', color: 'oklch(72% 0.18 295)', border: '1px solid oklch(62% 0.20 295 / 25%)' },
   'Manual': { background: 'oklch(70% 0.15 145 / 12%)', color: 'var(--color-success)', border: '1px solid oklch(70% 0.15 145 / 25%)' },
+  'Recurring': { background: 'oklch(66% 0.17 220 / 15%)', color: 'oklch(72% 0.15 220)', border: '1px solid oklch(66% 0.17 220 / 25%)' },
 };
 
 const SORT_OPTIONS = [
@@ -56,9 +52,10 @@ async function buildLedger(sheetId, accessToken, monthName = '') {
     ),
   ]);
 
-  const addEvents = historyEntries.filter(e =>
-    ['Added', 'Receipt Scan', 'Import'].includes(e.action)
-  );
+  // WRITE_ACTIONS is shared with the writer (historyActions.js) so the two
+  // can't drift — a missing action costs the row its date and badge, not its
+  // existence, which reads as "my transaction vanished".
+  const addEvents = historyEntries.filter(e => WRITE_ACTIONS.includes(e.action));
 
   const transactions = [];
   for (const { cat, rows } of categoryRows) {

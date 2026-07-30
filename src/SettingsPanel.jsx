@@ -4,6 +4,8 @@ import { DEFAULT_SETTINGS } from './useSettings.js';
 import { CARD_REWARDS, getEffectiveRates } from './cardRewards.js';
 import { DEFAULT_CARD_OWNERS, DEFAULT_PEOPLE } from './cardOwners.js';
 import { CURRENCIES } from './currency.js';
+import { scanRecentMonths } from './recurringScan.js';
+import { detectRecurring, upsertRecurring } from './recurringExpenses.js';
 import { CATEGORIES, getAllCategoryNames } from './sheetsApi.js';
 import { newRuleId } from './smartRules.js';
 import { fetchHistory } from './sheetHistory.js';
@@ -276,7 +278,7 @@ function ShortcutRow({ actionKey, label, desc, value, onSave, onReset, defaultVa
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export function SettingsPanel({ settings, updateSettings, expenses, onClose, currencySymbol, pinHash, onSetPin, onClearPin, pushHook, sheetId, accessToken }) {
+export function SettingsPanel({ settings, updateSettings, expenses, onClose, currencySymbol, pinHash, onSetPin, onClearPin, pushHook, sheetId, accessToken, months = [] }) {
   const allCategories = getAllCategoryNames();
   const vis = settings.visibility;
   const [currencySearch, setCurrencySearch]     = useState('');
@@ -349,6 +351,48 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
 
   const smartRules        = settings.smartRules || [];
   const recurringExpenses = settings.recurringExpenses || [];
+
+  // ── Detection pass ────────────────────────────────────────────────────────
+  // Nothing was ever recorded per transaction, so past months' sheets are the
+  // only evidence of what is actually recurring. Rather than make the user
+  // re-tag a year of subscriptions by hand, find the vendors that repeat and
+  // offer them as a checklist.
+  const [scanState, setScanState]   = useState(null);   // { done, total } while scanning
+  const [candidates, setCandidates] = useState(null);   // null = not run yet
+  const [chosen, setChosen]         = useState(new Set());
+  const [scanError, setScanError]   = useState('');
+
+  const runRecurringScan = async () => {
+    setScanError('');
+    setCandidates(null);
+    try {
+      const monthly = await scanRecentMonths(months, accessToken, {
+        onProgress: setScanState,
+      });
+      const found = detectRecurring(monthly, recurringExpenses);
+      setCandidates(found);
+      setChosen(new Set(found.map((_, i) => i)));   // pre-checked
+    } catch (e) {
+      setScanError(e?.message || 'Could not read past months. Try again.');
+    } finally {
+      setScanState(null);
+    }
+  };
+
+  const addChosenRecurring = () => {
+    const picked = (candidates || []).filter((_, i) => chosen.has(i));
+    if (picked.length === 0) return;
+    // One settings write for the whole batch, not one per entry.
+    updateSettings(prev => ({
+      ...prev,
+      recurringExpenses: picked.reduce(
+        (list, c) => upsertRecurring(list, c),
+        prev.recurringExpenses || [],
+      ),
+    }));
+    setCandidates(null);
+    setChosen(new Set());
+  };
   const cards             = settings.cards || DEFAULT_SETTINGS.cards;
   const cardRules         = settings.cardRules || [];
   const cardOwners        = settings.cardOwners || DEFAULT_CARD_OWNERS;
@@ -972,10 +1016,81 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
           {/* ── Recurring Expenses ───────────────────────────────────────── */}
           <div>
             <SectionLabel>Recurring Expenses</SectionLabel>
+            <div className="mb-2">
+              <button
+                onClick={runRecurringScan}
+                disabled={!!scanState || !months.length || !accessToken}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold transition-colors disabled:opacity-50"
+                style={{ background: 'var(--color-surface)', border: '1px solid var(--color-accent-border)', color: 'var(--color-accent-text)' }}
+              >
+                <Search className="w-3.5 h-3.5" />
+                {scanState
+                  ? `Scanning ${scanState.done}/${scanState.total} months…`
+                  : 'Find recurring expenses'}
+              </button>
+              <p className="text-[10px] mt-1.5 px-1" style={{ color: 'var(--color-text-muted)' }}>
+                Looks through recent months for vendors you pay every month.
+              </p>
+              {scanError && (
+                <p className="text-[10px] mt-1.5 px-1" style={{ color: 'var(--color-danger)' }}>{scanError}</p>
+              )}
+            </div>
+
+            {candidates && candidates.length === 0 && (
+              <div className="rounded-2xl px-4 py-4 mb-2 text-center" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+                <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  No new repeating vendors found.
+                </p>
+              </div>
+            )}
+
+            {candidates && candidates.length > 0 && (
+              <div className="rounded-2xl overflow-hidden mb-2" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-accent-border)' }}>
+                <p className="px-4 pt-3 pb-1 text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--color-accent-text)' }}>
+                  {candidates.length} found
+                </p>
+                {candidates.map((c, i) => (
+                  <label key={`${c.category}-${c.vendor}`} className="flex items-center gap-3 px-4 py-2.5 cursor-pointer"
+                    style={i > 0 ? { borderTop: '1px solid var(--sur-6)' } : {}}>
+                    <input
+                      type="checkbox"
+                      checked={chosen.has(i)}
+                      onChange={() => setChosen(prev => {
+                        const next = new Set(prev);
+                        next.has(i) ? next.delete(i) : next.add(i);
+                        return next;
+                      })}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold truncate" style={{ color: 'var(--color-text)' }}>{c.vendor}</p>
+                      <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+                        {c.category} · {c.months} months{c.varies ? ' · amount varies' : ''}
+                      </p>
+                    </div>
+                    <span className="text-xs font-black flex-shrink-0" style={{ color: 'var(--color-text)' }}>
+                      {currencySymbol}{Number(c.amount).toFixed(2)}
+                    </span>
+                  </label>
+                ))}
+                <div className="px-4 py-3" style={{ borderTop: '1px solid var(--sur-6)' }}>
+                  <button
+                    onClick={addChosenRecurring}
+                    disabled={chosen.size === 0}
+                    className="w-full py-2 rounded-xl text-xs font-black text-white transition-colors disabled:opacity-40"
+                    style={{ background: 'var(--color-accent)' }}
+                  >
+                    Add {chosen.size} as recurring
+                  </button>
+                </div>
+              </div>
+            )}
+
             {recurringExpenses.length === 0 ? (
               <div className="rounded-2xl px-4 py-6 text-center" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
                 <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>No recurring expenses set.</p>
-                <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>Add them via the Add Expense dialog.</p>
+                <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
+                  Use the 🔁 button on a vendor, or scan for them above.
+                </p>
               </div>
             ) : (
               <div className="rounded-2xl overflow-hidden" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
