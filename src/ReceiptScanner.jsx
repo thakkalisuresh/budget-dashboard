@@ -2,6 +2,7 @@ import React from 'react';
 import { Camera, X, Plus, AlertCircle, CheckCircle, ChevronRight, Upload, FileText } from 'lucide-react';
 import { CATEGORIES } from './sheetsApi.js';
 import { useReceiptScanner } from './useReceiptScanner.js';
+import { useBusyWhile } from './busyRegistry.js';
 
 const inputCls    = "w-full rounded-2xl px-4 py-3 text-sm outline-none transition-all";
 const inputErrCls = "w-full rounded-2xl px-4 py-3 text-sm outline-none transition-all";
@@ -665,6 +666,10 @@ function SummaryModal({ s, monthName }) {
 
 export function ReceiptScanButton(props) {
   const s = useReceiptScanner(props);
+
+  // Hold the update gate back while a scan is in flight — an upload, a review
+  // queue or a half-assigned split would all be lost to a reload.
+  useBusyWhile(s.phase !== 'idle');
 
   return (
     <>
