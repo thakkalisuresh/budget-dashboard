@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.stubEnv('WALLET_WEBHOOK_SECRET', 'test-wallet-secret');
 
 // Shared mock state (hoisted so the vi.mock factories can close over it).
-const { extractMock, appendMock, sheetIdMock, webpushSend, getSettingsMock, telegramSend, splitStore, ctl } = vi.hoisted(() => ({
+const { extractMock, appendMock, sheetIdMock, webpushSend, getSettingsMock, telegramSend, splitStore, ctl, recentMock } = vi.hoisted(() => ({
+  recentMock: vi.fn(async () => []),
   extractMock: vi.fn(),
   appendMock: vi.fn(),
   sheetIdMock: vi.fn(),
@@ -31,6 +32,10 @@ vi.mock('../../functions/lib/_extraction.mjs', () => ({
 vi.mock('../../functions/lib/_sheets.mjs', () => ({
   appendExpense: appendMock,
   getCurrentMonthSheetId: sheetIdMock,
+  // Required by the duplicate check. Its absence made every wallet test throw
+  // inside that check, get swallowed as non-fatal, and silently skip the
+  // dedup path entirely — so #60's wallet half was never actually exercised.
+  getRecentExpenses: (...args) => recentMock(...args),
   // Default: no per-user settings (no disabled/split vendors). Tests that need
   // these override the mock via getSettingsMock.
   getUserSettingsByEmail: (...args) => getSettingsMock(...args),
@@ -98,6 +103,7 @@ beforeEach(() => {
   webpushSend.mockReset().mockResolvedValue(undefined);
   getSettingsMock.mockReset().mockResolvedValue({});
   telegramSend.mockReset().mockResolvedValue({ ok: true });
+  recentMock.mockReset().mockResolvedValue([]);
   splitStore.data.clear();
   ctl.pushDoc = null;
   ctl.deleted = false;
@@ -458,5 +464,71 @@ describe('wallet-webhook — LLM category correction', () => {
 
     expect(res.status).toBe(200);
     expect(appendMock.mock.calls[0][0].category).toBe('Misc');
+  });
+});
+
+/* ── Duplicate detection on the wallet path (previously never executed) ── */
+
+describe('wallet-webhook — duplicate detection', () => {
+  const already = (vendor, amount, date, category = 'Misc') =>
+    ({ vendor, amount, category, txDate: date, timestamp: `${date}T08:00:00Z`, uuid: 'tx_old' });
+
+  beforeEach(() => {
+    vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-bot-token');
+    vi.stubEnv('TELEGRAM_EMAIL_MAP', 'nair.sabarish97@gmail.com:111222333');
+    extractMock.mockResolvedValue({ ok: true, data: { reward_category: 'Grocery', store_name: 'Costco' } });
+  });
+
+  it('warns but still logs when the charge is already there', async () => {
+    recentMock.mockResolvedValue([already('Costco', 89.5, '2026-05-15')]);
+    const res = await call(req({ body: validBody }));
+
+    expect(res.status).toBe(200);
+    // Notify, don't gate — nobody is in the loop on a bank push, and holding
+    // the charge would cost the instant logging this path exists for.
+    expect(appendMock).toHaveBeenCalledOnce();
+    const notice = telegramSend.mock.calls.at(-1)?.[1] || '';
+    expect(notice).toContain('Possible duplicate');
+    expect(notice).toContain('Costco');
+  });
+
+  it('sends the notice only AFTER the write succeeds', async () => {
+    // Warning about a charge that never landed would be worse than not warning.
+    recentMock.mockResolvedValue([already('Costco', 89.5, '2026-05-15')]);
+    appendMock.mockRejectedValue(new Error('sheet locked'));
+    const res = await call(req({ body: validBody }));
+
+    expect(res.status).toBe(500);
+    expect(telegramSend).not.toHaveBeenCalled();
+  });
+
+  it('stays quiet when nothing matches', async () => {
+    recentMock.mockResolvedValue([already('Trader Joes', 12.0, '2026-05-15')]);
+    await call(req({ body: validBody }));
+    expect(appendMock).toHaveBeenCalledOnce();
+    expect(telegramSend).not.toHaveBeenCalled();
+  });
+
+  it('does not flag a repeat purchase outside the date window', async () => {
+    // Same vendor and amount two weeks earlier is a recurring shop, not a dup.
+    recentMock.mockResolvedValue([already('Costco', 89.5, '2026-05-01')]);
+    await call(req({ body: validBody }));
+    expect(telegramSend).not.toHaveBeenCalled();
+  });
+
+  it('matches across categories — the case this exists for', async () => {
+    // The wallet filed it under Misc; the receipt would go to Grocery.
+    recentMock.mockResolvedValue([already('Costco', 89.5, '2026-05-15', 'Misc')]);
+    await call(req({ body: validBody }));
+    expect(telegramSend.mock.calls.at(-1)?.[1] || '').toContain('Misc');
+  });
+
+  it('still logs the charge when the duplicate check itself fails', async () => {
+    // A broken check must never cost a transaction.
+    recentMock.mockRejectedValue(new Error('sheets down'));
+    const res = await call(req({ body: validBody }));
+    expect(res.status).toBe(200);
+    expect(appendMock).toHaveBeenCalledOnce();
+    expect(telegramSend).not.toHaveBeenCalled();
   });
 });
