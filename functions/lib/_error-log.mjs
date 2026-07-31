@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto';
 import { getDb } from './firestore.mjs';
 import { errorLabel, describeError } from './_error-codes.mjs';
 import { sendMessage, resolveTelegramChatId } from './_telegram.mjs';
+import { currentErrorContext } from './_error-context.mjs';
 
 export const ERROR_COLLECTION = 'error_log';
 
@@ -85,7 +86,9 @@ export async function reportError(code, error, context = {}) {
       // Stack is the difference between "Sheets API 500" and knowing which
       // call made it, but it's bulky — first few frames are enough.
       stack: String(error?.stack || '').split('\n').slice(0, 4).join('\n').slice(0, 800),
-      context: sanitizeContext(context),
+      // Ambient request context first, explicit call-site context second, so a
+      // deliberate value at the call site always wins over the inferred one.
+      context: sanitizeContext({ ...currentErrorContext(), ...context }),
       at: new Date().toISOString(),
       reported: false,
       alerted: false,
@@ -131,7 +134,7 @@ async function maybeAlertNow(code, meta, message, context) {
     const lastAt = snap.exists ? Date.parse(snap.data()?.lastAt || '') : NaN;
     if (Number.isFinite(lastAt) && Date.now() - lastAt < ALERT_COOLDOWN_MS) return;
 
-    const ctx = Object.entries(sanitizeContext(context))
+    const ctx = Object.entries(sanitizeContext({ ...currentErrorContext(), ...context }))
       .slice(0, 3).map(([k, v]) => `${k}=${v}`).join(' ');
     await sendMessage(chatId, [
       `🔴 ${code} — ${meta.title}`,
@@ -190,6 +193,17 @@ export function groupErrors(docs) {
   return [...byPrint.values()].sort((a, b) => b.count - a.count);
 }
 
+/** "Jul 29 08:00" in the household's timezone — a bare ISO string reads badly on a phone. */
+function shortTime(iso) {
+  if (!iso) return '';
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return '';
+  return new Date(ms).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    hour12: true, timeZone: 'America/Los_Angeles',
+  });
+}
+
 /** Render a grouped digest as one Telegram message. */
 export function buildDigest(groups, sinceLabel) {
   if (groups.length === 0) return null;
@@ -204,8 +218,18 @@ export function buildDigest(groups, sinceLabel) {
     // summary rather than a surprise repeat.
     lines.push(`${flag} ${g.count}× ${g.code} — ${g.title}${g.alerted ? ' (already alerted)' : ''}`);
     lines.push(`   ${g.message.slice(0, 140)}`);
-    const ctx = Object.entries(g.context || {}).slice(0, 3).map(([k, v]) => `${k}=${v}`).join(' ');
+    // When it happened. A repeated failure shows the span rather than a single
+    // point — that is what tells you whether it is ongoing or already over.
+    const when = g.count > 1 && g.first && g.last && g.first !== g.last
+      ? `${shortTime(g.first)} → ${shortTime(g.last)}`
+      : shortTime(g.last || g.first);
+    if (when) lines.push(`   when: ${when}`);
+    // The trail gets its own line — it is the part that actually explains the
+    // failure, and it is too long to sit inline with the other fields.
+    const { trail, ...rest } = g.context || {};
+    const ctx = Object.entries(rest).slice(0, 4).map(([k, v]) => `${k}=${v}`).join(' ');
     if (ctx) lines.push(`   ${ctx}`);
+    if (trail) lines.push(`   steps: ${trail}`);
     lines.push('');
   }
   if (groups.length > 10) lines.push(`…and ${groups.length - 10} more kinds.`);

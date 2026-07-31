@@ -70,6 +70,17 @@ export default defineConfig({
       // vite-plugin-pwa's virtual module only exists during a real Vite build,
       // so anything importing useAppUpdate would fail to resolve under vitest.
       'virtual:pwa-register/react':  new URL('./test-stubs/pwa-register-react.mjs', import.meta.url).pathname,
+      // Pin web-push to the root copy.
+      //
+      // functions/ has its own node_modules locally (Firebase installs it), so
+      // functions/wallet-webhook.mjs resolved web-push to the NESTED copy while
+      // the test's vi.mock('web-push') resolved the ROOT one. Different paths
+      // mean the mock never intercepts, the real library runs, and it rejects
+      // the test's fake VAPID key — two tests failing locally while passing in
+      // CI, where `npm ci` installs only at the root so no nested copy exists
+      // to diverge from. Pinning both importers to one path makes a local run
+      // mean the same thing as a CI run.
+      'web-push': new URL('./node_modules/web-push/src/index.js', import.meta.url).pathname,
     },
   },
   define: {
