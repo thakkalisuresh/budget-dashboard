@@ -1,6 +1,7 @@
 import { apiFetch, writeCell } from './sheetApi.js';
 import { safeText } from './sheetHelpers.js';
 import { appendHistoryEntry } from './sheetHistory.js';
+import { notifyWarehouse, budgetWriteEvent } from './warehouseNotify.js';
 
 export async function fetchTotalsForEdit(sheetId, accessToken) {
   const range = encodeURIComponent('Totals!A1:J30');
@@ -14,11 +15,18 @@ export async function fetchTotalsForEdit(sheetId, accessToken) {
   }));
 }
 
-export async function writeSalary(sheetId, salary, accessToken) {
+export async function writeSalary(sheetId, salary, accessToken, monthName = null) {
   const rows = await fetchTotalsForEdit(sheetId, accessToken);
   const salaryRow = rows.find(r => r.row[5] && String(r.row[5]).toLowerCase().includes('salary received'));
   if (!salaryRow) throw new Error('Salary row not found in Totals');
   await writeCell(sheetId, 'Totals', salaryRow.rowNum, 6, salary, accessToken);
+  // Salary shares the budget table under the reserved category `__salary__`.
+  // Unlike a category budget, col G genuinely holds the number.
+  notifyWarehouse(budgetWriteEvent({
+    spreadsheetId: sheetId, budgetMonth: monthName, category: '__salary__',
+    budgetCents: Math.round(Number(salary) * 100), derivation: 'salary_literal',
+    totalsRowNum: salaryRow.rowNum, sourceAction: 'writeSalary',
+  }), accessToken);
   await appendHistoryEntry(sheetId, accessToken, {
     action: 'Budget Updated',
     category: 'Salary',
@@ -27,8 +35,16 @@ export async function writeSalary(sheetId, salary, accessToken) {
   });
 }
 
-export async function updateCategoryBudget(sheetId, accessToken, { rowNum, budget, categoryName }) {
-  await writeCell(sheetId, 'Totals', rowNum, 2, `=${Number(budget) || 0}-B${rowNum}`, accessToken);
+export async function updateCategoryBudget(sheetId, accessToken, { rowNum, budget, categoryName, monthName = null }) {
+  const formula = `=${Number(budget) || 0}-B${rowNum}`;
+  await writeCell(sheetId, 'Totals', rowNum, 2, formula, accessToken);
+  // The budget literal exists ONLY inside that formula string. Sending it
+  // verbatim is what lets the warehouse record derivation='formula_literal'
+  // rather than having to infer the number from spent + remaining.
+  notifyWarehouse(budgetWriteEvent({
+    spreadsheetId: sheetId, budgetMonth: monthName, category: categoryName,
+    formulaRaw: formula, totalsRowNum: rowNum, sourceAction: 'updateCategoryBudget',
+  }), accessToken);
   await appendHistoryEntry(sheetId, accessToken, {
     action: 'Budget Updated',
     category: categoryName,
@@ -46,10 +62,17 @@ export async function updateCategoryBudget(sheetId, accessToken, { rowNum, budge
  * Every other write path (`updateCategoryBudget`, the bot's `writeBudgetAmount`,
  * `addCategory`) writes the formula; this one silently didn't.
  */
-export async function writeBudgetAmounts(sheetId, updates, accessToken) {
-  for (const { rowNum, amount } of updates) {
-    await writeCell(sheetId, 'Totals', rowNum, 2, `=${Number(amount) || 0}-B${rowNum}`, accessToken);
+export async function writeBudgetAmounts(sheetId, updates, accessToken, monthName = null) {
+  const events = [];
+  for (const { rowNum, amount, categoryName = null } of updates) {
+    const formula = `=${Number(amount) || 0}-B${rowNum}`;
+    await writeCell(sheetId, 'Totals', rowNum, 2, formula, accessToken);
+    events.push(budgetWriteEvent({
+      spreadsheetId: sheetId, budgetMonth: monthName, category: categoryName,
+      formulaRaw: formula, totalsRowNum: rowNum, sourceAction: 'writeBudgetAmounts',
+    }));
   }
+  notifyWarehouse(events, accessToken);
 }
 
 export async function appendRandomExpenseNote(sheetId, vendorName, amount, accessToken) {

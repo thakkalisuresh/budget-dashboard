@@ -399,6 +399,68 @@ export const ERROR_CODES = {
     cause: 'Unsupported file type, or a PDF over the size limit.',
     fix: 'Expected user error. Send an image, or a screenshot instead of a large PDF.',
   },
+
+  /* ── WHS: BigQuery warehouse ──────────────────────────────────────────────
+     Nothing in this domain is 'fatal'. The warehouse is a derived archive
+     written strictly AFTER the spreadsheet, so a failure here never costs the
+     user their transaction — it costs the archive a row, and the reconciler
+     re-emits it on the next pass. The one thing that is genuinely
+     unrecoverable is a deletion nobody recorded, which is why WHS-005 and
+     WHS-007 exist. */
+  'WHS-001': {
+    title: 'Warehouse write failed — queued for retry',
+    severity: 'degraded',
+    cause: 'A BigQuery Storage Write API append errored or blew the hot-path timeout, so the rows went to the Firestore outbox instead.',
+    fix: 'Nothing to do immediately — the warehouse cron drains the outbox every 15 minutes. A steady stream of these means BigQuery is unreachable or the table schema drifted.',
+  },
+  'WHS-002': {
+    title: 'Warehouse outbox write failed',
+    severity: 'degraded',
+    cause: 'BigQuery AND Firestore both failed, so the event was not persisted anywhere. This is the only path where a warehouse row is genuinely dropped.',
+    fix: 'The reconciler is the backstop: it diffs the actual sheet and re-emits the row with state_reason=missed_notify on its next pass. Check that Firestore is healthy.',
+  },
+  'WHS-003': {
+    title: 'Warehouse event rejected as malformed',
+    severity: 'degraded',
+    cause: 'An ingest event was missing a REQUIRED column or carried an unknown one. That is a caller bug, not a transient failure, so it is not queued for retry.',
+    fix: 'Look at the reported table and column. A new field needs a NULLABLE column added in _warehouse-schema.mjs before any caller sends it.',
+  },
+  'WHS-004': {
+    title: 'Warehouse outbox entry dead-lettered',
+    severity: 'degraded',
+    cause: 'An outbox entry exhausted MAX_OUTBOX_ATTEMPTS drains and will not be retried again.',
+    fix: 'Read the entry in the warehouse_outbox collection; lastError says why. Usually a schema mismatch. Fix the schema, then clear the dead flag to have it retried.',
+  },
+  'WHS-005': {
+    title: 'Warehouse reconciliation aborted on a partial read',
+    severity: 'degraded',
+    cause: 'One or more ranges in a month failed to read, so the sheet snapshot was incomplete. Emitting deletes from a partial snapshot would mark live transactions as deleted.',
+    fix: 'Usually a transient Sheets 429/500 — the next tick retries the whole month. Persistent failures mean the month sheet was renamed, deleted, or unshared.',
+  },
+  'WHS-006': {
+    title: 'Warehouse backfill gate failed',
+    severity: 'degraded',
+    cause: 'A staged month did not reconcile against the spreadsheet, so nothing was promoted into the archive.',
+    fix: 'Read load_audits for the failing check_name. category_sum and month_sum are exact integer-cent comparisons; a mismatch is a real data problem, not rounding.',
+  },
+  'WHS-007': {
+    title: 'Warehouse dataset has an expiration policy set',
+    severity: 'config',
+    cause: 'defaultTableExpirationMs or defaultPartitionExpirationMs is set on the archive dataset. Either one silently deletes the archive on a timer, with no error anywhere.',
+    fix: 'Unset both immediately: bq update --default_table_expiration 0 --default_partition_expiration 0 <project>:fundient_warehouse',
+  },
+  'WHS-008': {
+    title: 'Warehouse notify rejected an unknown spreadsheet',
+    severity: 'degraded',
+    cause: 'A client asserted a write against a spreadsheet id that is not in month_dim, so it was refused rather than recorded.',
+    fix: 'Expected if a month was created outside the app. Run the month_dim snapshot, or check whether something is calling the notify endpoint with a bad id.',
+  },
+  'WHS-009': {
+    title: 'Warehouse skipped a tab whose header does not match the contract',
+    severity: 'degraded',
+    cause: 'A category tab has a header row the V2 reader does not recognise — usually a custom category, which addCategory writes with 5 columns and no UUID.',
+    fix: 'Not an error by itself; the tab is skipped and excluded from both sides of the month_sum gate. Convert the tab to the V2 shape if you want it archived.',
+  },
 };
 
 /** Look up a code. Returns null for an unknown one rather than throwing. */

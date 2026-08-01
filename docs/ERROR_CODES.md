@@ -3,7 +3,7 @@
 > **Generated file — do not edit by hand.**
 > Source of truth: `functions/lib/_error-codes.mjs`. Regenerate with `npm run errdoc`.
 
-58 codes across 13 domains.
+67 codes across 14 domains.
 
 Codes appear wherever the failure surfaces: in the bot's reply, on the
 dashboard crash screen, in the wallet webhook response body, in Cloud Logging,
@@ -80,6 +80,15 @@ and in the daily Telegram digest.
 | [`WEB-002`](#web-002) | degraded | Unhandled promise rejection in the dashboard |
 | [`WEB-003`](#web-003) | degraded | Offline — write refused |
 | [`WEB-004`](#web-004) | fatal | Receipt file rejected |
+| [`WHS-001`](#whs-001) | degraded | Warehouse write failed — queued for retry |
+| [`WHS-002`](#whs-002) | degraded | Warehouse outbox write failed |
+| [`WHS-003`](#whs-003) | degraded | Warehouse event rejected as malformed |
+| [`WHS-004`](#whs-004) | degraded | Warehouse outbox entry dead-lettered |
+| [`WHS-005`](#whs-005) | degraded | Warehouse reconciliation aborted on a partial read |
+| [`WHS-006`](#whs-006) | degraded | Warehouse backfill gate failed |
+| [`WHS-007`](#whs-007) | config | Warehouse dataset has an expiration policy set |
+| [`WHS-008`](#whs-008) | degraded | Warehouse notify rejected an unknown spreadsheet |
+| [`WHS-009`](#whs-009) | degraded | Warehouse skipped a tab whose header does not match the contract |
 
 ## CFG — Configuration & secrets
 
@@ -570,6 +579,80 @@ and in the daily Telegram digest.
 **Why it happens.** Unsupported file type, or a PDF over the size limit.
 
 **What to do.** Expected user error. Send an image, or a screenshot instead of a large PDF.
+
+## WHS — WHS
+
+### WHS-001
+
+**Warehouse write failed — queued for retry** · `degraded`
+
+**Why it happens.** A BigQuery Storage Write API append errored or blew the hot-path timeout, so the rows went to the Firestore outbox instead.
+
+**What to do.** Nothing to do immediately — the warehouse cron drains the outbox every 15 minutes. A steady stream of these means BigQuery is unreachable or the table schema drifted.
+
+### WHS-002
+
+**Warehouse outbox write failed** · `degraded`
+
+**Why it happens.** BigQuery AND Firestore both failed, so the event was not persisted anywhere. This is the only path where a warehouse row is genuinely dropped.
+
+**What to do.** The reconciler is the backstop: it diffs the actual sheet and re-emits the row with state_reason=missed_notify on its next pass. Check that Firestore is healthy.
+
+### WHS-003
+
+**Warehouse event rejected as malformed** · `degraded`
+
+**Why it happens.** An ingest event was missing a REQUIRED column or carried an unknown one. That is a caller bug, not a transient failure, so it is not queued for retry.
+
+**What to do.** Look at the reported table and column. A new field needs a NULLABLE column added in _warehouse-schema.mjs before any caller sends it.
+
+### WHS-004
+
+**Warehouse outbox entry dead-lettered** · `degraded`
+
+**Why it happens.** An outbox entry exhausted MAX_OUTBOX_ATTEMPTS drains and will not be retried again.
+
+**What to do.** Read the entry in the warehouse_outbox collection; lastError says why. Usually a schema mismatch. Fix the schema, then clear the dead flag to have it retried.
+
+### WHS-005
+
+**Warehouse reconciliation aborted on a partial read** · `degraded`
+
+**Why it happens.** One or more ranges in a month failed to read, so the sheet snapshot was incomplete. Emitting deletes from a partial snapshot would mark live transactions as deleted.
+
+**What to do.** Usually a transient Sheets 429/500 — the next tick retries the whole month. Persistent failures mean the month sheet was renamed, deleted, or unshared.
+
+### WHS-006
+
+**Warehouse backfill gate failed** · `degraded`
+
+**Why it happens.** A staged month did not reconcile against the spreadsheet, so nothing was promoted into the archive.
+
+**What to do.** Read load_audits for the failing check_name. category_sum and month_sum are exact integer-cent comparisons; a mismatch is a real data problem, not rounding.
+
+### WHS-007
+
+**Warehouse dataset has an expiration policy set** · `config`
+
+**Why it happens.** defaultTableExpirationMs or defaultPartitionExpirationMs is set on the archive dataset. Either one silently deletes the archive on a timer, with no error anywhere.
+
+**What to do.** Unset both immediately: bq update --default_table_expiration 0 --default_partition_expiration 0 <project>:fundient_warehouse
+
+### WHS-008
+
+**Warehouse notify rejected an unknown spreadsheet** · `degraded`
+
+**Why it happens.** A client asserted a write against a spreadsheet id that is not in month_dim, so it was refused rather than recorded.
+
+**What to do.** Expected if a month was created outside the app. Run the month_dim snapshot, or check whether something is calling the notify endpoint with a bad id.
+
+### WHS-009
+
+**Warehouse skipped a tab whose header does not match the contract** · `degraded`
+
+**Why it happens.** A category tab has a header row the V2 reader does not recognise — usually a custom category, which addCategory writes with 5 columns and no UUID.
+
+**What to do.** Not an error by itself; the tab is skipped and excluded from both sides of the month_sum gate. Convert the tab to the V2 shape if you want it archived.
 
 ---
 

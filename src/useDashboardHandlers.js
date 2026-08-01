@@ -49,6 +49,7 @@ export function useDashboardHandlers({ accessToken, sheetId, monthName, refresh,
         rowNum: item.index_ + 1,
         budget: newBudget,
         categoryName: item.name,
+        monthName,
       });
       refresh();
     } catch (e) {
@@ -60,7 +61,7 @@ export function useDashboardHandlers({ accessToken, sheetId, monthName, refresh,
 
   const handleSaveSalary = async (newSalary) => {
     try {
-      await writeSalary(sheetId, newSalary, accessToken);
+      await writeSalary(sheetId, newSalary, accessToken, monthName);
       refresh();
     } catch (e) {
       alert(`Failed to update salary: ${e.message}`);

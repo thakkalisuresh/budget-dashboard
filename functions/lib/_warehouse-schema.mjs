@@ -56,7 +56,15 @@ export const DATE_PRECISIONS = ['day', 'month'];
  * drift; `raw_number` is the NewMonthDialog bug (fixed in sheetTotals.js) and
  * means the value grows as the month is spent — flag it, never trust it.
  */
-export const BUDGET_DERIVATIONS = ['formula_literal', 'spent_plus_remaining', 'raw_number'];
+export const BUDGET_DERIVATIONS = [
+  'formula_literal',
+  'spent_plus_remaining',
+  'raw_number',
+  // Salary is not a budget-minus-spent formula: `Totals!G` genuinely holds the
+  // number, and that number is authoritative. It gets its own value rather
+  // than being folded into `raw_number`, which means "this is the bug".
+  'salary_literal',
+];
 
 /* ── Field classes ────────────────────────────────────────────────────────── */
 

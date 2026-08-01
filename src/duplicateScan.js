@@ -91,7 +91,7 @@ export function suggestKeeper(cluster) {
  * Tolerant: a row that fails doesn't stop the others, and the caller is told
  * exactly which rows survived so it can leave them on screen.
  */
-export async function deleteTransactions(entries, accessToken, sheetId, onProgress) {
+export async function deleteTransactions(entries, accessToken, sheetId, onProgress, monthName = '') {
   const byRow = new Map();
   for (const e of entries) {
     const rowKey = `${e.category}:${e.rowIndex}`;
@@ -106,11 +106,21 @@ export async function deleteTransactions(entries, accessToken, sheetId, onProgre
     const drop = new Set(indices);
     const newAmounts = (entry.amounts || []).filter((_, i) => !drop.has(i));
     const newUuids   = (entry.uuids   || []).filter((_, i) => !drop.has(i));
+    // Which uuids are going away. This is the only moment anything knows: the
+    // cells are about to be overwritten, and after that the deleted rows exist
+    // in no system at all.
+    const goneUuids  = (entry.uuids || []).filter((_, i) => drop.has(i)).filter(Boolean);
     const prevTotal  = (entry.amounts || []).reduce((a, b) => a + Number(b || 0), 0);
     try {
       await updateVendorAmounts(
         entry.category, entry.rowIndex, newAmounts, accessToken, sheetId,
         entry.vendor, prevTotal, newUuids, entry._v2,
+        {
+          removedUuids: goneUuids,
+          monthName,
+          txDate: entry.date || null,
+          paymentMethod: entry.paymentMethod || '',
+        },
       );
       results.deleted.push(rowKey);
     } catch (e) {

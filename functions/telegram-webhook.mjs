@@ -26,7 +26,7 @@ import {
 } from './lib/_bot-core.mjs';
 import {
   TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_ALLOWED_USERS, TELEGRAM_EMAIL_MAP,
-  GEMINI_API_KEY, ANTHROPIC_API_KEY, GROQ_API_KEY, SHEETS_DRIVE_SECRETS,
+  GEMINI_API_KEY, ANTHROPIC_API_KEY, GROQ_API_KEY, SHEETS_DRIVE_SECRETS, WAREHOUSE_SECRETS,
 } from './lib/secrets.mjs';
 
 const UNDO_WINDOW_MS = 10 * 60 * 1000;
@@ -126,7 +126,7 @@ export const telegramWebhook = onRequest(
       // which resolves the chat from ALLOWED_EMAILS. Without it a fatal error
       // on the bot path records but cannot notify.
       TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, TELEGRAM_ALLOWED_USERS, TELEGRAM_EMAIL_MAP,
-      GEMINI_API_KEY, ANTHROPIC_API_KEY, GROQ_API_KEY, ...SHEETS_DRIVE_SECRETS,
+      GEMINI_API_KEY, ANTHROPIC_API_KEY, GROQ_API_KEY, ...SHEETS_DRIVE_SECRETS, ...WAREHOUSE_SECRETS,
     ],
     timeoutSeconds: 120,
     memory: '512MiB',

@@ -8,10 +8,25 @@ import { historyAction } from './historyActions.js';
 import { appendHistoryEntry } from './sheetHistory.js';
 import { enqueue } from './offlineQueue.js';
 import { codedError } from './errorCodes.js';
+import {
+  notifyWarehouse, transactionWriteEvent, transactionDeleteEvent,
+} from './warehouseNotify.js';
 
+/**
+ * Add an expense (V2) or fold it into a vendor row (V1).
+ *
+ * `opts.enteredAt` is set by the offline-queue replay: `valid_from` in the
+ * warehouse is when the network came back, which can be days after the user
+ * actually typed it.
+ *
+ * Returns `{ uuid, category, queued }` on both branches. It used to return
+ * nothing on the success path, which made the caller unable to tell a
+ * successful write from a queued one.
+ */
 export async function addOrUpdateExpense(
   categoryName, vendorName, amount, accessToken, sheetId, monthName,
   source = 'manual', txDate = null, paymentMethod = '', bookingMethod = '',
+  opts = {},
 ) {
   if (!navigator.onLine) {
     // Every field the online path writes has to be queued, or replay silently
@@ -48,6 +63,11 @@ export async function addOrUpdateExpense(
   }
 
   const newUUID = generateTransactionUUID(amount);
+  // Filled in by whichever branch runs, then notified once at the end — the
+  // notify has to sit AFTER the Sheets write, or a failed write leaves a
+  // phantom row in a store that never deletes.
+  let writtenDate = null;
+  let writtenRow  = null;
 
   if (isV2) {
     const dateVal      = coerceTxDate(txDate);
@@ -86,6 +106,8 @@ export async function addOrUpdateExpense(
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ values: [newRow] }),
     });
+    writtenDate = dateVal;
+    writtenRow  = nextRow;
     await appendHistoryEntry(sheetId, accessToken, {
       action: historyAction(source),
       category: categoryName, vendor: vendorName, amount, uuid: newUUID, txDate: dateVal,
@@ -109,6 +131,7 @@ export async function addOrUpdateExpense(
       const existing     = parseAmounts(currentValue);
       await writeCell(sheetId, config.sheet, sheetRow, config.amtCol, buildFormula([...existing, amount]), accessToken);
       await writeCell(sheetId, config.sheet, sheetRow, uuidCol + existing.length, newUUID, accessToken);
+      writtenRow = sheetRow;
       await appendHistoryEntry(sheetId, accessToken, {
         action: 'Updated', category: categoryName, vendor: vendorName, amount, uuid: newUUID,
       });
@@ -133,6 +156,7 @@ export async function addOrUpdateExpense(
         headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ values: [newRow] }),
       });
+      writtenRow = nextRowV1;
       await appendHistoryEntry(sheetId, accessToken, {
         action: historyAction(source),
         category: categoryName, vendor: vendorName, amount, uuid: newUUID,
@@ -140,7 +164,27 @@ export async function addOrUpdateExpense(
     }
   }
 
+  // Not awaited: a warehouse hiccup must never make a successful expense entry
+  // look like a failure to the user.
+  notifyWarehouse(transactionWriteEvent({
+    spreadsheetId: sheetId,
+    budgetMonth: monthName,
+    category: categoryName,
+    uuid: newUUID,
+    // V1 rows have no Date column at all — month precision only. Sending null
+    // is honest; sending today's date would invent a fact.
+    budgetDate: writtenDate,
+    vendor: vendorName,
+    amount,
+    paymentMethod,
+    bookingMethod,
+    sheetRowIndex: writtenRow,
+    sourceAction: 'addOrUpdateExpense',
+    enteredAt: opts.enteredAt || null,
+  }), accessToken);
+
   invalidateDetailCache(sheetId, categoryName);
+  return { uuid: newUUID, category: categoryName, queued: false };
 }
 
 /**
@@ -148,10 +192,19 @@ export async function addOrUpdateExpense(
  * Writes to col F (index 5) of the category sheet row, logs to History,
  * and invalidates the detail cache.
  */
-export async function updatePaymentMethod(categoryName, rowIndex, newCard, accessToken, sheetId) {
+export async function updatePaymentMethod(categoryName, rowIndex, newCard, accessToken, sheetId, opts = {}) {
   const config = getEffectiveSheetMap()[categoryName];
   if (!config) throw codedError('SHT-003', `Unknown category: ${categoryName}`);
   await writeCell(sheetId, config.sheet, rowIndex, 5, safeText(newCard || ''), accessToken);
+  // An in-place edit of a mirrored field is a NEW version, not a correction of
+  // the old one. The uuid is preserved, so transaction_key is unchanged and the
+  // lineage is intact without anyone having to declare it.
+  notifyWarehouse(transactionWriteEvent({
+    spreadsheetId: sheetId, budgetMonth: opts.monthName ?? null, category: categoryName,
+    uuid: opts.uuid ?? null, budgetDate: opts.txDate ?? null, vendor: opts.vendor ?? null,
+    amount: opts.amount ?? null, paymentMethod: newCard || '', bookingMethod: opts.bookingMethod ?? '',
+    sheetRowIndex: rowIndex, sourceAction: 'updatePaymentMethod',
+  }), accessToken);
   await appendHistoryEntry(sheetId, accessToken, {
     action: 'Card Updated',
     category: categoryName,
@@ -160,18 +213,34 @@ export async function updatePaymentMethod(categoryName, rowIndex, newCard, acces
   invalidateDetailCache(sheetId, categoryName);
 }
 
-export async function updateTransactionDate(categoryName, rowIndex, newDate, accessToken, sheetId) {
+export async function updateTransactionDate(categoryName, rowIndex, newDate, accessToken, sheetId, opts = {}) {
   const config = getEffectiveSheetMap()[categoryName];
   if (!config) throw codedError('SHT-003', `Unknown category: ${categoryName}`);
   await writeCell(sheetId, config.sheet, rowIndex, 2, newDate, accessToken);
+  // This is the one edit path that writes no History row at all, so before the
+  // warehouse there was no record anywhere that a date had ever changed.
+  notifyWarehouse(transactionWriteEvent({
+    spreadsheetId: sheetId, budgetMonth: opts.monthName ?? null, category: categoryName,
+    uuid: opts.uuid ?? null, budgetDate: newDate, vendor: opts.vendor ?? null,
+    amount: opts.amount ?? null, paymentMethod: opts.paymentMethod ?? '',
+    bookingMethod: opts.bookingMethod ?? '', sheetRowIndex: rowIndex,
+    sourceAction: 'updateTransactionDate',
+  }), accessToken);
   invalidateDetailCache(sheetId, categoryName);
 }
 
-export async function updateVendorName(categoryName, rowIndex, newName, accessToken, sheetId, oldName = '', v2 = false) {
+export async function updateVendorName(categoryName, rowIndex, newName, accessToken, sheetId, oldName = '', v2 = false, opts = {}) {
   const config   = getEffectiveSheetMap()[categoryName];
   if (!config) throw codedError('SHT-003', `Unknown category: ${categoryName}`);
   const descCol  = v2 ? 3 : config.descCol;
   await writeCell(sheetId, config.sheet, rowIndex, descCol, safeText(newName), accessToken);
+  notifyWarehouse(transactionWriteEvent({
+    spreadsheetId: sheetId, budgetMonth: opts.monthName ?? null, category: categoryName,
+    uuid: opts.uuid ?? null, budgetDate: opts.txDate ?? null, vendor: newName,
+    amount: opts.amount ?? null, paymentMethod: opts.paymentMethod ?? '',
+    bookingMethod: opts.bookingMethod ?? '', sheetRowIndex: rowIndex,
+    sourceAction: 'updateVendorName',
+  }), accessToken);
   await appendHistoryEntry(sheetId, accessToken, {
     action: 'Renamed', category: categoryName, vendor: newName,
     details: oldName ? `${oldName} → ${newName}` : '',
@@ -339,7 +408,27 @@ export async function moveTransactionCategory(
     });
   }
 
-  // ── 3) One 'Moved' history entry (from → to) ───────────────────────────────
+  // ── 3) Warehouse: one new version per moved amount, in the DESTINATION ─────
+  // Category is not a cell on the row — it is which tab the row lives on — so
+  // a move is a change to a mirrored field and gets a new version like any
+  // other edit. It is NOT a delete followed by an add: the uuids are preserved,
+  // which means transaction_key carries over and the lineage is intact without
+  // anyone declaring it. That is exactly why the uuid-preserving paths were
+  // worth keeping.
+  notifyWarehouse(movingAmounts.map((amt, i) => transactionWriteEvent({
+    spreadsheetId: sheetId,
+    budgetMonth: monthName || null,
+    category: toCategory,
+    uuid: movingUuids[i],
+    budgetDate: row.date || null,
+    vendor: row.description,
+    amount: amt,
+    paymentMethod: row.paymentMethod || '',
+    bookingMethod: row.bookingMethod || '',
+    sourceAction: 'moveTransactionCategory',
+  })), accessToken);
+
+  // ── 4) One 'Moved' history entry (from → to) ───────────────────────────────
   await appendHistoryEntry(sheetId, accessToken, {
     action: 'Moved',
     category: toCategory,
@@ -352,13 +441,23 @@ export async function moveTransactionCategory(
     bookingMethod: row.bookingMethod || '',
   });
 
-  // ── 4) Both tabs changed ───────────────────────────────────────────────────
+  // ── 5) Both tabs changed ───────────────────────────────────────────────────
   invalidateDetailCache(sheetId, fromCategory);
   invalidateDetailCache(sheetId, toCategory);
 }
 
+/**
+ * Rewrite a row's amounts (and its uuid block), or clear the row entirely.
+ *
+ * `removedUuids` is warehouse-only: an empty `amounts` array means the row is
+ * being deleted, and the caller — the Duplicates panel, or an edit that removed
+ * the last amount — is the only thing that still knows which uuids were on it.
+ * Once the cells are cleared those values exist nowhere, which is precisely the
+ * gap the archive exists to close.
+ */
 export async function updateVendorAmounts(
   categoryName, rowIndex, amounts, accessToken, sheetId, vendorName = '', previousTotal = null, uuids = [], v2 = false,
+  opts = {},
 ) {
   const config  = getEffectiveSheetMap()[categoryName];
   if (!config) throw codedError('SHT-003', `Unknown category: ${categoryName}`);
@@ -366,8 +465,21 @@ export async function updateVendorAmounts(
   const isTravelCat  = categoryName === 'Travel' || categoryName === 'Holiday';
   const uuidCol      = v2 ? (isTravelCat ? 7 : 6) : uuidStart(config);
 
+  const removed = opts.removedUuids || [];
+
   if (amounts.length === 0) {
     await clearRowRange(sheetId, config.sheet, rowIndex, Math.min(uuidCol + 19, 25), accessToken);
+    // One deleted version per uuid that was on the row. Fall back to a single
+    // uuid-less deletion when the caller didn't tell us — the reconciler will
+    // still see the row vanish, but with no uuid it cannot attribute it.
+    notifyWarehouse(
+      (removed.length ? removed : [null]).map(uuid => transactionDeleteEvent({
+        spreadsheetId: sheetId, budgetMonth: opts.monthName ?? null, category: categoryName,
+        uuid, vendor: vendorName, amount: removed.length ? null : previousTotal,
+        sheetRowIndex: rowIndex, sourceAction: 'updateVendorAmounts',
+      })),
+      accessToken,
+    );
     await appendHistoryEntry(sheetId, accessToken, {
       action: 'Deleted', category: categoryName, vendor: vendorName,
       amount: previousTotal,
@@ -386,6 +498,24 @@ export async function updateVendorAmounts(
         body: JSON.stringify({ values: [uuidValues] }),
       });
     }
+    // Partial delete: the row survives, but some amounts on it did not. Each
+    // dropped uuid gets its own deleted version; each surviving one gets a new
+    // valid version, so the row's post-edit state is fully described.
+    const events = removed.map(uuid => transactionDeleteEvent({
+      spreadsheetId: sheetId, budgetMonth: opts.monthName ?? null, category: categoryName,
+      uuid, vendor: vendorName, sheetRowIndex: rowIndex,
+      sourceAction: 'updateVendorAmounts',
+    }));
+    amounts.forEach((amt, i) => {
+      events.push(transactionWriteEvent({
+        spreadsheetId: sheetId, budgetMonth: opts.monthName ?? null, category: categoryName,
+        uuid: uuids[i] || null, budgetDate: opts.txDate ?? null, vendor: vendorName,
+        amount: amt, paymentMethod: opts.paymentMethod ?? '', sheetRowIndex: rowIndex,
+        sourceAction: 'updateVendorAmounts',
+      }));
+    });
+    notifyWarehouse(events, accessToken);
+
     const newTotal = amounts.reduce((a, b) => a + b, 0);
     await appendHistoryEntry(sheetId, accessToken, {
       action: 'Edited', category: categoryName, vendor: vendorName, amount: newTotal,

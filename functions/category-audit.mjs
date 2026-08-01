@@ -25,7 +25,7 @@ import { CATEGORIES } from './lib/_extraction.mjs';
 import { categorizeWithGroq, applySmartRules } from './lib/_categorize.mjs';
 import { sendMessage, resolveTelegramChatId } from './lib/_telegram.mjs';
 import {
-  GROQ_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP, SHEETS_DRIVE_SECRETS,
+  GROQ_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP, SHEETS_DRIVE_SECRETS, WAREHOUSE_SECRETS,
 } from './lib/secrets.mjs';
 
 /** How many recent expenses to pull, and how many of those to actually check. */
@@ -123,7 +123,7 @@ export const categoryAudit = onSchedule(
     schedule: 'every monday 09:00',
     timeZone: 'America/Los_Angeles',
     region: 'us-central1',
-    secrets: [GROQ_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP, ...SHEETS_DRIVE_SECRETS],
+    secrets: [GROQ_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP, ...SHEETS_DRIVE_SECRETS, ...WAREHOUSE_SECRETS],
     timeoutSeconds: 300,
   },
   async () => {

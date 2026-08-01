@@ -24,7 +24,7 @@ import {
   VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_EMAIL,
   ANTHROPIC_API_KEY, GEMINI_API_KEY, GROQ_API_KEY,
   TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP,
-  SHEETS_DRIVE_SECRETS,
+  SHEETS_DRIVE_SECRETS, WAREHOUSE_SECRETS,
 } from './lib/secrets.mjs';
 
 async function keyMatches(provided, expected) {
@@ -49,7 +49,7 @@ export const walletWebhook = onRequest(
       VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_EMAIL,
       ANTHROPIC_API_KEY, GEMINI_API_KEY, GROQ_API_KEY,
       TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP,
-      ...SHEETS_DRIVE_SECRETS,
+      ...SHEETS_DRIVE_SECRETS, ...WAREHOUSE_SECRETS,
     ],
     timeoutSeconds: 30,
     cors: false,

@@ -11,7 +11,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { handleRpc } from './lib/_mcp.mjs';
 import { getDb } from './lib/firestore.mjs';
 import { sha256Hex } from './lib/http-common.mjs';
-import { MCP_API_KEY, SHEETS_DRIVE_SECRETS } from './lib/secrets.mjs';
+import { MCP_API_KEY, SHEETS_DRIVE_SECRETS, WAREHOUSE_SECRETS } from './lib/secrets.mjs';
 
 // Fixed-window rate limit: at most RATE_LIMIT requests per RATE_WINDOW_MS,
 // counted per API key. State lives in Firestore (collection `mcp_rate_limit`,
@@ -77,7 +77,7 @@ function extractKey(req) {
 export const mcp = onRequest(
   {
     region: 'us-central1',
-    secrets: [MCP_API_KEY, ...SHEETS_DRIVE_SECRETS],
+    secrets: [MCP_API_KEY, ...SHEETS_DRIVE_SECRETS, ...WAREHOUSE_SECRETS],
     timeoutSeconds: 60,
     memory: '512MiB',
     maxInstances: 5,

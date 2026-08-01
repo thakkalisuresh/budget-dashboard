@@ -19,6 +19,23 @@ vi.stubEnv('VITE_TEMPLATE_SHEET_ID', 'template-id');
 vi.stubEnv('ALLOWED_EMAILS', 'nair.sabarish97@gmail.com');
 vi.stubEnv('SITE_URL', 'https://test-dashboard.netlify.app');
 
+/**
+ * deleteExpenseByUUID's row lookup.
+ *
+ * It reads A:H at FORMATTED_VALUE — the full row, not just the uuid columns —
+ * so the row's own values are in hand at the moment it is deleted. Matching on
+ * the render option matters: appendExpense reads the same A:H range at FORMULA,
+ * and conflating the two would feed the uuid fixture into the append path's
+ * last-row scan.
+ */
+const uuidLookup = (url) =>
+  (url.includes('A:H') || url.includes('A%3AH')) && url.includes('FORMATTED_VALUE');
+
+const UUID_HEADER = ['Month', 'Year', 'Date', 'Vendor', 'Amount', 'Payment Method', 'UUID', ''];
+
+/** A V2 row with the uuid in col G (index 6), where the current schema puts it. */
+const rowWithUuid = (uuid) => ['May', 2026, '2026-05-10', 'Chipotle', 12.5, 'Amex Gold', uuid, ''];
+
 const mockStore = {
   data: new Map(),
   get(key, opts) { return Promise.resolve(this.data.get(key) || null); },
@@ -512,8 +529,8 @@ describe('telegram webhook — DELETE 3-layer flow', () => {
       if (url.includes('sheets.googleapis.com') && url.includes('Months')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['May 2026', 'sheet-may']] }) });
       }
-      if (url.includes('sheets.googleapis.com') && (url.includes('F:H') || url.includes('F%3AH'))) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['uuid-abc']] }) });
+      if (url.includes('sheets.googleapis.com') && uuidLookup(url)) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [rowWithUuid('uuid-abc')] }) });
       }
       if (url.includes('sheets.googleapis.com')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ updates: { updatedRows: 1 }, values: [] }) });
@@ -571,8 +588,8 @@ describe('telegram webhook — DELETE 3-layer flow', () => {
           sheets: [{ properties: { title: 'Grocery', sheetId: 0 } }],
         }) });
       }
-      if (url.includes('sheets.googleapis.com') && (url.includes('F:H') || url.includes('F%3AH'))) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['UUID'], ['uuid-abc']] }) });
+      if (url.includes('sheets.googleapis.com') && uuidLookup(url)) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [UUID_HEADER, rowWithUuid('uuid-abc')] }) });
       }
       if (url.includes('sheets.googleapis.com')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ updates: { updatedRows: 1 }, values: [] }) });
@@ -758,8 +775,8 @@ describe('telegram webhook — R10 button editing', () => {
       if (url.includes('fields=sheets.properties')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ sheets: [{ properties: { title: 'Grocery', sheetId: 0 } }] }) });
       }
-      if (url.includes('sheets.googleapis.com') && (url.includes('F:H') || url.includes('F%3AH'))) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['UUID'], ['uuid-x']] }) });
+      if (url.includes('sheets.googleapis.com') && uuidLookup(url)) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [UUID_HEADER, rowWithUuid('uuid-x')] }) });
       }
       if (url.includes('sheets.googleapis.com')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ updates: { updatedRows: 1 }, values: [] }) });
@@ -1032,9 +1049,9 @@ describe('telegram webhook — AUDITFIX category move', () => {
           ? Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: { message: 'delete blew up' } }) })
           : Promise.resolve({ ok: true, json: () => Promise.resolve({ replies: [] }) });
       }
-      // UUID lookup across category tabs (deleteExpenseByUUID scans F:H).
-      if (url.includes('F:H') || url.includes('F%3AH')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['tx_abc']] }) });
+      // UUID lookup across category tabs (deleteExpenseByUUID scans A:H).
+      if (uuidLookup(url)) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [rowWithUuid('tx_abc')] }) });
       }
       // Tab metadata, needed to turn a row index into a deleteDimension range.
       if (url.includes('fields=sheets.properties')) {
