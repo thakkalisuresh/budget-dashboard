@@ -244,7 +244,7 @@ function Dashboard({ auth }) {
   } = useBudgetSummary(data, expenses, nonMonthlyItems);
 
   // ── Online / Offline ──────────────────────────────────────────────────────────
-  const { isOnline, syncedCount, clearSyncedCount } = useOfflineSync({ user, selectedSheetId, refresh, setSessionExpired });
+  const { isOnline, syncedCount, stuckCount, clearSyncedCount } = useOfflineSync({ user, selectedSheetId, refresh, setSessionExpired });
 
   useEffect(() => {
     if (!syncedCount) return;
@@ -381,6 +381,18 @@ function Dashboard({ auth }) {
               <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
             </svg>
             {syncedCount} expense{syncedCount === 1 ? '' : 's'} synced
+          </div>
+        )}
+
+        {/* Gave up after MAX_RETRIES. Silence here used to mean an item retried
+            forever, minting a fresh uuid and a duplicate row on each attempt. */}
+        {stuckCount > 0 && (
+          <div
+            className="flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-bold"
+            style={{ background: 'oklch(78% 0.16 75 / 10%)', border: '1px solid oklch(78% 0.16 75 / 25%)', color: 'var(--color-warning)' }}
+          >
+            <WifiOff className="w-4 h-4 flex-shrink-0" />
+            Couldn&apos;t sync {stuckCount} item{stuckCount === 1 ? '' : 's'} — add {stuckCount === 1 ? 'it' : 'them'} manually, then clear the queue
           </div>
         )}
 

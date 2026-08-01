@@ -37,9 +37,18 @@ export async function updateCategoryBudget(sheetId, accessToken, { rowNum, budge
   });
 }
 
+/**
+ * Set several category budgets at once (the NewMonthDialog path).
+ *
+ * Col C must hold the formula `=<budget>-B<row>`, not the bare number. Budget is
+ * never stored as a value anywhere — `getTotals` recovers it as `spent +
+ * remaining`, so a raw number in C makes the month's budget *grow as you spend*.
+ * Every other write path (`updateCategoryBudget`, the bot's `writeBudgetAmount`,
+ * `addCategory`) writes the formula; this one silently didn't.
+ */
 export async function writeBudgetAmounts(sheetId, updates, accessToken) {
   for (const { rowNum, amount } of updates) {
-    await writeCell(sheetId, 'Totals', rowNum, 2, amount, accessToken);
+    await writeCell(sheetId, 'Totals', rowNum, 2, `=${Number(amount) || 0}-B${rowNum}`, accessToken);
   }
 }
 

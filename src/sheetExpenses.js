@@ -14,8 +14,19 @@ export async function addOrUpdateExpense(
   source = 'manual', txDate = null, paymentMethod = '', bookingMethod = '',
 ) {
   if (!navigator.onLine) {
-    enqueue({ type: 'add_expense', payload: { categoryName, vendorName, amount, monthName, source, txDate, paymentMethod } });
-    return { queued: true };
+    // Every field the online path writes has to be queued, or replay silently
+    // logs a different transaction than the user entered.
+    enqueue({
+      type: 'add_expense',
+      payload: {
+        categoryName, vendorName, amount, monthName, source,
+        txDate, paymentMethod, bookingMethod,
+        // When the user actually typed it — replay happens whenever the network
+        // returns, which can be days later.
+        enteredAt: new Date().toISOString(),
+      },
+    });
+    return { queued: true, uuid: null, category: categoryName };
   }
 
   const config = getEffectiveSheetMap()[categoryName];
