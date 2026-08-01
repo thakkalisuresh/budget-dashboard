@@ -466,16 +466,40 @@ function RowEditModal({ s }) {
   );
 }
 
+// What decided this item's category, shown so the user can tell a remembered
+// answer from a guess — and knows which ones are worth double-checking.
+const SPLIT_SOURCE_BADGE = {
+  learned: { label: 'learned',  title: 'You filed this item here last time' },
+  keyword: { label: 'auto',     title: 'Matched a built-in keyword rule' },
+  llm:     { label: 'AI',       title: 'Suggested by AI (confident)' },
+  'llm-low': { label: 'AI?',    title: 'AI was unsure — please check' },
+};
+
+function SourceBadge({ source, confidence }) {
+  const badge = SPLIT_SOURCE_BADGE[source];
+  if (!badge) return null;
+  const low = source === 'llm-low';
+  return (
+    <span
+      title={confidence ? `${badge.title} · ${Math.round(confidence * 100)}%` : badge.title}
+      className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md flex-shrink-0"
+      style={{
+        background: low ? 'var(--sur-12)' : 'var(--sur-8)',
+        color: low ? 'var(--color-text)' : 'var(--color-text-muted)',
+      }}
+    >
+      {badge.label}
+    </span>
+  );
+}
+
 function SplitReceiptModal({ s }) {
   if (s.phase !== 'split-reviewing' && s.phase !== 'split-saving') return null;
   const saving = s.phase === 'split-saving';
 
-  // Live per-category preview = auto groups + chosen item categories.
-  const preview = { ...s.splitGroups };
-  for (const it of s.splitItems) {
-    if (it.category) preview[it.category] = Math.round(((preview[it.category] || 0) + it.amount) * 100) / 100;
-  }
+  const preview = s.splitGroups;
   const assignedSum = Math.round(Object.values(preview).reduce((a, b) => a + b, 0) * 100) / 100;
+  const unassigned = s.splitItems.filter(it => !it.category).length;
   const remainder = Math.round((s.splitTotal - assignedSum) * 100) / 100;
 
   return (
@@ -492,7 +516,9 @@ function SplitReceiptModal({ s }) {
                 <p className="text-lg font-black" style={{ color: 'var(--color-text)' }}>Split {s.splitVendor}</p>
               </div>
               <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                ${Number(s.splitTotal).toFixed(2)} total · pick a category for each item below
+                ${Number(s.splitTotal).toFixed(2)} total · {unassigned > 0
+                  ? `${unassigned} item${unassigned === 1 ? '' : 's'} need a category`
+                  : 'every item has a category — change any that look wrong'}
               </p>
             </div>
             <button onClick={saving ? undefined : s.handleClose} className="p-2 rounded-xl transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}>
@@ -501,11 +527,11 @@ function SplitReceiptModal({ s }) {
           </div>
 
           <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
-            {Object.keys(s.splitGroups).length > 0 && (
+            {Object.keys(preview).length > 0 && (
               <div>
-                <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: 'var(--color-text-muted)' }}>Auto-sorted</p>
+                <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: 'var(--color-text-muted)' }}>Category totals</p>
                 <div className="space-y-1.5">
-                  {Object.entries(s.splitGroups).map(([cat, amt]) => (
+                  {Object.entries(preview).map(([cat, amt]) => (
                     <div key={cat} className="flex items-center justify-between px-4 py-2.5 rounded-xl" style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-10)' }}>
                       <span className="text-sm font-bold" style={{ color: 'var(--color-text)' }}>{cat}</span>
                       <span className="text-sm font-mono" style={{ color: 'var(--color-text-secondary)' }}>${Number(amt).toFixed(2)}</span>
@@ -517,13 +543,32 @@ function SplitReceiptModal({ s }) {
 
             {s.splitItems.length > 0 && (
               <div>
-                <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: 'var(--color-text-muted)' }}>Pick a category</p>
+                <div className="flex items-center gap-2 mb-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>Items</p>
+                  {s.splitAsking && (
+                    <span className="text-[10px] flex items-center gap-1" style={{ color: 'var(--color-text-muted)' }}>
+                      <Spinner /> asking AI about the rest…
+                    </span>
+                  )}
+                </div>
                 <div className="space-y-2">
+                  {/* Every item is editable, including the ones already placed —
+                      a correction here is what teaches the next receipt. */}
                   {s.splitItems.map((it, i) => (
-                    <div key={i} className="flex items-center gap-3 px-4 py-2.5 rounded-xl" style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-10)' }}>
+                    <div key={i} className="flex items-center gap-3 px-4 py-2.5 rounded-xl"
+                      style={{
+                        background: 'var(--sur-5)',
+                        border: it.category ? '1px solid var(--sur-10)' : '1px solid var(--color-accent)',
+                      }}>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>{it.name}</p>
-                        <p className="text-xs font-mono" style={{ color: 'var(--color-text-muted)' }}>${Number(it.amount).toFixed(2)}</p>
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-sm font-bold truncate" style={{ color: 'var(--color-text)' }}>{it.name}</p>
+                          <SourceBadge source={it.source} confidence={it.confidence} />
+                        </div>
+                        <p className="text-xs font-mono" style={{ color: 'var(--color-text-muted)' }}>
+                          ${Number(it.amount).toFixed(2)}
+                          {!it.category && it.suggestion ? ` · suggested ${it.suggestion}` : ''}
+                        </p>
                       </div>
                       <select
                         value={it.category || ''}

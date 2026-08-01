@@ -246,6 +246,12 @@ export const ERROR_CODES = {
     cause: 'The model returned a category that is not one of the sheet tabs, so it was discarded.',
     fix: 'Informational. Repeated hits mean the category list sent in the prompt is out of sync with the sheet.',
   },
+  'LLM-004': {
+    title: 'Item categorization unavailable',
+    severity: 'degraded',
+    cause: 'The batched line-item categorizer could not reach Groq, so the split screen got no suggestions.',
+    fix: 'Nothing is lost — learned history and the keyword tables still run, and the user picks the rest by hand. Check GROQ_API_KEY is bound to itemCategorize if it persists.',
+  },
 
   /* ── PUSH: web push notifications ─────────────────────────────────────── */
   'PUSH-001': {
