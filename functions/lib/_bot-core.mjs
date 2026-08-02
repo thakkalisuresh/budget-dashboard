@@ -18,7 +18,9 @@ import {
 } from './_sheets.mjs';
 import { convertToUSD } from './_currency.mjs';
 import { reportError } from './_error-log.mjs';
-import { trail } from './_error-context.mjs';
+import { trail, describeActor } from './_error-context.mjs';
+import { ownerForCard, DEFAULT_CARD_OWNERS } from './_card-owners.mjs';
+import { snapshotConfig } from './_warehouse.mjs';
 import { findErrorCodeInText, explainErrorCode } from './_error-codes.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
 import { buildRewardsLine, getEffectiveRates } from './_card-rewards.mjs';
@@ -402,7 +404,14 @@ export async function handleTextReply(ctx, text) {
 
     let result;
     try {
-      result = await appendExpense({ category, vendor, amount, txDate, sheetId, monthName, paymentMethod, channel: ctx.channel, bookingMethod });
+      result = await appendExpense({
+        category, vendor, amount, txDate, sheetId, monthName, paymentMethod,
+        channel: ctx.channel, bookingMethod,
+        // Warehouse-only, frozen at write time. The FX rate in particular has
+        // to be stored: rates move daily, so re-deriving one later would give
+        // a different — and confidently wrong — original amount.
+        provenance: await receiptProvenance(ctx, pending, paymentMethod),
+      });
     } catch (e) {
       await reportError('SHT-009', e, { flow: 'receipt-confirm' });
       return ctx.send('Failed to log receipt to spreadsheet. Please try via the dashboard. [SHT-009]');
@@ -1430,6 +1439,36 @@ async function attachDriveResult(store, key, drivePromise) {
   blob.driveFolderId  = driveResult.folderId  || null;
   blob.driveShareLink = driveResult.shareLink || null;
   await store.setJSON(key, blob);
+}
+
+/**
+ * Derived, frozen-at-write-time fields for a confirmed receipt.
+ *
+ * Everything here comes from something mutable — the FX rate of the day, the
+ * card→owner map in Settings — so it is recorded rather than recomputed. A
+ * settings change must never silently rewrite history.
+ *
+ * Never throws: this decorates a write that has already been approved by the
+ * user, and losing a receipt over a settings read would be absurd.
+ */
+async function receiptProvenance(ctx, pending, paymentMethod) {
+  try {
+    let settings = {};
+    try { settings = await getUserSettings(); } catch { /* NULLs are honest */ }
+    const map = settings.cardOwners || DEFAULT_CARD_OWNERS;
+    const info = pending?.conversionInfo || null;
+    return {
+      actorEmail: describeActor(ctx.userId),
+      categorySource: 'extractor',
+      cardOwner: ownerForCard(paymentMethod, map),
+      cardOwnerMapHash: await snapshotConfig('card_owners', map, { ingestSource: 'hook' }),
+      fxRate: info?.rate ?? null,
+      fxOriginalAmount: info?.original != null ? Math.round(Number(info.original) * 100) : null,
+      fxOriginalCurrency: info?.originalCurrency || null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function maybeConvertCurrency(data) {

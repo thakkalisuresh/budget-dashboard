@@ -311,6 +311,25 @@ export function mapBudgetEvent(event = {}, ctx = {}) {
   return row;
 }
 
+/**
+ * Content hash of a config object, over a CANONICAL rendering.
+ *
+ * Key order in a JS object is insertion order, and settings objects are
+ * assembled differently on different paths — so `JSON.stringify` alone would
+ * produce a different hash for an identical map and mint a spurious
+ * config_snapshots row on every write. Keys are sorted before hashing.
+ */
+export function configHash(value) {
+  const canonical = (v) => {
+    if (Array.isArray(v)) return v.map(canonical);
+    if (v && typeof v === 'object') {
+      return Object.keys(v).sort().reduce((acc, k) => { acc[k] = canonical(v[k]); return acc; }, {});
+    }
+    return v;
+  };
+  return createHash('sha256').update(JSON.stringify(canonical(value ?? null))).digest('hex');
+}
+
 /** Build a `month_dim` snapshot row. */
 export function mapMonthDim(event = {}, ctx = {}) {
   return {
@@ -565,6 +584,48 @@ export async function recordMonthDim(event, opts = {}) {
     await reportError('WHS-001', e, { step: 'recordMonthDim' }).catch(() => {});
     return { written: 0, queued: 0, rejected: 1 };
   }
+}
+
+/**
+ * Snapshot a piece of mutable config, if it has changed.
+ *
+ * Frozen derived fields point at these by `content_hash`. Without the snapshot,
+ * `card_owner = 'me'` on a row from last March is unexplainable: you can see
+ * what was decided but not what it was decided from.
+ *
+ * Append-on-CHANGE: the hash is cached per warm instance, so a settings object
+ * that hasn't moved costs nothing after the first write of an instance's life.
+ * A duplicate that does slip through collapses in the view anyway — the hash is
+ * the key.
+ *
+ * Returns the hash so the caller can stamp it onto the transaction row.
+ */
+const _snapshotted = new Set();
+
+export async function snapshotConfig(kind, payload, opts = {}) {
+  const hash = configHash(payload);
+  if (!warehouseEnabled()) return hash;
+  const key = `${kind}:${hash}`;
+  if (_snapshotted.has(key)) return hash;
+  _snapshotted.add(key);
+  try {
+    await flushRows([{ table: 'config_snapshots', row: {
+      content_hash: hash,
+      config_kind: kind,
+      captured_at: new Date().toISOString(),
+      payload: JSON.stringify(payload ?? null).slice(0, RAW_PAYLOAD_CAP),
+      actor_email: opts.actorEmail || null,
+    } }], { ingestSource: opts.ingestSource || 'hook', actorEmail: opts.actorEmail || null });
+  } catch {
+    // The hash is still returned and still correct — the row it points at just
+    // isn't there yet, and the next write of a changed config will re-add it.
+  }
+  return hash;
+}
+
+/** Testing seam: forget which config hashes this instance has already written. */
+export function __resetConfigSnapshots() {
+  _snapshotted.clear();
 }
 
 /** Record a verification check — pass or fail. See _warehouse-verify.mjs. */

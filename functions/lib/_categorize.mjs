@@ -17,7 +17,10 @@
  */
 
 const GROQ_URL   = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = 'llama-3.3-70b-versatile';
+// Exported so the warehouse can freeze the exact model that made a call. A
+// model bump changes the meaning of `llm_confidence`, and without the id
+// recorded alongside it there is no way to tell which rows to re-read.
+export const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
 /**
  * Below this, the answer goes to the user instead of straight to the sheet.

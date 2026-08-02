@@ -37,6 +37,7 @@ Firebase requires a value for **every** declared secret at deploy time.
 | `TELEGRAM_ALLOWED_USERS` | Yes | telegram | Comma-separated numeric Telegram user IDs |
 | `MCP_API_KEY` | Yes | mcp | Shared bearer key for the MCP server endpoint |
 | `WALLET_WEBHOOK_SECRET` | Yes | wallet | Shared API key for the wallet webhook (`/api/wallet`). Set with `firebase functions:secrets:set WALLET_WEBHOOK_SECRET` |
+| `WAREHOUSE_ENABLED` | Yes | wallet, telegram, mcp, category-audit, warehouse-* | `"true"` turns the BigQuery archive on; anything else makes every warehouse call a no-op. A boolean in Secret Manager looks odd, but a plain env var would live in the gitignored `functions/.env`, so its value would be invisible in the repo and undefined on any machine not set up by hand — same reasoning as `VITE_TEMPLATE_SHEET_ID`. Must be bound by every function that can reach `_warehouse.mjs`, or the archive is silently inert (`warehouseSecrets.test.js` enforces this). See [warehouse.md](warehouse.md). |
 
 The five `VITE_*` client values are **not** Secret Manager secrets — in CI they
 come from GitHub repository variables (see below); they are baked into the public
@@ -45,6 +46,8 @@ client bundle and are non-secret by design.
 ## Not configured via env
 
 - **Card reward rates** — the default rate table is hardcoded in `src/cardRewards.js` (client) and `functions/lib/_card-rewards.mjs` (bot); both must stay in sync (enforced by `cardRewardsSync.test.js`). User overrides are stored in `UserSettings.cardRewardRates` and applied via `getEffectiveRates(settings)` — no env var needed.
+- **Card → owner map** — same mirrored-pair arrangement: `src/cardOwners.js` (client) and `functions/lib/_card-owners.mjs` (backend), pinned by `cardOwnersSync.test.js`. User overrides live in `UserSettings.cardOwners`. The backend copy exists because `card_owner` is frozen into every archived transaction at write time, so the two sides disagreeing would permanently attribute the same card to different people.
+- **BigQuery project and dataset** — the project comes from the platform-provided `GOOGLE_CLOUD_PROJECT`; the dataset names are constants in `functions/lib/_warehouse-schema.mjs`, which also generates the DDL. Nothing to configure.
 - The cards list, card rules, and reward-rate overrides are per-user data in the `UserSettings` sheet, editable in Settings → Cards & Payment Methods.
 
 ## CI / build-time

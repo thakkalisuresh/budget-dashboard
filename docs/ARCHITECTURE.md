@@ -290,6 +290,28 @@ live in `functions/lib/http-common.mjs`.
 
   `email` is required (routes the confirmation push). `sheetId` is optional — omitted, it resolves the current month's sheet from the transaction date (returns `422 month_not_found` if that month has no sheet yet). Categorizes via Claude, appends to the month sheet, and sends a Web Push confirmation. MacroDroid setup: `POST` to the URL, content-type `application/json`, the `Authorization` header, and a JSON body using the notification's title (card) + text.
 
+- **warehouse-notify.mjs** (`POST /api/warehouse-notify`) and **warehouse-backfill.mjs** (`POST /api/warehouse-backfill`): the BigQuery archive's two HTTP surfaces. Notify exists because the dashboard writes to Sheets *directly from the browser* with the user's own OAuth token — there is no server-side write path to hook — so the frontend reports what it wrote after the fact. Rows arriving that way are **client-asserted**, recorded with `ingest_source='notify'`, and confirmed or retracted by the reconciler; the endpoint cannot touch Sheets, so the blast radius is warehouse pollution only. Backfill is owner-authed and run by hand. Both no-op unless `WAREHOUSE_ENABLED` is `"true"`. See [warehouse.md](warehouse.md).
+
+### Scheduled jobs
+
+Cloud Scheduler's free tier is **three jobs**, and all three are used. A fourth
+is ~$0.10/month — small, but it is the kind of drift that turns "$0" into a bill
+nobody reviews. **Anything that needs a schedule from here on folds into
+`warehouseCron`.**
+
+- **categoryAudit** (Mondays 09:00) — samples recent expenses, asks Groq whether any look miscategorized, sends one Telegram digest. Never rewrites anything; each suspect is a button.
+- **errorDigest** (daily 08:00) — groups what `reportError` recorded and sends one Telegram message. Silence means nothing broke.
+- **warehouseCron** (every 15 min) — `drainOutbox()` then `runReconcile()`. Drain first, so the reconciler doesn't mistake queued-but-unwritten rows for missing ones.
+
+All three follow the same shape: core logic in an exported plain async function
+(testable without the scheduler), a thin `onSchedule` wrapper that try/catches
+and only `console.error`s. **A throw makes Scheduler retry the whole tick.**
+
+> Deploying any of them needs BOTH `cloudscheduler.googleapis.com` enabled AND
+> `roles/cloudscheduler.admin` on the deploying principal. Without the role the
+> function deploys fine, goes ACTIVE, and its Scheduler job is never created —
+> indistinguishable from working until you notice nothing ever arrives.
+
 ### Persistence (Firestore)
 
 The Admin SDK (`functions/lib/firestore.mjs`) bypasses security rules; the rules
@@ -298,6 +320,7 @@ themselves are default-deny so no client can read these collections directly:
 - `push_subscriptions` — one doc per email (`subscription`, `preferredHour`, `timezoneOffset`).
 - `bot_state` — bot working state via `functions/lib/bot-store.mjs`, a Firestore adapter that mirrors the old Netlify Blobs API (`get`/`setJSON`/`delete`/`list`) so the ported bot code runs unchanged.
 - `mcp_rate_limit` — fixed-window counters per API-key hash for the MCP server.
+- `warehouse_outbox` — the BigQuery **failure** queue, not the normal path. The hot path writes straight to the Storage Write API and is visible in seconds; a write that errors or blows its 1.5s ceiling lands here and is drained by `warehouseCron`. Entries that exhaust their retries are marked `dead` and surface as `WHS-004` in the error digest.
 
 ### MCP server
 

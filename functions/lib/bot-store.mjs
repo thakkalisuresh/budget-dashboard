@@ -91,6 +91,34 @@ export function createBotStore(db) {
     },
 
     /**
+     * Like `claimOnce`, but with a caller-chosen window AND an expiry that is
+     * checked here rather than left to Firestore's TTL sweeper.
+     *
+     * Both differences matter for the wallet webhook. Firestore's TTL deletion
+     * is best-effort and can lag by many hours, so a marker still sitting in
+     * the collection is not evidence the claim is live — the timestamp is. And
+     * the window has to be short: the case being deduped is a phone retrying
+     * after a cold-start 504 (observed at ~7 seconds), whereas two genuinely
+     * separate identical charges are a normal thing that must both be logged.
+     * `claimOnce`'s fixed hour would silently swallow the second coffee.
+     *
+     * Returns true if the claim was taken, false if a live one already exists.
+     */
+    async claimFor(key, ttlMs) {
+      const ref = col.doc(key);
+      const now = Date.now();
+      return db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        if (snap.exists) {
+          const expiresAt = snap.data()?.expireAt?.toMillis?.() ?? 0;
+          if (expiresAt > now) return false;
+        }
+        tx.set(ref, { v: { ts: now }, expireAt: Timestamp.fromMillis(now + ttlMs) });
+        return true;
+      });
+    },
+
+    /**
      * R4 (rate limiting): atomically increment a counter iff it is still below
      * `limit`, returning { allowed, count }. Replaces the old read-then-write
      * pair, closing the race where two quick messages both read N and both write
