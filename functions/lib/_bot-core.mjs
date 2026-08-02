@@ -487,7 +487,7 @@ export async function handleTextReply(ctx, text) {
       let failed = 0;
       for (const e of lastlog.entries) {
         try {
-          await deleteExpenseByUUID({ category: e.category, uuid: e.uuid, sheetId: e.sheetId || lastlog.sheetId });
+          await deleteExpenseByUUID({ category: e.category, uuid: e.uuid, sheetId: e.sheetId || lastlog.sheetId, monthName: lastlog.monthName });
         } catch (err) {
           failed++;
           await reportError('BOT-002', err, { flow: 'undo-split' });
@@ -502,7 +502,7 @@ export async function handleTextReply(ctx, text) {
     }
 
     try {
-      await deleteExpenseByUUID({ category: lastlog.category, uuid: lastlog.uuid, sheetId: lastlog.sheetId });
+      await deleteExpenseByUUID({ category: lastlog.category, uuid: lastlog.uuid, sheetId: lastlog.sheetId, monthName: lastlog.monthName });
     } catch (e) {
       await reportError('BOT-002', e, { flow: 'undo' });
       return ctx.send('Could not undo. The entry may have been modified. Check the dashboard. [BOT-002]');
@@ -1182,7 +1182,7 @@ async function handleAuditFix(ctx, text) {
   }
 
   try {
-    await deleteExpenseByUUID({ category: expense.category, uuid, sheetId });
+    await deleteExpenseByUUID({ category: expense.category, uuid, sheetId, monthName });
   } catch (e) {
     // The new row exists; the old one didn't go. Say so rather than claim success.
     await reportError('BOT-008', e, { flow: 'auditfix', uuid });
@@ -1824,6 +1824,7 @@ async function handleDeletePending(ctx, text, pending) {
         category: pending.target.category,
         uuid: pending.target.uuid,
         sheetId: pending.sheetId,
+        monthName: pending.monthName,
       });
     } catch (e) {
       await reportError('BOT-003', e, { userId });
@@ -2284,7 +2285,7 @@ async function editLoggedExpense(ctx, changes) {
   const newAmount   = changes.amount ?? lastlog.amount;
 
   try {
-    await deleteExpenseByUUID({ category: lastlog.category, uuid: lastlog.uuid, sheetId: lastlog.sheetId });
+    await deleteExpenseByUUID({ category: lastlog.category, uuid: lastlog.uuid, sheetId: lastlog.sheetId, monthName: lastlog.monthName });
   } catch (e) {
     await reportError('SHT-004', e, { flow: 'edit' });
     return ctx.send('Could not edit — the entry may have changed. Check the dashboard. [SHT-004]');

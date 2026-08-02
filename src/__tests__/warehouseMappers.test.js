@@ -246,6 +246,34 @@ describe('mapTransactionEvent', () => {
   });
 });
 
+describe('a deletion must never be dropped for want of a month', () => {
+  // month_start is a REQUIRED column, so an unresolvable month makes the row
+  // fail validation and vanish — losing exactly the fact the archive exists to
+  // keep, since deleteDimension leaves no trace in the sheet either.
+  const del = (over) => mapTransactionEvent(
+    { spreadsheetId: 'S', category: 'Grocery', uuid: 'tx_4125_a1b2c3d4', rowState: 'deleted', ...over },
+    CTX,
+  );
+
+  it('validates when the month name is supplied', () => {
+    expect(validateRow(TABLES.transaction_versions, del({ budgetMonth: 'June 2026' }))).toEqual([]);
+  });
+
+  it('recovers the month from the transaction date alone', () => {
+    const row = del({ budgetDate: '2026-06-03' });
+    expect(row.month_start).toBe('2026-06-01');
+    expect(validateRow(TABLES.transaction_versions, row)).toEqual([]);
+  });
+
+  it('is REJECTED, loudly, when neither is available — never written half-formed', () => {
+    // Rejection is the correct outcome here, not a silent default month: the
+    // caller gets WHS-003 and the reconciler re-derives the deletion from the
+    // sheet. Guessing a partition would bury the row somewhere plausible.
+    expect(validateRow(TABLES.transaction_versions, del({})))
+      .toContain('month_start is required');
+  });
+});
+
 describe('mapBudgetEvent', () => {
   it('parses the formula and lands on formula_literal', () => {
     const row = mapBudgetEvent(
