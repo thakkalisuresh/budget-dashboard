@@ -73,7 +73,9 @@ export const MAX_OUTBOX_ATTEMPTS = 8;
  * this can be deployed before the dataset exists without touching behaviour.
  */
 export function warehouseEnabled() {
-  return String(process.env.WAREHOUSE_ENABLED || '').toLowerCase() === 'true';
+  // Trimmed: a Secret Manager value with a trailing newline is a classic
+  // footgun, and here it would silently disable the whole archive.
+  return String(process.env.WAREHOUSE_ENABLED || '').trim().toLowerCase() === 'true';
 }
 
 /* ══ Pure mappers ══════════════════════════════════════════════════════════
