@@ -4,6 +4,7 @@
  * Files in lib/ are shared modules, not standalone deployed functions.
  */
 import { getAccessToken, copyFile, shareWithEmails } from './_drive.mjs';
+import { MEMORY_SHEET, MEMORY_HEADER, reduceMemoryRows } from './_item-memory.mjs';
 
 const SHEETS_API    = 'https://sheets.googleapis.com/v4/spreadsheets';
 const TEMPLATE_ID   = process.env.VITE_TEMPLATE_SHEET_ID;
@@ -693,5 +694,120 @@ async function addCategoryToUserSettings(categoryName) {
     });
   } catch (e) {
     console.warn('addCategoryToUserSettings failed (non-fatal):', e.message);
+  }
+}
+
+/* ── Item memory: the append-only line-item → category log ──────────────────
+   Server side of src/sheetItemMemory.js. Same tab in the same template
+   spreadsheet, so a lesson taught through Telegram is read back by the
+   dashboard and vice versa — that shared log is the entire point.
+
+   Keyed by ALLOWED_EMAILS[0], matching getUserSettings() and
+   addCategoryToUserSettings(): the bot has no per-message email, so it acts as
+   the primary household member. A second household member splitting via
+   Telegram teaches the primary's memory, which is the same assumption the
+   bot's settings already make. */
+
+/** The identity the bot writes memory under. Empty when unconfigured. */
+export function memoryUserId() {
+  return ALLOWED_EMAILS[0] || '';
+}
+
+let _memorySheetReady = false;
+
+async function ensureMemorySheet() {
+  if (_memorySheetReady) return;
+  const meta = await sheetsRequest(TEMPLATE_ID, '?fields=sheets.properties.title');
+  const exists = (meta.sheets || []).some(s => s.properties?.title === MEMORY_SHEET);
+  if (!exists) {
+    await sheetsRequest(TEMPLATE_ID, ':batchUpdate', {
+      method: 'POST',
+      body: JSON.stringify({ requests: [{ addSheet: { properties: { title: MEMORY_SHEET } } }] }),
+    });
+    const range = encodeURIComponent(`'${MEMORY_SHEET}'!A1:F1`);
+    await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueInputOption=RAW`, {
+      method: 'PUT',
+      body: JSON.stringify({ values: [MEMORY_HEADER] }),
+    });
+  }
+  _memorySheetReady = true;
+}
+
+/**
+ * Raw log rows, header included. Returns [] on any failure — a missing memory
+ * must degrade to "ask the user", never break a receipt the bot is mid-way
+ * through processing.
+ */
+export async function fetchItemMemoryRows() {
+  if (!TEMPLATE_ID) return [];
+  try {
+    await ensureMemorySheet();
+    const range = encodeURIComponent(`'${MEMORY_SHEET}'!A:F`);
+    const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}`);
+    return data.values || [];
+  } catch (e) {
+    console.warn('fetchItemMemoryRows failed (non-fatal):', e.message);
+    return [];
+  }
+}
+
+/** Rows collapsed to a newest-wins lookup map for the bot's user. */
+export async function getItemMemory() {
+  return reduceMemoryRows(await fetchItemMemoryRows(), memoryUserId());
+}
+
+/** Append rows to the log. Never throws — a lost lesson costs one tap later. */
+export async function appendItemMemory(rows) {
+  if (!rows?.length || !TEMPLATE_ID) return false;
+  try {
+    await ensureMemorySheet();
+    const range = encodeURIComponent(`'${MEMORY_SHEET}'!A:F`);
+    await sheetsRequest(
+      TEMPLATE_ID,
+      `/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+      { method: 'POST', body: JSON.stringify({ values: rows }) }
+    );
+    return true;
+  } catch (e) {
+    console.warn('appendItemMemory failed (non-fatal):', e.message);
+    return false;
+  }
+}
+
+/**
+ * Merge transaction notes into the settings blob (read-modify-write, same shape
+ * as addCategoryToUserSettings).
+ *
+ * The bot never wrote notes before, so a Telegram-split transaction showed up in
+ * the dashboard as a bare "Costco $84.12" with no record of what was in it. It
+ * also had no splitId, which is what lets a later category move re-teach the
+ * items — so bot splits were unteachable after the fact. Both are fixed by
+ * writing the same note shape the web split writes.
+ */
+export async function mergeTransactionNotes(notes) {
+  if (!TEMPLATE_ID || !notes || Object.keys(notes).length === 0) return false;
+  const userId = memoryUserId();
+  if (!userId) return false;
+
+  try {
+    const range = encodeURIComponent("'UserSettings'!A:B");
+    const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
+    const rows = data.values || [];
+    const rowIndex = rows.findIndex(r => r[0] === userId);
+    if (rowIndex < 0) return false;
+
+    const settings = JSON.parse(rows[rowIndex][1] || '{}');
+    settings.transactionNotes = { ...(settings.transactionNotes || {}), ...notes };
+
+    const writeRange = encodeURIComponent(`'UserSettings'!B${rowIndex + 1}`);
+    await sheetsRequest(TEMPLATE_ID, `/values/${writeRange}?valueInputOption=RAW`, {
+      method: 'PUT',
+      body: JSON.stringify({ values: [[JSON.stringify(settings)]] }),
+    });
+    _settingsCache = null; // the blob just changed under the TTL cache
+    return true;
+  } catch (e) {
+    console.warn('mergeTransactionNotes failed (non-fatal):', e.message);
+    return false;
   }
 }

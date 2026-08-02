@@ -14,7 +14,7 @@ import {
   getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID,
   getTotals, getRecentExpenses, writeSalaryAmount, writeBudgetAmount,
   addCategory, checkMonthExists, getLatestMonthData, getUserSettings,
-  createMonth,
+  createMonth, getItemMemory, appendItemMemory, mergeTransactionNotes, memoryUserId,
 } from './_sheets.mjs';
 import { convertToUSD } from './_currency.mjs';
 import { reportError } from './_error-log.mjs';
@@ -23,14 +23,18 @@ import { findErrorCodeInText, explainErrorCode } from './_error-codes.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
 import { buildRewardsLine, getEffectiveRates } from './_card-rewards.mjs';
 import { resolveCardName } from './_card-resolver.mjs';
-import { resolveCategory } from './_categorize.mjs';
+import { resolveCategory, CONFIDENCE_THRESHOLD } from './_categorize.mjs';
 import { findDuplicates } from './_duplicate-match.mjs';
 import {
   kbYesCancel, kbYesSkip, kbConfirmDelete, kbSplitCategory, kbCategoryConfirm, kbLogAnywayCancel,
   kbConfirmReceipt, kbLogAnywayReceipt, kbBatchReceipt, kbEditMenu, kbCategoryPicker, kbCardPicker,
   kbLoggedActions, kbEditLoggedMenu,
 } from './_telegram.mjs';
-import { categorizeItems, matchesSplitVendor } from './_item-categorizer.mjs';
+import { categorizeItem, matchesSplitVendor } from './_item-categorizer.mjs';
+import { lookupLearned, learnedExamples, buildMemoryRows, newSplitId } from './_item-memory.mjs';
+import { categorizeItemsBatch } from './_item-llm.mjs';
+import { buildSplitNote, buildCategoryItems } from './_split-notes.mjs';
+import { txNoteKey } from './_transaction-notes.mjs';
 import { runToolLoop } from './_agent.mjs';
 
 const DAILY_LIMIT    = 50;
@@ -1014,6 +1018,83 @@ export async function handleAttachMedia(ctx, base64, mediaType, attachState) {
    ══════════════════════════════════════════════════════════════════════════════ */
 
 /**
+ * Decide a category for every line item, three layers deep — the same order the
+ * dashboard's split screen uses, so both surfaces answer a receipt identically:
+ *
+ *   1. learned  — what this household filed this exact item under at this
+ *                 vendor last time. Beats the keyword tables on purpose: a
+ *                 remembered decision is evidence about THIS shopper, the
+ *                 keyword table is a guess about shoppers in general.
+ *   2. keyword  — _item-categorizer.mjs, unchanged.
+ *   3. llm      — one batched Groq call for the rest, primed with this
+ *                 household's own past filings at this vendor. Only confident
+ *                 answers auto-assign; the unsure ones still get asked.
+ *
+ * Over Telegram, asking about all ~50 items of a Costco run would be
+ * unusable, so layers 1-3 auto-assign and only the leftovers become questions.
+ * The user still sees every auto-sorted total in the summary before confirming,
+ * and can correct any of it afterwards from the dashboard — which re-teaches
+ * the items (see relearnMovedSplit / the splitId on the note below).
+ *
+ * @returns { groups, autoItems, toAsk } — `autoItems` are the ones already
+ *          placed, kept so the memory write covers the whole receipt.
+ */
+async function resolveSplitItems(rawItems, vendorName) {
+  let memory = new Map();
+  try { memory = await getItemMemory(); } catch { /* degrade to keywords */ }
+
+  const groups = {};
+  const autoItems = [];
+  const pending = [];
+
+  const place = (name, amount, category, source) => {
+    groups[category] = Math.round(((groups[category] || 0) + amount) * 100) / 100;
+    autoItems.push({ name, amount, category, source });
+  };
+
+  for (const item of rawItems) {
+    if (!item || typeof item.amount !== 'number') continue;
+    const learned = lookupLearned(memory, vendorName, item.name);
+    if (learned && CATEGORIES.includes(learned)) { place(item.name, item.amount, learned, 'learned'); continue; }
+
+    const keyword = categorizeItem(item);
+    if (keyword) { place(item.name, item.amount, keyword, 'keyword'); continue; }
+
+    pending.push({
+      name: item.name,
+      amount: item.amount,
+      suggestion: typeof item.item_category === 'string' && item.item_category ? item.item_category : null,
+      category: null,
+    });
+  }
+
+  if (pending.length === 0) return { groups, autoItems, toAsk: [] };
+
+  // Layer 3. categorizeItemsBatch never throws; with no key or a bad day at
+  // Groq every answer is null and the items simply become questions.
+  const { results } = await categorizeItemsBatch({
+    vendor: vendorName,
+    items: pending.map(p => p.name),
+    categories: CATEGORIES,
+    examples: learnedExamples(memory, vendorName),
+  });
+
+  const toAsk = [];
+  pending.forEach((p, i) => {
+    const r = results?.[i];
+    if (r && r.confidence >= CONFIDENCE_THRESHOLD) {
+      place(p.name, p.amount, r.category, 'llm');
+      return;
+    }
+    // Not confident enough to file silently — ask, but offer the guess as the
+    // pre-highlighted button.
+    toAsk.push({ ...p, suggestion: r?.category || p.suggestion });
+  });
+
+  return { groups, autoItems, toAsk };
+}
+
+/**
  * Start (or resume into) a split: classify line items, auto-group the confident
  * ones, and ask the user category-by-category for the rest. State lives in
  * `split_confirm:<userId>:<id>`.
@@ -1021,15 +1102,13 @@ export async function handleAttachMedia(ctx, base64, mediaType, attachState) {
 async function handleSplitFlow(ctx, { data, year, month, conversionInfo, baseReceiptId, driveResult, pendingKey }) {
   const { store, userId } = ctx;
 
-  const { autoGrouped, uncategorized } = categorizeItems(data.items || []);
-
-  const groups = {};
-  for (const g of autoGrouped) groups[g.category] = g.subtotal;
+  const vendorName = data.store_name || 'Unknown';
+  const { groups, autoItems, toAsk } = await resolveSplitItems(data.items || [], vendorName);
 
   const state = {
     id: baseReceiptId,
     phone: userId,
-    vendor: data.store_name || 'Unknown',
+    vendor: vendorName,
     totalAmount: data.total_amount,
     txDate: data.purchase_date || null,
     year, month,
@@ -1039,7 +1118,11 @@ async function handleSplitFlow(ctx, { data, year, month, conversionInfo, baseRec
     driveFolderId: driveResult?.folderId || null,
     driveShareLink: driveResult?.shareLink || null,
     groups,
-    items: uncategorized.map(u => ({ name: u.name, amount: u.amount, suggestion: u.suggestion, category: null })),
+    // Items already placed by memory / keywords / a confident LLM answer. Kept
+    // so the memory write and the note at the end cover the WHOLE receipt, not
+    // just the ones the user was asked about.
+    autoItems,
+    items: toAsk,
     currentIndex: 0,
     receivedAt: new Date().toISOString(),
   };
@@ -1049,7 +1132,7 @@ async function handleSplitFlow(ctx, { data, year, month, conversionInfo, baseRec
 
   const key = `split_confirm:${userId}:${baseReceiptId}`;
   await store.setJSON(key, state);
-  console.log(`bot-core: split started for ${userId} — ${state.vendor} $${state.totalAmount} (${autoGrouped.length} auto, ${uncategorized.length} to ask)`);
+  console.log(`bot-core: split started for ${userId} — ${state.vendor} $${state.totalAmount} (${autoItems.length} auto, ${toAsk.length} to ask)`);
 
   return await askNextSplitItem(ctx, key, state);
 }
@@ -1243,12 +1326,21 @@ async function finalizeSplit(ctx, key, state) {
   }
   const groupSum = Math.round(cats.reduce((s, c) => s + groups[c], 0) * 100) / 100;
   const remainder = Math.round((Number(state.totalAmount) - groupSum) * 100) / 100;
+  // Remembered so the note can label the tax/fees against the group that
+  // absorbed it, rather than letting it silently inflate an item's price.
+  let remainderCategory = null;
   if (Math.abs(remainder) >= 0.01) {
-    const largest = cats.reduce((a, b) => (groups[b] > groups[a] ? b : a), cats[0]);
-    groups[largest] = Math.round((groups[largest] + remainder) * 100) / 100;
+    remainderCategory = cats.reduce((a, b) => (groups[b] > groups[a] ? b : a), cats[0]);
+    groups[remainderCategory] = Math.round((groups[remainderCategory] + remainder) * 100) / 100;
   }
 
   const entries = [];
+  const notes   = {};
+  const splitId = newSplitId();
+  // Every item on the receipt, however it was categorized.
+  const allItems = [...(state.autoItems || []), ...state.items.filter(i => i.category)];
+  const itemsByCategory = buildCategoryItems([], allItems);
+
   for (const category of Object.keys(groups)) {
     const amount = groups[category];
     if (amount <= 0) continue;
@@ -1259,6 +1351,13 @@ async function finalizeSplit(ctx, key, state) {
         paymentMethod: state.paymentMethod || '', channel: ctx.channel,
       });
       entries.push({ category, uuid: result.uuid, sheetId, amount });
+
+      // Key off the amount actually written (remainder already folded in), or
+      // the dashboard reads back a key that was never used.
+      const note = buildSplitNote(itemsByCategory[category] || [], {
+        remainder: category === remainderCategory ? remainder : 0,
+      });
+      if (note) notes[txNoteKey(sheetId, category, state.vendor, amount)] = { ...note, splitId };
     } catch (e) {
       await reportError('BOT-005', e, { category });
     }
@@ -1267,6 +1366,15 @@ async function finalizeSplit(ctx, key, state) {
   if (entries.length === 0) {
     return ctx.send('Failed to log the split to the spreadsheet. Try again or use the dashboard. [BOT-005]');
   }
+
+  // Teach item memory what this receipt decided, and leave the same note the
+  // web split leaves — item list plus the splitId that lets a later category
+  // move re-teach every item behind the transaction. Both are best-effort and
+  // deliberately not awaited into the reply path: the expenses are already
+  // written, and a lost lesson costs one tap next time.
+  appendItemMemory(buildMemoryRows({ userId: memoryUserId(), vendor: state.vendor, items: allItems, splitId }))
+    .catch(() => {});
+  if (Object.keys(notes).length > 0) mergeTransactionNotes(notes).catch(() => {});
 
   // Move the receipt into the largest group's Drive folder (best-effort).
   if (state.driveFileId) {
@@ -2347,4 +2455,7 @@ async function runBotAgent(ctx, text) {
   return acted;   // a tool already messaged the user → handled; else not handled
 }
 
-export { CATEGORIES, DAILY_LIMIT, getRateCount };
+// resolveSplitItems is exported for tests: it holds the three-layer decision
+// that used to be one keyword call, and the split flow that reaches it starts
+// from an image extraction, which is a very expensive way to assert a rule.
+export { CATEGORIES, DAILY_LIMIT, getRateCount, resolveSplitItems };
