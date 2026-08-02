@@ -14,7 +14,7 @@ import {
   getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID,
   getTotals, getRecentExpenses, writeSalaryAmount, writeBudgetAmount,
   addCategory, checkMonthExists, getLatestMonthData, getUserSettings,
-  createMonth,
+  createMonth, saveTransactionNotes,
 } from './_sheets.mjs';
 import { convertToUSD } from './_currency.mjs';
 import { reportError } from './_error-log.mjs';
@@ -28,9 +28,11 @@ import { findDuplicates } from './_duplicate-match.mjs';
 import {
   kbYesCancel, kbYesSkip, kbConfirmDelete, kbSplitCategory, kbCategoryConfirm, kbLogAnywayCancel,
   kbConfirmReceipt, kbLogAnywayReceipt, kbBatchReceipt, kbEditMenu, kbCategoryPicker, kbCardPicker,
-  kbLoggedActions, kbEditLoggedMenu,
+  kbLoggedActions, kbEditLoggedMenu, resolveEmailByChatId,
 } from './_telegram.mjs';
 import { categorizeItems, matchesSplitVendor } from './_item-categorizer.mjs';
+import { buildCategoryItems, buildSplitNote } from './_split-notes.mjs';
+import { txNoteKey } from './_transaction-notes.mjs';
 import { runToolLoop } from './_agent.mjs';
 
 const DAILY_LIMIT    = 50;
@@ -1026,6 +1028,17 @@ async function handleSplitFlow(ctx, { data, year, month, conversionInfo, baseRec
   const groups = {};
   for (const g of autoGrouped) groups[g.category] = g.subtotal;
 
+  // Keep the line items behind each auto-grouped category, not just its
+  // subtotal. finalizeSplit turns them into the per-transaction note that says
+  // *why* a category got its share; dropping them here is why the bot logged
+  // splits with no notes at all while the dashboard scanner wrote them.
+  // Items the user sorts by hand already survive on state.items (handleSplitItem
+  // stamps .category onto them in place), so only the auto side needs storing.
+  const autoGroups = autoGrouped.map(g => ({
+    category: g.category,
+    items: (g.items || []).map(i => ({ name: i.name, amount: i.amount })),
+  }));
+
   const state = {
     id: baseReceiptId,
     phone: userId,
@@ -1039,6 +1052,7 @@ async function handleSplitFlow(ctx, { data, year, month, conversionInfo, baseRec
     driveFolderId: driveResult?.folderId || null,
     driveShareLink: driveResult?.shareLink || null,
     groups,
+    autoGroups,
     items: uncategorized.map(u => ({ name: u.name, amount: u.amount, suggestion: u.suggestion, category: null })),
     currentIndex: 0,
     receivedAt: new Date().toISOString(),
@@ -1221,6 +1235,50 @@ async function handleSplitCategoryPick(ctx, text) {
   return await askNextSplitItem(ctx, key, state);
 }
 
+/**
+ * Attach a note to each transaction a split just wrote, saying which line items
+ * it was made of. The dashboard's ledger and detail panel read these back.
+ *
+ * Best-effort by construction: the expenses are already in the sheet by the time
+ * this runs, and a failed note must never turn a logged split into an error the
+ * user retries (which would double-log it). Every failure path here warns and
+ * returns.
+ *
+ * Keys must be built from the amount actually written — after the tax/fees
+ * remainder has been folded in — because that is the amount the ledger reads off
+ * the sheet and rebuilds the key from. A key built from the pre-fold subtotal
+ * would never be read back, making the note invisible rather than wrong.
+ */
+async function writeSplitNotes(ctx, state, entries, { remainder, remainderCategory, sheetId }) {
+  try {
+    // Old in-flight splits (saved before autoGroups existed) have no auto items.
+    // Their hand-sorted items still produce a useful note, so write what we have
+    // rather than skipping the whole thing.
+    const itemsByCategory = buildCategoryItems(state.autoGroups || [], state.items || []);
+
+    const notes = {};
+    for (const entry of entries) {
+      const note = buildSplitNote(itemsByCategory[entry.category] || [], {
+        remainder: entry.category === remainderCategory ? remainder : 0,
+      });
+      if (note) notes[txNoteKey(sheetId, entry.category, state.vendor, entry.amount)] = note;
+    }
+    if (Object.keys(notes).length === 0) return;
+
+    // Notes are stored per-user, so they must land on the row belonging to
+    // whoever sent the receipt. An unmapped chat id falls back to the household
+    // default rather than dropping the note — the same row the bot already reads
+    // its settings from, so this is no worse than the rest of the bot's behavior.
+    const email = resolveEmailByChatId(ctx.userId);
+    const result = await saveTransactionNotes(notes, email);
+    if (!result.saved) {
+      console.warn(`bot-core: split notes not saved (${result.reason}) for ${state.vendor}`);
+    }
+  } catch (e) {
+    console.warn('bot-core: split notes failed (non-fatal)', e.message);
+  }
+}
+
 /** Log every category group as its own expense row, linked for UNDO. */
 async function finalizeSplit(ctx, key, state) {
   const { store, userId } = ctx;
@@ -1243,9 +1301,12 @@ async function finalizeSplit(ctx, key, state) {
   }
   const groupSum = Math.round(cats.reduce((s, c) => s + groups[c], 0) * 100) / 100;
   const remainder = Math.round((Number(state.totalAmount) - groupSum) * 100) / 100;
+  // Which category absorbed the tax/fees, so its note can say so instead of
+  // silently inflating one of its item prices to a number the receipt never showed.
+  let remainderCategory = null;
   if (Math.abs(remainder) >= 0.01) {
-    const largest = cats.reduce((a, b) => (groups[b] > groups[a] ? b : a), cats[0]);
-    groups[largest] = Math.round((groups[largest] + remainder) * 100) / 100;
+    remainderCategory = cats.reduce((a, b) => (groups[b] > groups[a] ? b : a), cats[0]);
+    groups[remainderCategory] = Math.round((groups[remainderCategory] + remainder) * 100) / 100;
   }
 
   const entries = [];
@@ -1267,6 +1328,8 @@ async function finalizeSplit(ctx, key, state) {
   if (entries.length === 0) {
     return ctx.send('Failed to log the split to the spreadsheet. Try again or use the dashboard. [BOT-005]');
   }
+
+  await writeSplitNotes(ctx, state, entries, { remainder, remainderCategory, sheetId });
 
   // Move the receipt into the largest group's Drive folder (best-effort).
   if (state.driveFileId) {

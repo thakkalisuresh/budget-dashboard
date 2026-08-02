@@ -4,6 +4,11 @@
  * Files in lib/ are shared modules, not standalone deployed functions.
  */
 import { getAccessToken, copyFile, shareWithEmails } from './_drive.mjs';
+import { shouldWarnSettingsSize } from './_split-notes.mjs';
+
+// Google Sheets' hard ceiling on a single cell. Every user setting shares one
+// cell, so a write past this fails the entire blob, not just the new part.
+const SETTINGS_CELL_MAX_CHARS = 50000;
 
 const SHEETS_API    = 'https://sheets.googleapis.com/v4/spreadsheets';
 const TEMPLATE_ID   = process.env.VITE_TEMPLATE_SHEET_ID;
@@ -624,6 +629,73 @@ export async function getUserSettingsByEmail(email) {
   const row = rows.find(r => r[0] === email);
   if (!row) return {};
   try { return JSON.parse(row[1] || '{}'); } catch { return {}; }
+}
+
+/**
+ * Merge transaction notes into a user's settings row.
+ *
+ * Read-modify-write of a single cell, same shape as addCategoryToUserSettings.
+ * There is no locking: the web app can write the same cell concurrently, and the
+ * loser of a race silently drops its changes. That is tolerable for notes (worst
+ * case one note is lost and the split is still logged) but it is the reason this
+ * merges rather than replaces, and the reason callers must treat it as
+ * best-effort — a note must never take a logged expense down with it.
+ *
+ * The size guard is not decoration. Every setting shares one 50,000-character
+ * cell and nothing prunes notes; exceeding the cap fails the whole save,
+ * including unrelated settings. We refuse to grow the blob past the ceiling
+ * rather than corrupt everything the user has configured.
+ *
+ * @param notes  { [txNoteKey]: { note, tags } }
+ * @param email  whose settings row to write; falls back to the household default
+ * @returns { saved: boolean, reason?: string }
+ */
+export async function saveTransactionNotes(notes, email) {
+  const userId = email || ALLOWED_EMAILS[0];
+  if (!TEMPLATE_ID || !userId) return { saved: false, reason: 'no-target' };
+  if (!notes || Object.keys(notes).length === 0) return { saved: false, reason: 'empty' };
+
+  const range = encodeURIComponent("'UserSettings'!A:B");
+  const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
+  const rows = data.values || [];
+
+  const rowIndex = rows.findIndex(r => r[0] === userId);
+  // No row means the user has never saved settings from the dashboard. Creating
+  // one here would write a blob with nothing but notes in it, which the web app
+  // would then merge over DEFAULT_SETTINGS — harmless, but it also means the
+  // notes belong to a user who has no sheet to read them in. Skip instead.
+  if (rowIndex < 0) return { saved: false, reason: 'no-settings-row' };
+
+  let settings;
+  try {
+    settings = JSON.parse(rows[rowIndex][1] || '{}');
+  } catch {
+    // Refuse to overwrite a cell we can't parse — it is more likely truncated
+    // or mid-write than genuinely empty, and clobbering it loses every setting.
+    return { saved: false, reason: 'unparseable' };
+  }
+
+  settings.transactionNotes = { ...(settings.transactionNotes || {}), ...notes };
+  const json = JSON.stringify(settings);
+
+  if (json.length > SETTINGS_CELL_MAX_CHARS) {
+    return { saved: false, reason: 'would-exceed-cell-cap' };
+  }
+  if (shouldWarnSettingsSize(json.length)) {
+    console.warn(`saveTransactionNotes: settings blob at ${json.length} chars, approaching the ${SETTINGS_CELL_MAX_CHARS} cell cap — notes need pruning`);
+  }
+
+  const writeRange = encodeURIComponent(`'UserSettings'!B${rowIndex + 1}`);
+  await sheetsRequest(TEMPLATE_ID, `/values/${writeRange}?valueInputOption=RAW`, {
+    method: 'PUT',
+    body: JSON.stringify({ values: [[json]] }),
+  });
+
+  // The bot and the web app read settings through different caches; ours would
+  // otherwise serve a copy without the notes we just wrote for up to a minute.
+  _settingsCache = null;
+
+  return { saved: true };
 }
 
 export async function createMonth({ monthName, salary, budgetChanges }) {
