@@ -16,6 +16,9 @@ import { createBotStore } from './lib/bot-store.mjs';
 import { sendMessage, kbCategoryConfirm, resolveTelegramChatId } from './lib/_telegram.mjs';
 import { matchesSplitVendor } from './lib/_item-categorizer.mjs';
 import { resolveCardName } from './lib/_card-resolver.mjs';
+import { ownerForCard, DEFAULT_CARD_OWNERS } from './lib/_card-owners.mjs';
+import { GROQ_MODEL } from './lib/_categorize.mjs';
+import { snapshotConfig } from './lib/_warehouse.mjs';
 import { sha256Hex } from './lib/http-common.mjs';
 import { reportError } from './lib/_error-log.mjs';
 import { withErrorContext, setActor, trail } from './lib/_error-context.mjs';
@@ -24,7 +27,7 @@ import {
   VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_EMAIL,
   ANTHROPIC_API_KEY, GEMINI_API_KEY, GROQ_API_KEY,
   TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP,
-  SHEETS_DRIVE_SECRETS,
+  SHEETS_DRIVE_SECRETS, WAREHOUSE_SECRETS,
 } from './lib/secrets.mjs';
 
 async function keyMatches(provided, expected) {
@@ -41,6 +44,34 @@ function extractKey(req) {
   return req.get('x-api-key')?.trim() || null;
 }
 
+/**
+ * How long a wallet request stays claimed.
+ *
+ * This exists for one observed failure: a 30-second cold start returned a 504
+ * to the phone, the phone retried, and the handler had in fact already written
+ * the row seven seconds later. The retry window is seconds, so the claim window
+ * is ninety — long enough to cover any plausible retry, short enough that two
+ * genuinely separate identical charges (the second coffee) both get logged.
+ *
+ * Deliberately NOT the hour that `claimOnce` uses for Telegram update_ids:
+ * there the key is a unique event id, here it may be a payload hash.
+ */
+export const WALLET_CLAIM_MS = 90_000;
+
+/**
+ * The idempotency key for one wallet charge.
+ *
+ * Prefers an explicit `requestId` from the automation, which is exact — the
+ * Shortcut/macro can mint a UUID once and reuse it across its own retries.
+ * Without one, fall back to hashing the payload: correct for a retry (identical
+ * bytes) and, within ninety seconds, near-certainly not a distinct purchase.
+ */
+export async function walletClaimKey({ requestId, email, merchant, amount, card, date }) {
+  if (requestId) return `wallet:${await sha256Hex(String(requestId))}`;
+  const material = [email, merchant, amount, card, date].map(v => String(v ?? '')).join('\0');
+  return `wallet:${await sha256Hex(material)}`;
+}
+
 export const walletWebhook = onRequest(
   {
     region: 'us-central1',
@@ -49,7 +80,7 @@ export const walletWebhook = onRequest(
       VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_EMAIL,
       ANTHROPIC_API_KEY, GEMINI_API_KEY, GROQ_API_KEY,
       TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP,
-      ...SHEETS_DRIVE_SECRETS,
+      ...SHEETS_DRIVE_SECRETS, ...WAREHOUSE_SECRETS,
     ],
     timeoutSeconds: 30,
     cors: false,
@@ -115,6 +146,34 @@ export const walletWebhook = onRequest(
       res.status(400).json({ ok: false, code: 'WAL-001', error: 'Missing or invalid email' });
       return;
     }
+
+    // ── Idempotency ───────────────────────────────────────────────────────
+    // A cold start can push this handler past the phone's timeout; the phone
+    // retries, and the first run finishes and writes the row anyway. That
+    // produced a real duplicate charge in the sheet with a fresh uuid, which
+    // the warehouse would then faithfully record as two transactions.
+    //
+    // Claimed here: after validation (so junk can't burn a claim) and before
+    // the vision/LLM calls (so a retry costs nothing). A retry gets a 200 with
+    // duplicate:true — the phone should see success, because the charge WAS
+    // logged, just not by this request.
+    const claimKey = await walletClaimKey({
+      requestId: req.body?.requestId, email, merchant, amount, card, date: txDate,
+    });
+    try {
+      const claimed = await createBotStore(getDb()).claimFor(claimKey, WALLET_CLAIM_MS);
+      if (!claimed) {
+        console.log(`wallet-webhook: duplicate delivery suppressed for ${merchant} $${amount}`);
+        res.status(200).json({ ok: true, duplicate: true, vendor: merchant, amount });
+        return;
+      }
+    } catch (e) {
+      // Fail OPEN. A Firestore hiccup must not drop a real charge; the worst
+      // case without the claim is the duplicate this exists to prevent, and
+      // that one at least leaves a row you can see and delete.
+      console.warn('wallet-webhook: idempotency claim failed (proceeding)', e.message);
+    }
+
     const monthName = new Date(txDate + 'T00:00:00').toLocaleString('en-US', {
       month: 'long',
       year: 'numeric',
@@ -181,6 +240,16 @@ export const walletWebhook = onRequest(
     if (card) {
       card = resolveCardName(card, userSettings.cards || []) || card;
     }
+
+    // Snapshot the card→owner map before freezing an owner onto the row, so
+    // `card_owner = 'me'` on a row from last March stays explainable: the hash
+    // points at the map as it stood at that moment. Append-on-change, so this
+    // is a no-op once per warm instance.
+    const cardOwnerMapHash = await snapshotConfig(
+      'card_owners',
+      userSettings.cardOwners || DEFAULT_CARD_OWNERS,
+      { actorEmail: email, ingestSource: 'hook' },
+    );
 
     // ── Category resolution: smart rules → Groq → whatever the extractor said.
     // A confident answer is written straight through, preserving the instant
@@ -277,14 +346,16 @@ export const walletWebhook = onRequest(
     // above. So log it and say so; the Duplicates review surface is where it
     // gets resolved. Wrapped separately so a failed check can't stop the write.
     let dupNotice = null;
+    let dupMatch = null;
     try {
       const recent = await getRecentExpenses(sheetId, 100);
       const dups = findDuplicates(
-        recent.map(e => ({ vendor: e.vendor, amount: e.amount, date: e.txDate || e.timestamp, category: e.category })),
+        recent.map(e => ({ vendor: e.vendor, amount: e.amount, date: e.txDate || e.timestamp, category: e.category, uuid: e.uuid })),
         { vendor, amount, date: txDate }
       );
       if (dups.length > 0) {
         const first = dups[0];
+        dupMatch = first.uuid || null;
         dupNotice =
           `⚠️ Possible duplicate — logged anyway:\n` +
           `${vendor} · $${amount.toFixed(2)}\n` +
@@ -308,6 +379,28 @@ export const walletWebhook = onRequest(
         monthName,
         paymentMethod: card ?? '',
         channel: 'wallet',
+        // ── Frozen-at-write-time provenance (warehouse only) ───────────────
+        // None of this touches the spreadsheet; dropping the warehouse and
+        // rebuilding it from Sheets must not change any budget number. It is
+        // stored rather than recomputed because all of it derives from mutable
+        // config: change the Groq model, reassign a card, and re-deriving would
+        // silently rewrite what was decided last March.
+        //
+        // This is the richest caller in the system — resolveCategory's output
+        // and the duplicate-match results are already in scope right here.
+        provenance: {
+          actorEmail: email,
+          llmCategory: decision.source === 'llm' ? decision.category : null,
+          llmConfidence: decision.source === 'llm' ? decision.confidence : null,
+          llmModel: decision.source === 'llm' ? GROQ_MODEL : null,
+          categorySource: decision.source === 'rule' ? 'smart_rule'
+            : decision.source === 'llm' ? 'llm'
+            : 'extractor',
+          dupSuspect: dupMatch !== null || dupNotice !== null,
+          dupMatchedUuid: dupMatch,
+          cardOwner: ownerForCard(card, userSettings.cardOwners),
+          cardOwnerMapHash: cardOwnerMapHash,
+        },
       });
     } catch (e) {
       if (e.message?.includes('No sheet found for month')) {

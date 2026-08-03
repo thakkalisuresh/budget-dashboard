@@ -343,9 +343,14 @@ describe('getRecentExpenses', () => {
 });
 
 describe('deleteExpenseByUUID', () => {
-  // URL-routed mock: F:H reads per tab, sheet metadata, and the batchUpdate
+  // URL-routed mock: A:H reads per tab, sheet metadata, and the batchUpdate
   // delete. `uuidTab` is the tab that actually contains the uuid, `col`
   // selects which of F/G/H holds it (0=F legacy, 1=G current, 2=H travel).
+  //
+  // The lookup reads A:H rather than F:H so the row's own values are in hand
+  // when the row is deleted — deleteDimension is physical, so afterwards they
+  // exist nowhere else and the warehouse could only record "something was
+  // removed here".
   function routeDelete({ uuid, uuidTab, col = 1, rowIdx = 3 }) {
     const batchUpdates = [];
     mockFetch.mockImplementation((url, options = {}) => {
@@ -353,14 +358,16 @@ describe('deleteExpenseByUUID', () => {
         return Promise.resolve(jsonResponse({ access_token: 'test-token', expires_in: 3600 }));
       }
       const u = decodeURIComponent(url);
-      if (u.includes('!F:H')) {
-        const tab = u.match(/'([^']+)'!F:H/)?.[1];
+      if (u.includes('!A:H')) {
+        const tab = u.match(/'([^']+)'!A:H/)?.[1];
         if (tab === uuidTab) {
-          const rows = Array.from({ length: rowIdx + 1 }, () => ['', '', '']);
-          rows[rowIdx][col] = uuid;
+          const rows = Array.from({ length: rowIdx + 1 }, () => Array(8).fill(''));
+          rows[rowIdx][5 + col] = uuid;
           return Promise.resolve(jsonResponse({ values: rows }));
         }
-        return Promise.resolve(jsonResponse({ values: [['Payment Method', 'UUID', '']] }));
+        return Promise.resolve(jsonResponse({
+          values: [['Month', 'Year', 'Date', 'Vendor', 'Amount', 'Payment Method', 'UUID', '']],
+        }));
       }
       if (u.includes('?fields=sheets.properties')) {
         return Promise.resolve(jsonResponse({

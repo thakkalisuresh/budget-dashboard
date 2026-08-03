@@ -8,6 +8,16 @@
 // localStorage key holding the queued items as a JSON array.
 const QUEUE_KEY = 'budget_offline_queue';
 
+// How many times a queued item may be retried before we stop trying.
+//
+// This used to be unbounded, which is worse than it sounds: each replay attempt
+// mints a NEW uuid, so a write that half-succeeds (the row lands, the response
+// is lost) is indistinguishable from a failure and gets re-appended on every
+// single retry. A capped queue plus a visible "couldn't sync N items" state is
+// the honest behaviour — the user can see it and fix it once, instead of the
+// sheet quietly filling with copies.
+export const MAX_RETRIES = 5;
+
 // Ask the service worker to schedule a one-off "background sync". The browser
 // runs it when connectivity comes back — even if this tab has since been closed.
 // The `?.` and empty `.catch()` make it a harmless no-op where it's unsupported.

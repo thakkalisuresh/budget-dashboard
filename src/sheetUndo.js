@@ -7,9 +7,22 @@ import { fetchDetailRows } from './sheetDetail.js';
 import { appendHistoryEntry } from './sheetHistory.js';
 import { renameCategory } from './sheetCategories.js';
 import { moveTransactionCategory } from './sheetExpenses.js';
+import { notifyWarehouse, transactionWriteEvent, transactionDeleteEvent } from './warehouseNotify.js';
 
-export async function undoHistoryEntry(sheetId, accessToken, entry) {
+/**
+ * Revert one History entry.
+ *
+ * Undo is a real state change, not a rollback: the warehouse records what undo
+ * *did*, as a new version, and never retracts the version it is reversing.
+ * "The user added this and then undid it" is a fact worth keeping — retracting
+ * the original would make the archive claim the add never happened.
+ *
+ * The reverse-move branch needs no hook of its own: it goes through
+ * `moveTransactionCategory`, which is already hooked.
+ */
+export async function undoHistoryEntry(sheetId, accessToken, entry, monthName = null) {
   const { action, category, vendor, amount, details } = entry;
+  const wh = (event) => notifyWarehouse(event, accessToken);
 
   if (action === 'Added' || action === 'Receipt Scan') {
     const rows = await fetchDetailRows(category, accessToken, sheetId);
@@ -18,6 +31,11 @@ export async function undoHistoryEntry(sheetId, accessToken, entry) {
       const config = SHEET_MAP[category];
       if (config) {
         await clearRowRange(sheetId, config.sheet, row.rowIndex, config.amtCol, accessToken);
+        wh((row.uuids?.length ? row.uuids : [entry.uuid || null]).map(uuid => transactionDeleteEvent({
+          spreadsheetId: sheetId, budgetMonth: monthName, category,
+          uuid, vendor, amount, sheetRowIndex: row.rowIndex,
+          sourceAction: 'undo:Added', stateReason: 'undone',
+        })));
       }
     }
 
@@ -38,6 +56,11 @@ export async function undoHistoryEntry(sheetId, accessToken, entry) {
         } else {
           await writeCell(sheetId, config.sheet, row.rowIndex, config.amtCol, buildFormula(newAmounts), accessToken);
         }
+        wh(transactionDeleteEvent({
+          spreadsheetId: sheetId, budgetMonth: monthName, category,
+          uuid: entry.uuid || null, vendor, amount, sheetRowIndex: row.rowIndex,
+          sourceAction: 'undo:Updated', stateReason: 'undone',
+        }));
       }
     }
 
@@ -49,7 +72,15 @@ export async function undoHistoryEntry(sheetId, accessToken, entry) {
       const row = rows.find(r => r.description.toLowerCase() === vendor.toLowerCase());
       if (row) {
         const config = SHEET_MAP[category];
-        if (config) await writeCell(sheetId, config.sheet, row.rowIndex, config.amtCol, prevAmount, accessToken);
+        if (config) {
+          await writeCell(sheetId, config.sheet, row.rowIndex, config.amtCol, prevAmount, accessToken);
+          wh(transactionWriteEvent({
+            spreadsheetId: sheetId, budgetMonth: monthName, category,
+            uuid: entry.uuid || row.uuids?.[0] || null, budgetDate: row.date || null,
+            vendor, amount: prevAmount, paymentMethod: row.paymentMethod || '',
+            sheetRowIndex: row.rowIndex, sourceAction: 'undo:Edited',
+          }));
+        }
       }
     }
 
@@ -69,6 +100,14 @@ export async function undoHistoryEntry(sheetId, accessToken, entry) {
           const newUUID = generateTransactionUUID(amount);
           await writeCell(sheetId, config.sheet, sheetRow, config.amtCol, buildFormula([...existing, amount]), accessToken);
           await writeCell(sheetId, config.sheet, sheetRow, uuidStart(config) + existing.length, newUUID, accessToken);
+          // Undoing a delete mints a NEW uuid, so lineage back to the original
+          // has to be declared — nothing in the sheet connects the two rows.
+          wh(transactionWriteEvent({
+            spreadsheetId: sheetId, budgetMonth: monthName, category,
+            uuid: newUUID, priorUuid: entry.uuid || null,
+            priorTransactionKey: entry.uuid || null,
+            vendor, amount, sheetRowIndex: sheetRow, sourceAction: 'undo:Deleted',
+          }));
         } else {
           const now = new Date();
           const newUUID = generateTransactionUUID(amount);
@@ -104,6 +143,13 @@ export async function undoHistoryEntry(sheetId, accessToken, entry) {
               body: JSON.stringify({ values: [newRow] }),
             });
           }
+          wh(transactionWriteEvent({
+            spreadsheetId: sheetId, budgetMonth: monthName, category,
+            uuid: newUUID, priorUuid: entry.uuid || null,
+            priorTransactionKey: entry.uuid || null,
+            vendor, amount, sheetRowIndex: targetRow >= 0 ? targetRow : null,
+            sourceAction: 'undo:Deleted',
+          }));
         }
       }
     }
@@ -116,7 +162,15 @@ export async function undoHistoryEntry(sheetId, accessToken, entry) {
       const row = rows.find(r => r.description.toLowerCase() === vendor.toLowerCase());
       if (row) {
         const config = SHEET_MAP[category];
-        if (config) await writeCell(sheetId, config.sheet, row.rowIndex, config.descCol, safeText(oldName), accessToken);
+        if (config) {
+          await writeCell(sheetId, config.sheet, row.rowIndex, config.descCol, safeText(oldName), accessToken);
+          wh(transactionWriteEvent({
+            spreadsheetId: sheetId, budgetMonth: monthName, category,
+            uuid: entry.uuid || row.uuids?.[0] || null, budgetDate: row.date || null,
+            vendor: oldName, amount, paymentMethod: row.paymentMethod || '',
+            sheetRowIndex: row.rowIndex, sourceAction: 'undo:Renamed',
+          }));
+        }
       }
     }
 

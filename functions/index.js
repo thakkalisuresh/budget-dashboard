@@ -31,3 +31,10 @@ export { categoryAudit } from './category-audit.mjs';
 
 // Daily backend error digest (scheduled). See docs/ERROR_CODES.md.
 export { errorDigest } from './error-digest.mjs';
+
+// BigQuery warehouse — append-only archive beside Sheets. See docs/warehouse.md.
+// warehouseCron is the THIRD and last free Cloud Scheduler job; anything that
+// needs a schedule from here on folds into it rather than adding a fourth.
+export { warehouseNotify } from './warehouse-notify.mjs';
+export { warehouseCron } from './warehouse-cron.mjs';
+export { warehouseBackfill } from './warehouse-backfill.mjs';

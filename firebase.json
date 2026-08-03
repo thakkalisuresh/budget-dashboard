@@ -12,6 +12,8 @@
       { "source": "/api/push-alert", "function": "pushAlert" },
       { "source": "/api/mcp", "function": "mcp" },
       { "source": "/api/wallet", "function": "walletWebhook" },
+      { "source": "/api/warehouse-notify", "function": "warehouseNotify" },
+      { "source": "/api/warehouse-backfill", "function": "warehouseBackfill" },
       {
         "source": "**",
         "destination": "/index.html"

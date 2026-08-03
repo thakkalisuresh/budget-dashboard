@@ -66,6 +66,17 @@ export const MCP_API_KEY = defineSecret('MCP_API_KEY');
 // ── Wallet webhook (iOS Shortcuts / Android MacroDroid) ──────────────────
 export const WALLET_WEBHOOK_SECRET = defineSecret('WALLET_WEBHOOK_SECRET');
 
+// ── BigQuery warehouse ─────────────────────────────────────────────────────
+// A boolean in Secret Manager looks odd, and it is — but a plain env var would
+// have to live in functions/.env, which is gitignored, so the flag's value
+// would be invisible in the repo and undefined on any machine that hadn't been
+// set up by hand. Same reasoning as VITE_TEMPLATE_SHEET_ID above.
+//
+// Unset or anything other than "true" means every warehouse entry point is a
+// no-op, so all of this can deploy before the dataset exists.
+//   firebase functions:secrets:set WAREHOUSE_ENABLED     # value: true | false
+export const WAREHOUSE_ENABLED = defineSecret('WAREHOUSE_ENABLED');
+
 /** Secrets needed by any function that touches the Sheets/Drive data layer. */
 export const SHEETS_DRIVE_SECRETS = [
   GOOGLE_CLIENT_ID,
@@ -74,3 +85,15 @@ export const SHEETS_DRIVE_SECRETS = [
   VITE_TEMPLATE_SHEET_ID,
   ALLOWED_EMAILS,
 ];
+
+/**
+ * Bind this in ANY function that can reach `_warehouse.mjs`, directly or
+ * through `_sheets.mjs`.
+ *
+ * Leaving it off does not fail the deploy and does not throw at runtime — the
+ * flag reads as undefined, `warehouseEnabled()` returns false, and the function
+ * silently archives nothing forever. That is the exact shape of the errorDigest
+ * bug (a bound-but-incomplete secrets array, ACTIVE and inert for weeks), so
+ * `warehouseSecrets.test.js` asserts the binding rather than trusting it.
+ */
+export const WAREHOUSE_SECRETS = [WAREHOUSE_ENABLED];

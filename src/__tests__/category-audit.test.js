@@ -23,7 +23,7 @@ vi.mock('../../functions/lib/_extraction.mjs', () => ({
 // doesn't try to register a real Cloud Scheduler job.
 vi.mock('firebase-functions/v2/scheduler', () => ({ onSchedule: (_opts, fn) => fn }));
 vi.mock('../../functions/lib/secrets.mjs', () => ({
-  GROQ_API_KEY: 'k', TELEGRAM_BOT_TOKEN: 'k', TELEGRAM_EMAIL_MAP: 'k', SHEETS_DRIVE_SECRETS: [],
+  GROQ_API_KEY: 'k', TELEGRAM_BOT_TOKEN: 'k', TELEGRAM_EMAIL_MAP: 'k', SHEETS_DRIVE_SECRETS: [], WAREHOUSE_SECRETS: [],
 }));
 
 const { runCategoryAudit } = await import('../../functions/category-audit.mjs');

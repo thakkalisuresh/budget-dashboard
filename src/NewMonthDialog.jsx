@@ -113,7 +113,7 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
       // Write salary if provided
       const salaryVal = parseFloat(salary);
       if (!isNaN(salaryVal) && salaryVal > 0) {
-        await writeSalary(newMonth.sheetId, salaryVal, accessToken);
+        await writeSalary(newMonth.sheetId, salaryVal, accessToken, name);
       }
 
       // Write modified built-in budget amounts
@@ -121,8 +121,11 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
       if (modified.length > 0) {
         await writeBudgetAmounts(
           newMonth.sheetId,
-          modified.map(r => ({ rowNum: r.rowNum, amount: parseFloat(r.amount) || 0 })),
-          accessToken
+          // categoryName is warehouse-only: rowNum alone would archive the
+          // budget under a null category, which is the partition/cluster key.
+          modified.map(r => ({ rowNum: r.rowNum, amount: parseFloat(r.amount) || 0, categoryName: r.name })),
+          accessToken,
+          name,
         );
       }
 

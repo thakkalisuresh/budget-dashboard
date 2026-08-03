@@ -119,7 +119,7 @@ async function toolDeleteTransaction({ uuid, month, year } = {}) {
   const recent    = await getRecentExpenses(sheetId, 100);
   const match     = recent.find(t => t.uuid === uuid);
   if (!match) throw new ToolError(`Transaction ${uuid} not found in ${monthName}`);
-  await deleteExpenseByUUID({ category: match.category, uuid, sheetId });
+  await deleteExpenseByUUID({ category: match.category, uuid, sheetId, monthName });
   return { ok: true, deleted: { uuid, vendor: match.vendor, amount: match.amount, category: match.category } };
 }
 

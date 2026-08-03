@@ -18,7 +18,9 @@ import {
 } from './_sheets.mjs';
 import { convertToUSD } from './_currency.mjs';
 import { reportError } from './_error-log.mjs';
-import { trail } from './_error-context.mjs';
+import { trail, describeActor } from './_error-context.mjs';
+import { ownerForCard, DEFAULT_CARD_OWNERS } from './_card-owners.mjs';
+import { snapshotConfig } from './_warehouse.mjs';
 import { findErrorCodeInText, explainErrorCode } from './_error-codes.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
 import { buildRewardsLine, getEffectiveRates } from './_card-rewards.mjs';
@@ -402,7 +404,14 @@ export async function handleTextReply(ctx, text) {
 
     let result;
     try {
-      result = await appendExpense({ category, vendor, amount, txDate, sheetId, monthName, paymentMethod, channel: ctx.channel, bookingMethod });
+      result = await appendExpense({
+        category, vendor, amount, txDate, sheetId, monthName, paymentMethod,
+        channel: ctx.channel, bookingMethod,
+        // Warehouse-only, frozen at write time. The FX rate in particular has
+        // to be stored: rates move daily, so re-deriving one later would give
+        // a different — and confidently wrong — original amount.
+        provenance: await receiptProvenance(ctx, pending, paymentMethod),
+      });
     } catch (e) {
       await reportError('SHT-009', e, { flow: 'receipt-confirm' });
       return ctx.send('Failed to log receipt to spreadsheet. Please try via the dashboard. [SHT-009]');
@@ -478,7 +487,7 @@ export async function handleTextReply(ctx, text) {
       let failed = 0;
       for (const e of lastlog.entries) {
         try {
-          await deleteExpenseByUUID({ category: e.category, uuid: e.uuid, sheetId: e.sheetId || lastlog.sheetId });
+          await deleteExpenseByUUID({ category: e.category, uuid: e.uuid, sheetId: e.sheetId || lastlog.sheetId, monthName: lastlog.monthName });
         } catch (err) {
           failed++;
           await reportError('BOT-002', err, { flow: 'undo-split' });
@@ -493,7 +502,7 @@ export async function handleTextReply(ctx, text) {
     }
 
     try {
-      await deleteExpenseByUUID({ category: lastlog.category, uuid: lastlog.uuid, sheetId: lastlog.sheetId });
+      await deleteExpenseByUUID({ category: lastlog.category, uuid: lastlog.uuid, sheetId: lastlog.sheetId, monthName: lastlog.monthName });
     } catch (e) {
       await reportError('BOT-002', e, { flow: 'undo' });
       return ctx.send('Could not undo. The entry may have been modified. Check the dashboard. [BOT-002]');
@@ -1173,7 +1182,7 @@ async function handleAuditFix(ctx, text) {
   }
 
   try {
-    await deleteExpenseByUUID({ category: expense.category, uuid, sheetId });
+    await deleteExpenseByUUID({ category: expense.category, uuid, sheetId, monthName });
   } catch (e) {
     // The new row exists; the old one didn't go. Say so rather than claim success.
     await reportError('BOT-008', e, { flow: 'auditfix', uuid });
@@ -1430,6 +1439,36 @@ async function attachDriveResult(store, key, drivePromise) {
   blob.driveFolderId  = driveResult.folderId  || null;
   blob.driveShareLink = driveResult.shareLink || null;
   await store.setJSON(key, blob);
+}
+
+/**
+ * Derived, frozen-at-write-time fields for a confirmed receipt.
+ *
+ * Everything here comes from something mutable — the FX rate of the day, the
+ * card→owner map in Settings — so it is recorded rather than recomputed. A
+ * settings change must never silently rewrite history.
+ *
+ * Never throws: this decorates a write that has already been approved by the
+ * user, and losing a receipt over a settings read would be absurd.
+ */
+async function receiptProvenance(ctx, pending, paymentMethod) {
+  try {
+    let settings = {};
+    try { settings = await getUserSettings(); } catch { /* NULLs are honest */ }
+    const map = settings.cardOwners || DEFAULT_CARD_OWNERS;
+    const info = pending?.conversionInfo || null;
+    return {
+      actorEmail: describeActor(ctx.userId),
+      categorySource: 'extractor',
+      cardOwner: ownerForCard(paymentMethod, map),
+      cardOwnerMapHash: await snapshotConfig('card_owners', map, { ingestSource: 'hook' }),
+      fxRate: info?.rate ?? null,
+      fxOriginalAmount: info?.original != null ? Math.round(Number(info.original) * 100) : null,
+      fxOriginalCurrency: info?.originalCurrency || null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function maybeConvertCurrency(data) {
@@ -1785,6 +1824,7 @@ async function handleDeletePending(ctx, text, pending) {
         category: pending.target.category,
         uuid: pending.target.uuid,
         sheetId: pending.sheetId,
+        monthName: pending.monthName,
       });
     } catch (e) {
       await reportError('BOT-003', e, { userId });
@@ -2245,7 +2285,7 @@ async function editLoggedExpense(ctx, changes) {
   const newAmount   = changes.amount ?? lastlog.amount;
 
   try {
-    await deleteExpenseByUUID({ category: lastlog.category, uuid: lastlog.uuid, sheetId: lastlog.sheetId });
+    await deleteExpenseByUUID({ category: lastlog.category, uuid: lastlog.uuid, sheetId: lastlog.sheetId, monthName: lastlog.monthName });
   } catch (e) {
     await reportError('SHT-004', e, { flow: 'edit' });
     return ctx.send('Could not edit — the entry may have changed. Check the dashboard. [SHT-004]');

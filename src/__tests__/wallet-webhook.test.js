@@ -13,6 +13,7 @@ const { extractMock, appendMock, sheetIdMock, webpushSend, getSettingsMock, tele
   telegramSend: vi.fn(async () => ({ ok: true })),
   splitStore: {
     data: new Map(),
+    claims: new Map(),
     get(key) { return Promise.resolve(this.data.get(key) || null); },
     setJSON(key, value) { this.data.set(key, value); return Promise.resolve(); },
     delete(key) { this.data.delete(key); return Promise.resolve(); },
@@ -20,6 +21,15 @@ const { extractMock, appendMock, sheetIdMock, webpushSend, getSettingsMock, tele
       const blobs = [];
       for (const key of this.data.keys()) if (key.startsWith(prefix)) blobs.push({ key });
       return Promise.resolve({ blobs });
+    },
+    // Faithful to the Firestore version: the marker's own timestamp decides,
+    // not its mere presence — Firestore's TTL sweeper can lag by hours.
+    claimFor(key, ttlMs) {
+      const now = Date.now();
+      const until = this.claims.get(key) || 0;
+      if (until > now) return Promise.resolve(false);
+      this.claims.set(key, now + ttlMs);
+      return Promise.resolve(true);
     },
   },
   ctl: { pushDoc: null, deleted: false },
@@ -105,6 +115,7 @@ beforeEach(() => {
   telegramSend.mockReset().mockResolvedValue({ ok: true });
   recentMock.mockReset().mockResolvedValue([]);
   splitStore.data.clear();
+  splitStore.claims.clear();
   ctl.pushDoc = null;
   ctl.deleted = false;
   vi.stubEnv('VAPID_PUBLIC_KEY', '');
@@ -530,5 +541,131 @@ describe('wallet-webhook — duplicate detection', () => {
     expect(res.status).toBe(200);
     expect(appendMock).toHaveBeenCalledOnce();
     expect(telegramSend).not.toHaveBeenCalled();
+  });
+});
+
+/* ── Idempotency (Phase 4) ────────────────────────────────────────────────── */
+
+describe('wallet webhook — replayed requests', () => {
+  it('writes exactly ONE row when the same request arrives twice', async () => {
+    // The observed failure: a 30-second cold start returned 504 to the phone,
+    // the phone retried, and the first run finished and wrote the row seven
+    // seconds later. Two rows, two uuids, one charge.
+    const first  = await call(req({ body: validBody }));
+    const second = await call(req({ body: validBody }));
+
+    expect(appendMock).toHaveBeenCalledOnce();
+    expect(first.status).toBe(200);
+    // The retry is told success, because the charge WAS logged — just not by
+    // this request. A 4xx here would make the phone's automation look broken.
+    expect(second.status).toBe(200);
+    expect(second.json).toMatchObject({ ok: true, duplicate: true });
+  });
+
+  it('claims on an explicit requestId when the automation supplies one', async () => {
+    // Exact rather than heuristic: the Shortcut mints a uuid once and reuses it
+    // across its own retries, even if it re-reads the amount differently.
+    const body = { ...validBody, requestId: 'shortcut-run-1' };
+    await call(req({ body }));
+    await call(req({ body: { ...body, amount: '89.51' } }));
+    expect(appendMock).toHaveBeenCalledOnce();
+  });
+
+  it('logs two genuinely different charges from the same shop', async () => {
+    await call(req({ body: validBody }));
+    await call(req({ body: { ...validBody, amount: '12.00' } }));
+    expect(appendMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('logs a different card at the same shop for the same amount', async () => {
+    await call(req({ body: validBody }));
+    await call(req({ body: { ...validBody, card: 'Bilt Blue Card' } }));
+    expect(appendMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not spend a claim on a request that fails validation', async () => {
+    // Otherwise a malformed retry would poison the good one that follows it.
+    await call(req({ body: { ...validBody, amount: 'not-a-number' } }));
+    const res = await call(req({ body: validBody }));
+    expect(res.status).toBe(200);
+    expect(appendMock).toHaveBeenCalledOnce();
+  });
+
+  it('does not spend a claim on an unauthorized request', async () => {
+    await call(req({ body: validBody, key: 'wrong-secret' }));
+    await call(req({ body: validBody }));
+    expect(appendMock).toHaveBeenCalledOnce();
+  });
+
+  it('FAILS OPEN when the claim store is unreachable', async () => {
+    // A Firestore hiccup must never drop a real charge. The worst case without
+    // the claim is the duplicate this guards against — and that at least leaves
+    // a visible row the Duplicates panel can remove.
+    const original = splitStore.claimFor;
+    splitStore.claimFor = () => Promise.reject(new Error('firestore down'));
+    try {
+      const res = await call(req({ body: validBody }));
+      expect(res.status).toBe(200);
+      expect(appendMock).toHaveBeenCalledOnce();
+    } finally {
+      splitStore.claimFor = original;
+    }
+  });
+});
+
+/* ── Frozen provenance (Phase 5) ──────────────────────────────────────────── */
+
+describe('wallet webhook — what it freezes into the archive', () => {
+  const provenanceOf = () => appendMock.mock.calls.at(-1)[0].provenance;
+
+  it('records the verified email, the category source, and the card owner', async () => {
+    await call(req({ body: validBody }));
+    const p = provenanceOf();
+    expect(p.actorEmail).toBe('nair.sabarish97@gmail.com');
+    expect(p.categorySource).toBe('extractor');
+    // Chase Sapphire Reserve is the wife's card in the seed map.
+    expect(p.cardOwner).toBe('wife');
+    expect(p.cardOwnerMapHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('records the owner from the CURRENT settings map, not the seed defaults', async () => {
+    // Frozen at write time: reassigning the card later must not rewrite this.
+    getSettingsMock.mockResolvedValue({ cardOwners: { 'Chase Sapphire Reserve': 'me' } });
+    await call(req({ body: validBody }));
+    expect(provenanceOf().cardOwner).toBe('me');
+  });
+
+  it('hashes a different owner map to a different value', async () => {
+    await call(req({ body: validBody }));
+    const a = provenanceOf().cardOwnerMapHash;
+    getSettingsMock.mockResolvedValue({ cardOwners: { 'Chase Sapphire Reserve': 'me' } });
+    await call(req({ body: { ...validBody, amount: '1.00' } }));
+    expect(provenanceOf().cardOwnerMapHash).not.toBe(a);
+  });
+
+  it('leaves the LLM fields null when the extractor decided, not the model', async () => {
+    // NULL is honest. Filling these in from whatever the model would say today
+    // is exactly the retroactive rewrite the archive exists to prevent.
+    await call(req({ body: validBody }));
+    const p = provenanceOf();
+    expect(p.llmCategory).toBeNull();
+    expect(p.llmConfidence).toBeNull();
+    expect(p.llmModel).toBeNull();
+  });
+
+  it('flags a duplicate suspicion on the row itself, not only in the Telegram notice', async () => {
+    recentMock.mockResolvedValue([{
+      vendor: 'Costco', amount: 89.5, txDate: '2026-05-15', category: 'Grocery', uuid: 'tx_8950_aaaaaaaa',
+    }]);
+    await call(req({ body: validBody }));
+    const p = provenanceOf();
+    expect(p.dupSuspect).toBe(true);
+    expect(p.dupMatchedUuid).toBe('tx_8950_aaaaaaaa');
+  });
+
+  it('does not flag a duplicate when there is none', async () => {
+    await call(req({ body: validBody }));
+    expect(provenanceOf().dupSuspect).toBe(false);
+    expect(provenanceOf().dupMatchedUuid).toBeNull();
   });
 });

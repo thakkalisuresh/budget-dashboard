@@ -1,5 +1,6 @@
 import { getCustomCategories } from './customCategories.js';
 import { BUILT_IN_SHEET_MAP } from './fetchDetail.js';
+import { isV2EligibleMonth } from '../functions/lib/_schema-version.mjs';
 
 export const SHEET_MAP = {
   'Grocery':       { sheet: 'Grocery',       descCol: 2, amtCol: 3,  uuidStartCol: 4  },
@@ -118,16 +119,11 @@ export function normalizeStatementDate(dateStr) {
 
 // ─── Schema detection (v1 vs v2) ─────────────────────────────────────────────
 
-const _V2_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-
-export function isV2EligibleMonth(monthName) {
-  if (!monthName) return true;
-  const parts = String(monthName).trim().split(/\s+/);
-  const mIdx = _V2_MONTHS.findIndex(m => m.toLowerCase() === (parts[0] || '').toLowerCase());
-  const yr = parseInt(parts[1], 10);
-  if (mIdx < 0 || isNaN(yr)) return true;
-  return yr > 2026 || (yr === 2026 && mIdx >= 5);
-}
+// The cutover date now lives in functions/lib/_schema-version.mjs so the
+// warehouse backfill and reconciler share one definition with the app — two
+// copies is how they quietly disagree about what a month is. Re-exported here
+// so every existing importer keeps working unchanged.
+export { isV2EligibleMonth };
 
 export function detectV2(values, monthName = '') {
   return isV2EligibleMonth(monthName) &&
