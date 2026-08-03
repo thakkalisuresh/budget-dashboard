@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Repeat, CalendarX, Plus, CreditCard, ChevronRight, ChevronDown, FolderInput } from 'lucide-react';
+import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Plus, CreditCard, ChevronRight, ChevronDown, FolderInput, MoreHorizontal } from 'lucide-react';
+import { VendorActionSheet } from './VendorActionSheet.jsx';
 import { updateVendorName, updateVendorAmounts, updateTransactionDate, unmarkNonMonthly, renameNonMonthly, markNonMonthly, formatTxDate, todayIso, updatePaymentMethod, updateHistoryPaymentMethod, moveTransactionCategory } from './sheetsApi.js';
 import { CategoryPickerSheet } from './CategoryPickerSheet.jsx';
 import { findHighlightTarget, uuidSelector } from './txHighlight.js';
@@ -131,7 +132,7 @@ function VendorLogo({ name, size = 22, onEditDomain }) {
 /**
  * rows: Array of { rowIndex, description, amounts: number[] }
  */
-export function DetailPanel({ expense, rows, loading, onClose, accessToken, sheetId, onRefresh, currencySymbol = '$', onVendorRenamed, monthName, transactionNotes = {}, onUpdateNote, nonMonthlyVendors = [], onNonMonthlyChanged, onAddExpense, onAddForVendor, highlight = null, recurringExpenses = [], onToggleRecurring, cards = [] }) {
+export function DetailPanel({ expense, rows, loading, onClose, accessToken, sheetId, onRefresh, currencySymbol = '$', onVendorRenamed, monthName, transactionNotes = {}, onUpdateNote, nonMonthlyVendors = [], onNonMonthlyChanged, onAddExpense, onAddForVendor, highlight = null, recurringExpenses = [], onToggleRecurring, cards = [], vendorActionFor = null, setVendorActionFor = () => {} }) {
   const total = rows ? rows.reduce((s, r) => s + r.amounts.reduce((a, b) => a + b, 0), 0) : 0;
   // Scroll container, so the arrive-from-ledger highlight can find its row.
   const listRef = useRef(null);
@@ -413,7 +414,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
   const renderCardCell = (row) => {
     if (!row._v2 || cards.length === 0) {
       return row.paymentMethod ? (
-        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full inline-block max-w-[9rem] truncate whitespace-nowrap align-middle"
           style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
           💳 {row.paymentMethod}
         </span>
@@ -448,7 +449,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
     return (
       <div className="flex items-center gap-1">
         {row.paymentMethod ? (
-          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full inline-block max-w-[9rem] truncate whitespace-nowrap align-middle"
             style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
             💳 {row.paymentMethod}
           </span>
@@ -469,7 +470,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
     const single   = row.amounts.length === 1;
     return (
       <div key={row.rowIndex} style={{ borderTop: '1px solid var(--sur-6)' }}>
-        <div className="flex items-center gap-2 px-4 py-2 group hover:bg-[var(--sur-5)] transition-colors">
+        <div className="relative flex items-center gap-2 px-4 py-2 group hover:bg-[var(--sur-5)] transition-colors">
           {/* Date */}
           {editingDate?.rowIndex === row.rowIndex ? (
             <>
@@ -514,7 +515,11 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                 {currencySymbol}{subtotal.toFixed(2)}
               </span>
               {single && (
-                <div className="flex gap-0.5 items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                // Absolutely positioned: at opacity-0 this cluster still reserved
+                // ~94px of the row, which squeezed the card pill down to an ellipsis.
+                // Overlaying it costs nothing until hover, when it sits over the amount.
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 flex gap-0.5 items-center rounded-lg pl-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none group-hover:pointer-events-auto"
+                  style={{ background: 'var(--sur-5)' }}>
                   {(() => {
                     const key = noteKeyFor(row.description, row.amounts[0]);
                     const data = transactionNotes[key];
@@ -614,44 +619,28 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
               <VendorLogo name={g.vendor} size={22} onEditDomain={() => setEditingDomain({ vendorName: g.vendor, draft: resolveVendorDomain(g.vendor) || '' })} />
               <div className="flex-1 min-w-0">
                 <span className="text-sm font-black block truncate" style={{ color: 'var(--color-text)' }}>{g.vendor}</span>
-                <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>{g.members.length} transactions</span>
+                <span className="text-[10px] block truncate" style={{ color: 'var(--color-text-muted)' }}>{g.members.length} transactions</span>
               </div>
             </button>
             <span className="text-sm font-black tabular-nums ml-2 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
               {currencySymbol}{total.toFixed(2)}
             </span>
-            {onToggleRecurring && (
-              <button onClick={() => toggleRecurring(g.vendor, g.members[g.members.length - 1]?.amounts?.[0] ?? 0, g.members[g.members.length - 1]?.date)} disabled={saving}
-                title={isRec ? `Stop importing ${g.vendor} into new months` : `Import ${g.vendor} into every new month`}
-                className="p-1.5 rounded-lg transition-colors flex-shrink-0"
-                style={isRec ? { color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)' } : { color: 'var(--color-text-muted)' }}>
-                <Repeat className="w-3.5 h-3.5" />
-              </button>
-            )}
-            <button onClick={() => toggleGroupNonMonthly(g)} disabled={saving}
-              title={isNm ? 'Remove one-time flag' : 'Mark as one-time expense'}
-              className="p-1.5 rounded-lg transition-colors flex-shrink-0"
-              style={isNm ? { color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)' } : { color: 'var(--color-text-muted)' }}>
-              <CalendarX className="w-3.5 h-3.5" />
-            </button>
-            {onAddForVendor && (
-              <button onClick={() => onAddForVendor(g.vendor)}
-                className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]"
-                title={`Add another ${g.vendor} transaction`} style={{ color: 'var(--color-text-muted)' }}>
-                <Plus className="w-3.5 h-3.5" />
-              </button>
-            )}
-            <button onClick={() => openMoveFor(g.members, g.vendor)}
-              className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Move all to another category" style={{ color: 'var(--color-text-muted)' }}>
-              <FolderInput className="w-3.5 h-3.5" />
-            </button>
-            <button onClick={() => setEditingGroup({ key: g.key, value: g.vendor })}
-              className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Rename vendor" style={{ color: 'var(--color-text-muted)' }}>
-              <Edit2 className="w-3.5 h-3.5" />
-            </button>
-            <button onClick={() => setDeletingGroup(g.key)}
-              className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Delete entire vendor" style={{ color: 'var(--color-text-muted)' }}>
-              <Trash2 className="w-3.5 h-3.5" />
+            <button onClick={() => setVendorActionFor({
+                vendor: g.vendor, count: g.members.length, isRecurring: isRec, isNonMonthly: isNm,
+                onToggleRecurring: onToggleRecurring
+                  ? () => toggleRecurring(g.vendor, g.members[g.members.length - 1]?.amounts?.[0] ?? 0, g.members[g.members.length - 1]?.date)
+                  : null,
+                onToggleNonMonthly: () => toggleGroupNonMonthly(g),
+                onAdd: onAddForVendor ? () => onAddForVendor(g.vendor) : null,
+                onMove: () => openMoveFor(g.members, g.vendor),
+                onRename: () => setEditingGroup({ key: g.key, value: g.vendor }),
+                onDelete: () => setDeletingGroup(g.key),
+              })}
+              disabled={saving}
+              className="p-2 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]"
+              title={`Actions for ${g.vendor}`} aria-label={`Actions for ${g.vendor}`}
+              style={{ color: 'var(--color-text-muted)' }}>
+              <MoreHorizontal className="w-4 h-4" />
             </button>
           </div>
         )}
@@ -845,7 +834,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                       ) : (
                         <div className="flex items-center gap-1 mt-0.5">
                           {row.paymentMethod ? (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full inline-block max-w-[9rem] truncate whitespace-nowrap align-middle"
                               style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
                               💳 {row.paymentMethod}
                             </span>
@@ -861,13 +850,13 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                       )
                     )}
                     {!row._v2 && row.paymentMethod && (
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full inline-block max-w-[9rem] truncate whitespace-nowrap align-middle"
                         style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
                         💳 {row.paymentMethod}
                       </span>
                     )}
                     {row.bookingMethod === 'direct' && (
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full inline-block max-w-[9rem] truncate whitespace-nowrap align-middle"
                         style={{ background: 'oklch(78% 0.16 75 / 15%)', color: 'oklch(78% 0.16 75)' }}>
                         ✈️ Direct booking · 4x UR
                       </span>
@@ -880,57 +869,29 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                     onClick={() => {
                       const isNm = nonMonthlyVendors.includes(row.description.toLowerCase());
                       const total = row.amounts.reduce((a, b) => a + b, 0);
-                      withSave(async () => {
-                        if (isNm) await unmarkNonMonthly(sheetId, accessToken, row.description);
-                        else      await markNonMonthly(sheetId, accessToken, row.description, total);
-                        onNonMonthlyChanged?.();
+                      setVendorActionFor({
+                        vendor: row.description, count: 1,
+                        isRecurring: isVendorRecurring(row.description), isNonMonthly: isNm,
+                        onToggleRecurring: onToggleRecurring
+                          ? () => toggleRecurring(row.description, row.amounts?.[0] ?? 0, row.date)
+                          : null,
+                        onToggleNonMonthly: () => withSave(async () => {
+                          if (isNm) await unmarkNonMonthly(sheetId, accessToken, row.description);
+                          else      await markNonMonthly(sheetId, accessToken, row.description, total);
+                          onNonMonthlyChanged?.();
+                        }),
+                        onAdd: onAddForVendor ? () => onAddForVendor(row.description) : null,
+                        onMove: () => openMoveFor([row], row.description),
+                        onRename: () => setEditingVendor({ rowIndex: row.rowIndex, value: row.description, isNonMonthly: isNm, wasNonMonthly: isNm }),
+                        onDelete: () => { setEditingAmount(null); setDeletingVendor(row.rowIndex); },
                       });
                     }}
                     disabled={saving}
-                    title={nonMonthlyVendors.includes(row.description.toLowerCase()) ? 'Remove one-time flag' : 'Mark as one-time expense'}
-                    className="p-1.5 rounded-lg transition-colors flex-shrink-0"
-                    style={nonMonthlyVendors.includes(row.description.toLowerCase())
-                      ? { color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)' }
-                      : { color: 'var(--color-text-muted)' }}
+                    className="p-2 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]"
+                    title={`Actions for ${row.description}`} aria-label={`Actions for ${row.description}`}
+                    style={{ color: 'var(--color-text-muted)' }}
                   >
-                    <CalendarX className="w-3.5 h-3.5" />
-                  </button>
-                  {onToggleRecurring && (
-                    <button
-                      onClick={() => toggleRecurring(row.description, row.amounts?.[0] ?? 0, row.date)}
-                      disabled={saving}
-                      title={isVendorRecurring(row.description)
-                        ? `Stop importing ${row.description} into new months`
-                        : `Import ${row.description} into every new month`}
-                      className="p-1.5 rounded-lg transition-colors flex-shrink-0"
-                      style={isVendorRecurring(row.description)
-                        ? { color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)' }
-                        : { color: 'var(--color-text-muted)' }}
-                    >
-                      <Repeat className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                  {onAddForVendor && (
-                    <button onClick={() => onAddForVendor(row.description)}
-                      className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]"
-                      title={`Add another ${row.description} transaction`} style={{ color: 'var(--color-text-muted)' }}>
-                      <Plus className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                  <button onClick={() => openMoveFor([row], row.description)}
-                    className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Move to another category"
-                    style={{ color: 'var(--color-text-muted)' }}>
-                    <FolderInput className="w-3.5 h-3.5" />
-                  </button>
-                  <button onClick={() => { const nm = nonMonthlyVendors.includes(row.description.toLowerCase()); setEditingVendor({ rowIndex: row.rowIndex, value: row.description, isNonMonthly: nm, wasNonMonthly: nm }); }}
-                    className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Rename vendor"
-                    style={{ color: 'var(--color-text-muted)' }}>
-                    <Edit2 className="w-3.5 h-3.5" />
-                  </button>
-                  <button onClick={() => { setEditingAmount(null); setDeletingVendor(row.rowIndex); }}
-                    className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Delete entire vendor"
-                    style={{ color: 'var(--color-text-muted)' }}>
-                    <Trash2 className="w-3.5 h-3.5" />
+                    <MoreHorizontal className="w-4 h-4" />
                   </button>
                 </div>
               )}
@@ -1012,6 +973,18 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
           </div>
         )}
       </div>
+      {/* Vendor ⋯ action sheet — replaces the six inline icon buttons */}
+      <VendorActionSheet
+        target={vendorActionFor}
+        onClose={() => setVendorActionFor(null)}
+        onToggleRecurring={vendorActionFor?.onToggleRecurring}
+        onToggleNonMonthly={() => vendorActionFor?.onToggleNonMonthly?.()}
+        onAdd={vendorActionFor?.onAdd}
+        onMove={() => vendorActionFor?.onMove?.()}
+        onRename={() => vendorActionFor?.onRename?.()}
+        onDelete={() => vendorActionFor?.onDelete?.()}
+      />
+
       {/* Transaction note dialog */}
       {noteDialog && (
         <>

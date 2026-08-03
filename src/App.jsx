@@ -130,6 +130,7 @@ function Dashboard({ auth }) {
   const [renamingCategory, setRenamingCategory] = useState(null);
   const [deletingCategory, setDeletingCategory] = useState(null);
   const [categoryActionFor, setCategoryActionFor] = useState(null); // mobile ⋯ action sheet
+  const [vendorActionFor, setVendorActionFor]     = useState(null); // DetailPanel vendor ⋯ sheet
   const [showUserMenu, setShowUserMenu]     = useState(false);
   const [refreshKey, setRefreshKey]             = useState(0);
   const [showReconcile, setShowReconcile]       = useState(false);
@@ -274,6 +275,8 @@ function Dashboard({ auth }) {
     { active: chatOpen,               dismiss: () => setChatOpen(false) },
     { active: iconPickerFor,          dismiss: () => setIconPickerFor(null) },
     { active: categoryActionFor,      dismiss: () => setCategoryActionFor(null) },
+    // Must sit above `detail` — otherwise Esc closes the whole panel behind it.
+    { active: vendorActionFor,        dismiss: () => setVendorActionFor(null) },
     { active: deletingCategory,       dismiss: () => setDeletingCategory(null) },
     { active: renamingCategory,       dismiss: () => setRenamingCategory(null) },
     { active: editingSalary,          dismiss: () => setEditingSalary(false) },
@@ -805,6 +808,10 @@ function Dashboard({ auth }) {
               : removeRecurring(prev.recurringExpenses || [], entry.category, entry.vendor),
           })) : undefined}
           cards={settings.cards || []}
+          // Vendor ⋯ sheet. State lives here so Escape can close the sheet
+          // without also closing the panel underneath it.
+          vendorActionFor={vendorActionFor}
+          setVendorActionFor={setVendorActionFor}
         /></Suspense>
       )}
 
