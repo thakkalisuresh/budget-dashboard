@@ -3,7 +3,7 @@
 > **Generated file — do not edit by hand.**
 > Source of truth: `functions/lib/_error-codes.mjs`. Regenerate with `npm run errdoc`.
 
-58 codes across 13 domains.
+59 codes across 13 domains.
 
 Codes appear wherever the failure surfaces: in the bot's reply, on the
 dashboard crash screen, in the wallet webhook response body, in Cloud Logging,
@@ -57,6 +57,7 @@ and in the daily Telegram digest.
 | [`LLM-001`](#llm-001) | degraded | Groq API error |
 | [`LLM-002`](#llm-002) | fatal | Agent API error |
 | [`LLM-003`](#llm-003) | degraded | Category suggestion unusable |
+| [`LLM-004`](#llm-004) | degraded | Item categorization unavailable |
 | [`PUSH-001`](#push-001) | degraded | Push subscription change failed |
 | [`PUSH-002`](#push-002) | degraded | Push notification send failed |
 | [`MCP-001`](#mcp-001) | fatal | MCP tool call failed |
@@ -372,6 +373,14 @@ and in the daily Telegram digest.
 **Why it happens.** The model returned a category that is not one of the sheet tabs, so it was discarded.
 
 **What to do.** Informational. Repeated hits mean the category list sent in the prompt is out of sync with the sheet.
+
+### LLM-004
+
+**Item categorization unavailable** · `degraded`
+
+**Why it happens.** The batched line-item categorizer could not reach Groq, so the split screen got no suggestions.
+
+**What to do.** Nothing is lost — learned history and the keyword tables still run, and the user picks the rest by hand. Check GROQ_API_KEY is bound to itemCategorize if it persists.
 
 ## PUSH — Web push notifications
 

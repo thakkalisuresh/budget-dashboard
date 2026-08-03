@@ -12,6 +12,7 @@ import { CategoryPickerSheet } from './CategoryPickerSheet.jsx';
 import { userMessage } from './errorCodes.js';
 import { readMemoryCache, loadCachedLedger, storeLedger } from './ledgerCache.js';
 import { txNoteKey } from './transactionNotes.js';
+import { relearnMovedSplit } from './sheetItemMemory.js';
 import { WRITE_ACTIONS, METHOD_LABELS } from './historyActions.js';
 
 const METHOD_STYLE = {
@@ -192,7 +193,7 @@ function VirtualLedgerRow({ index, style, items, sheetId, transactionNotes, curr
   );
 }
 
-export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthName = '', expenses = [], salaryReceived = 0, transactionNotes = {}, onUpdateNote, refreshKey = 0, months = [], onOpen }) {
+export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthName = '', expenses = [], salaryReceived = 0, transactionNotes = {}, onUpdateNote, refreshKey = 0, months = [], onOpen, userId = '' }) {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading]           = useState(true);
   const [refreshing, setRefreshing]     = useState(false);
@@ -310,6 +311,23 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
         bookingMethod: t.bookingMethod || '',
         _v2:           t._v2,
       }, accessToken, sheetId, monthName, t.rowAmounts.length > 1 ? t.amtIndex : null);
+
+      // Split-derived transactions carry a splitId in their note: re-teach the
+      // line items behind them, and move the note across so a second move is
+      // still traceable. Best-effort — the sheet write already succeeded.
+      const oldKey = txNoteKey(sheetId, t.category, t.vendor, t.amount);
+      const noteData = transactionNotes[oldKey];
+      if (noteData?.splitId) {
+        relearnMovedSplit({
+          userId, accessToken,
+          splitId: noteData.splitId,
+          fromCategory: t.category,
+          toCategory: targetCategory,
+        }).catch(() => {});
+        onUpdateNote?.(txNoteKey(sheetId, targetCategory, t.vendor, t.amount), noteData);
+        onUpdateNote?.(oldKey, { note: '', tags: [] });
+      }
+
       setMovingTx(null);
       await load(true);
     } catch (e) {
