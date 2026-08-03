@@ -9,6 +9,59 @@ import {
 } from '../splitNotes.js';
 import { txNoteKey } from '../transactionNotes.js';
 import { categorizeItems } from '../itemCategorizer.js';
+import * as serverNotes from '../../functions/lib/_split-notes.mjs';
+import { txNoteKey as serverTxNoteKey } from '../../functions/lib/_transaction-notes.mjs';
+
+/**
+ * Drift guard. Both surfaces split receipts — the dashboard scanner and the
+ * Telegram bot — and Cloud Functions can't import client modules, so the note
+ * builders exist twice. The failure mode is silent in the worst way: a note
+ * written under a key the reader doesn't build is invisible, not broken. That is
+ * exactly how the bot shipped writing no notes at all.
+ */
+describe('splitNotes client/server parity', () => {
+  const SAMPLE = [
+    { name: 'Organic Bananas', amount: 2.99 },
+    { name: 'Paper Towels', amount: 18.49 },
+    { name: 'Vitamin D3', amount: 12.0 },
+  ];
+
+  it('buildSplitNote agrees, including the tax/fees remainder', () => {
+    for (const remainder of [0, 6.42, -3.1]) {
+      expect(serverNotes.buildSplitNote(SAMPLE, { remainder }))
+        .toEqual(buildSplitNote(SAMPLE, { remainder }));
+    }
+  });
+
+  it('buildSplitNote agrees past the item cap', () => {
+    const many = Array.from({ length: MAX_LISTED_ITEMS + 7 }, (_, i) => ({ name: `Item ${i}`, amount: i + 1 }));
+    expect(serverNotes.buildSplitNote(many)).toEqual(buildSplitNote(many));
+  });
+
+  it('buildCategoryItems agrees', () => {
+    const auto = [{ category: 'Grocery', items: SAMPLE, subtotal: 33.48 }];
+    const assigned = [{ name: 'USB-C Cable', amount: 15, category: 'Misc' }];
+    expect(serverNotes.buildCategoryItems(auto, assigned)).toEqual(buildCategoryItems(auto, assigned));
+  });
+
+  it('txNoteKey agrees — the one string both sides must build identically', () => {
+    const cases = [
+      ['sheet1', 'Grocery', 'COSTCO WHOLESALE', 63.61],
+      ['sheet1', 'Misc', '  Costco  ', '12.99'],
+      ['sheet2', 'Thakkali', 'costco wholesale', 25.9],
+    ];
+    for (const args of cases) {
+      expect(serverTxNoteKey(...args)).toBe(txNoteKey(...args));
+    }
+  });
+
+  it('the caps match — they exist to protect a shared 50k cell', () => {
+    expect(serverNotes.MAX_LISTED_ITEMS).toBe(MAX_LISTED_ITEMS);
+    expect(serverNotes.MAX_NOTE_CHARS).toBe(MAX_NOTE_CHARS);
+    expect(serverNotes.SPLIT_TAG).toBe(SPLIT_TAG);
+    expect(serverNotes.SETTINGS_SIZE_WARN_CHARS).toBe(40000);
+  });
+});
 
 describe('buildCategoryItems', () => {
   it('keeps the per-category items categorizeItems already produced', () => {

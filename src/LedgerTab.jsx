@@ -151,12 +151,19 @@ const LedgerRow = React.memo(function LedgerRow({
             <span key={tag} className="text-[10px] font-bold px-2 py-0.5 rounded-full"
               style={{ background: 'oklch(62% 0.20 295 / 15%)', color: 'oklch(72% 0.18 295)' }}>{tag}</span>
           ))}
-          {noteData?.note && (
-            <span title={noteData.note} style={{ color: 'var(--color-text-muted)' }}>
-              <MessageSquare className="w-3 h-3" />
-            </span>
-          )}
         </div>
+        {/* The note itself, not just a marker. A `title` tooltip is unreachable
+            on touch, which is where this app is mostly used — a split receipt's
+            item list was effectively invisible. Truncated to one line so a
+            40-item Costco note can't push every other row off screen; the full
+            text stays in the tooltip and the detail panel. */}
+        {noteData?.note && (
+          <p className="text-[10px] mt-1 flex items-center gap-1 truncate"
+            style={{ color: 'var(--color-text-muted)' }} title={noteData.note}>
+            <MessageSquare className="w-3 h-3 flex-shrink-0" />
+            <span className="truncate">{noteData.note}</span>
+          </p>
+        )}
       </div>
       <div className="text-right flex-shrink-0">
         <p className="text-sm font-black tabular-nums" style={{ color: 'var(--color-text)' }}>{currencySymbol}{t.amount.toFixed(2)}</p>

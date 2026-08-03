@@ -163,6 +163,36 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
   // written under a key nothing reads back is invisible, not broken.
   const noteKeyFor = (vendor, amt) => txNoteKey(sheetId, expense, vendor, amt);
 
+  // The note rendered where the transaction is, rather than hidden behind a
+  // hover-only icon. Every action row in this panel is `opacity-0
+  // group-hover:opacity-100`, and touch devices have no hover — on a phone the
+  // note was unreachable, so a split receipt's item list may as well not have
+  // been stored. Tapping it opens the same editor the icon does.
+  const renderNoteLine = (vendor, amt) => {
+    const data = transactionNotes[noteKeyFor(vendor, amt)];
+    if (!data?.note && !(data?.tags?.length > 0)) return null;
+    return (
+      <button onClick={() => openNoteDialog(vendor, amt)}
+        className="w-full text-left px-4 pb-2 pl-10 flex items-start gap-1.5 hover:bg-[var(--sur-5)] transition-colors"
+        title="View/edit note">
+        <MessageSquare className="w-3 h-3 flex-shrink-0 mt-0.5" style={{ color: 'var(--color-text-muted)' }} />
+        <span className="min-w-0 flex-1">
+          {data.note && (
+            <span className="text-[11px] block" style={{ color: 'var(--color-text-muted)' }}>{data.note}</span>
+          )}
+          {data.tags?.length > 0 && (
+            <span className="flex gap-1 flex-wrap mt-0.5">
+              {data.tags.map(tag => (
+                <span key={tag} className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                  style={{ background: 'oklch(62% 0.20 295 / 15%)', color: 'oklch(72% 0.18 295)' }}>{tag}</span>
+              ))}
+            </span>
+          )}
+        </span>
+      </button>
+    );
+  };
+
   const openNoteDialog = (vendor, amt) => {
     const key  = noteKeyFor(vendor, amt);
     const data = transactionNotes[key] || { note: '', tags: [] };
@@ -545,9 +575,11 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
             </>
           )}
         </div>
+        {single && renderNoteLine(row.description, row.amounts[0])}
         {/* Defensive: members with >1 amount (rare) list each amount with actions */}
         {!single && row.amounts.map((amt, amtIndex) => (
-          <div key={amtIndex} className="flex items-center gap-2 px-4 py-1.5 pl-10 group hover:bg-[var(--sur-5)] transition-colors">
+          <div key={amtIndex}>
+          <div className="flex items-center gap-2 px-4 py-1.5 pl-10 group hover:bg-[var(--sur-5)] transition-colors">
             <span className="text-xs w-4 text-right flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>{amtIndex + 1}.</span>
             <span className="text-sm font-medium tabular-nums flex-1" style={{ color: 'var(--color-text)' }}>
               {currencySymbol}{amt.toFixed(2)}
@@ -563,6 +595,8 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
             </div>
+          </div>
+          {renderNoteLine(row.description, amt)}
           </div>
         ))}
       </div>
@@ -937,7 +971,8 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
 
               {/* Individual amounts */}
               {deletingVendor !== row.rowIndex && row.amounts.map((amt, amtIndex) => (
-                <div key={amtIndex} className="flex items-center gap-2 px-4 py-2 transition-colors group hover:bg-[var(--sur-5)]">
+                <div key={amtIndex}>
+                <div className="flex items-center gap-2 px-4 py-2 transition-colors group hover:bg-[var(--sur-5)]">
                   {editingAmount?.rowIndex === row.rowIndex && editingAmount?.amtIndex === amtIndex ? (
                     <>
                       <span className="text-sm" style={{ color: 'var(--color-text-muted)' }}>{currencySymbol}</span>
@@ -993,6 +1028,8 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                       </div>
                     </>
                   )}
+                </div>
+                {renderNoteLine(row.description, amt)}
                 </div>
               ))}
             </div>

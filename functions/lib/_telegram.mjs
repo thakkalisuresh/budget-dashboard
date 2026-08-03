@@ -308,3 +308,24 @@ export function resolveTelegramChatId(email) {
   }
   return null;
 }
+
+/**
+ * The inverse of resolveTelegramChatId: Telegram chat id → user email.
+ *
+ * Settings (including transaction notes) are stored per-email, one row per user
+ * in the UserSettings tab, exactly as the web app's useSettings(user.email) does.
+ * Without this the bot would have to guess a row — and writing the wrong one is
+ * silent: the note saves fine and simply never appears for the person who split
+ * the receipt. Returns null when the id isn't mapped, so callers can decide
+ * whether falling back to the household default is safe for their write.
+ */
+export function resolveEmailByChatId(chatId) {
+  const raw = process.env.TELEGRAM_EMAIL_MAP || '';
+  if (chatId == null || chatId === '') return null;
+  const wanted = String(chatId).trim();
+  for (const pair of raw.split(',')) {
+    const [mappedEmail, mappedId] = pair.split(':').map(s => s.trim());
+    if (mappedEmail && mappedId && mappedId === wanted) return mappedEmail;
+  }
+  return null;
+}
