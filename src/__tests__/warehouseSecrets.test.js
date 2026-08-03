@@ -103,6 +103,51 @@ describe('the legacy streaming API is never used', () => {
   });
 });
 
+describe('the warehouse lib modules stay importable without functions/node_modules', () => {
+  /**
+   * The CI test job runs `npm ci` at the repo ROOT only — functions/node_modules
+   * is installed for the deploy job, not this one. So any lib module that
+   * STATICALLY imports something reaching `firebase-admin` becomes unloadable
+   * in CI, and every test file that touches it fails to import at all.
+   *
+   * This shipped once and passed locally, because the local checkout happened
+   * to have functions/node_modules installed for an unrelated reason. Five test
+   * files — including a pre-existing one — went from green to unloadable, and
+   * nothing about the local run could have shown it.
+   *
+   * `firestore.mjs` and `_error-log.mjs` are the two offenders. Both are
+   * failure-path-only in these modules, so lazy `await import(...)` is also the
+   * better design: no cold start pays to load the Admin SDK for a path that
+   * runs when BigQuery is unreachable.
+   *
+   * Entry points (functions/*.mjs) are exempt — they legitimately need Firestore
+   * and their tests mock it.
+   */
+  const HEAVY = ['./firestore.mjs', './_error-log.mjs'];
+
+  it('no _warehouse* lib module statically imports firebase-admin transitively', () => {
+    const libs = readdirSync(resolve(FN_DIR, 'lib')).filter(f => f.startsWith('_warehouse'));
+    expect(libs.length).toBeGreaterThan(4);
+    for (const f of libs) {
+      const src = readFileSync(resolve(FN_DIR, 'lib', f), 'utf8');
+      // Static imports only. `await import('./firestore.mjs')` is exactly the
+      // fix, so it must not trip this.
+      const statics = [...src.matchAll(/^\s*import\s[^;]*?from\s+'([^']+)'/gm)].map(m => m[1]);
+      for (const heavy of HEAVY) {
+        expect(statics, `${f} must not statically import ${heavy}`).not.toContain(heavy);
+      }
+    }
+  });
+
+  it('_sheets.mjs stays clean too — it is the chokepoint every test loads', () => {
+    const src = readFileSync(resolve(FN_DIR, 'lib/_sheets.mjs'), 'utf8');
+    const statics = [...src.matchAll(/^\s*import\s[^;]*?from\s+'([^']+)'/gm)].map(m => m[1]);
+    for (const heavy of HEAVY) {
+      expect(statics, `_sheets.mjs must not statically import ${heavy}`).not.toContain(heavy);
+    }
+  });
+});
+
 describe('append-only is enforced in the SQL, not just in the prose', () => {
   it('no warehouse module emits MERGE, UPDATE or DELETE against a fact table', () => {
     const libs = readdirSync(resolve(FN_DIR, 'lib')).filter(f => f.startsWith('_warehouse'));

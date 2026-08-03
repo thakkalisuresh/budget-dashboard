@@ -4,6 +4,17 @@ vi.mock('../../functions/lib/secrets.mjs', () => ({
   SHEETS_DRIVE_SECRETS: [], WAREHOUSE_SECRETS: [],
 }));
 
+// The CI test job runs `npm ci` at the repo ROOT only — functions/node_modules
+// is installed for the deploy job, not this one. So anything reaching
+// firebase-admin has to be mocked, or the file cannot even be imported.
+// warehouse-notify.mjs genuinely needs Firestore (the rate limiter), so unlike
+// the lib modules it is mocked here rather than lazy-imported there.
+vi.mock('../../functions/lib/firestore.mjs', () => ({ getDb: () => ({}) }));
+vi.mock('../../functions/lib/bot-store.mjs', () => ({
+  createBotStore: () => ({ incrementIfBelow: async () => ({ allowed: true, count: 1 }) }),
+}));
+vi.mock('../../functions/lib/_error-log.mjs', () => ({ reportError: async () => {} }));
+
 const { buildRows, MAX_EVENTS_PER_REQUEST, RATE_LIMIT_PER_HOUR } =
   await import('../../functions/warehouse-notify.mjs');
 const {

@@ -43,13 +43,43 @@
  * path, and they can never fail the user's write.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { getDb } from './firestore.mjs';
-import { reportError } from './_error-log.mjs';
 import { monthStart, monthNameFromDate } from './_schema-version.mjs';
 import {
   DATASET, TABLES, IDEMPOTENCY_FIELDS, RAW_PAYLOAD_CAP,
   encodeRow, validateRow,
 } from './_warehouse-schema.mjs';
+
+/**
+ * Firestore and the error log are imported LAZILY, on the failure path only.
+ *
+ * Two reasons, and the second is why it is not just a test convenience:
+ *
+ *  • `firebase-admin` is heavyweight, and both of these reach it. Every cold
+ *    start of every function that writes an expense would pay to load the
+ *    Admin SDK for a path that runs only when BigQuery is unreachable.
+ *  • It keeps this module's static import graph pure — `node:crypto` plus two
+ *    data modules. `_sheets.mjs` imports it, and `_sheets.mjs` is imported by
+ *    tests that deliberately run without `functions/node_modules` installed.
+ *    A static import here made five test files unloadable in CI while passing
+ *    locally, purely because the local checkout happened to have those
+ *    dependencies installed.
+ *
+ * Both helpers swallow their own failure: they exist to report a problem, and
+ * a reporter that throws turns a handled degradation into a crash.
+ */
+async function lazyReportError(code, error, context) {
+  try {
+    const { reportError } = await import('./_error-log.mjs');
+    await reportError(code, error, context);
+  } catch {
+    console.error(`${code}:`, error?.message || error);
+  }
+}
+
+async function lazyGetDb() {
+  const { getDb } = await import('./firestore.mjs');
+  return getDb();
+}
 
 /** Firestore failure queue. NOT the normal path — see the header of drainOutbox. */
 export const OUTBOX_COLLECTION = 'warehouse_outbox';
@@ -396,7 +426,7 @@ export async function flushRows(rows, { ingestSource = 'hook', actorEmail = null
   if (rejected.length) {
     // Malformed events are a bug in a caller, not a transient failure — queuing
     // them would just retry the same bad shape eight times.
-    await reportError('WHS-003', new Error(rejected[0].problems.join('; ')), {
+    await lazyReportError('WHS-003', new Error(rejected[0].problems.join('; ')), {
       count: rejected.length, table: rejected[0].table,
     }).catch(() => {});
   }
@@ -432,7 +462,7 @@ export async function flushRows(rows, { ingestSource = 'hook', actorEmail = null
 export async function enqueueOutbox(failed, meta = {}) {
   let queued = 0;
   try {
-    const db = getDb();
+    const db = await lazyGetDb();
     const batch = db.batch();
     for (const entry of failed) {
       const ref = db.collection(OUTBOX_COLLECTION).doc();
@@ -452,14 +482,14 @@ export async function enqueueOutbox(failed, meta = {}) {
     await batch.commit();
     // Not silent: a queued write means BigQuery was unreachable, which is worth
     // a digest line even though nothing was lost.
-    await reportError('WHS-001', new Error(failed[0].error || 'append failed'), {
+    await lazyReportError('WHS-001', new Error(failed[0].error || 'append failed'), {
       table: failed[0].table, queued,
     }).catch(() => {});
   } catch (e) {
     // Both BigQuery and Firestore failed. This is the one path where a
     // warehouse row is genuinely lost — the reconciler is the backstop, since
     // it diffs the actual sheet and will re-emit the row on its next pass.
-    await reportError('WHS-002', e, { batches: failed.length }).catch(() => {});
+    await lazyReportError('WHS-002', e, { batches: failed.length });
     return 0;
   }
   return queued;
@@ -530,7 +560,7 @@ export async function recordTransactionWrite(event, opts = {}) {
     const row = mapTransactionEvent({ ...event, rowState: 'valid' }, ctx);
     return await flushRows([{ table: 'transaction_versions', row }], { ...opts, ...ctx });
   } catch (e) {
-    await reportError('WHS-001', e, { step: 'recordTransactionWrite' }).catch(() => {});
+    await lazyReportError('WHS-001', e, { step: 'recordTransactionWrite' });
     return { written: 0, queued: 0, rejected: 1 };
   }
 }
@@ -553,7 +583,7 @@ export async function recordTransactionDelete(event, opts = {}) {
     );
     return await flushRows([{ table: 'transaction_versions', row }], { ...opts, ...ctx });
   } catch (e) {
-    await reportError('WHS-001', e, { step: 'recordTransactionDelete' }).catch(() => {});
+    await lazyReportError('WHS-001', e, { step: 'recordTransactionDelete' });
     return { written: 0, queued: 0, rejected: 1 };
   }
 }
@@ -566,7 +596,7 @@ export async function recordBudgetWrite(event, opts = {}) {
     const row = mapBudgetEvent(event, ctx);
     return await flushRows([{ table: 'budget_versions', row }], { ...opts, ...ctx });
   } catch (e) {
-    await reportError('WHS-001', e, { step: 'recordBudgetWrite' }).catch(() => {});
+    await lazyReportError('WHS-001', e, { step: 'recordBudgetWrite' });
     return { written: 0, queued: 0, rejected: 1 };
   }
 }
@@ -583,7 +613,7 @@ export async function recordMonthDim(event, opts = {}) {
     const ctx = ctxFor(opts);
     return await flushRows([{ table: 'month_dim', row: mapMonthDim(event, ctx) }], { ...opts, ...ctx });
   } catch (e) {
-    await reportError('WHS-001', e, { step: 'recordMonthDim' }).catch(() => {});
+    await lazyReportError('WHS-001', e, { step: 'recordMonthDim' });
     return { written: 0, queued: 0, rejected: 1 };
   }
 }

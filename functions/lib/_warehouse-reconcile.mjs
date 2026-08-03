@@ -29,7 +29,6 @@
  *   • **A grace window.** A row written seconds ago may not be in our snapshot
  *     yet. Nothing younger than GRACE_MS is ever marked deleted.
  */
-import { reportError } from './_error-log.mjs';
 import { getAccessToken } from './_drive.mjs';
 import { listMonths } from './_sheets.mjs';
 import { sheetSchemaVersion, isV2EligibleMonth } from './_schema-version.mjs';
@@ -51,6 +50,21 @@ export const GRACE_MS = 10 * 60 * 1000;
 
 /** Months per tick. The current month plus the previous one covers real editing. */
 export const MONTHS_PER_RUN = 2;
+
+/**
+ * The error log is imported lazily, for the same reason `_warehouse.mjs` does
+ * it: it reaches `firebase-admin`, and `diffMonth` below is a pure function
+ * that tests load directly. A static import here made this module unloadable
+ * wherever `functions/node_modules` isn't installed — which is the CI test job.
+ */
+async function lazyReportError(code, error, context) {
+  try {
+    const { reportError } = await import('./_error-log.mjs');
+    await reportError(code, error, context);
+  } catch {
+    console.error(`${code}:`, error?.message || error);
+  }
+}
 
 /** The most recent months, newest first. */
 function recentMonths(months, n) {
@@ -151,7 +165,7 @@ export async function runReconcile({ monthsPerRun = MONTHS_PER_RUN, now = Date.n
   try {
     months = await listMonths();
   } catch (e) {
-    await reportError('WHS-005', e, { step: 'month registry read' });
+    await lazyReportError('WHS-005', e, { step: 'month registry read' });
     return { months: 0, reason: 'registry_failed' };
   }
 
@@ -175,7 +189,7 @@ export async function runReconcile({ monthsPerRun = MONTHS_PER_RUN, now = Date.n
       // Deliberate: one failed range abandons the whole month. Emitting deletes
       // from a partial snapshot is the worst thing this component could do.
       summary.aborted++;
-      await reportError('WHS-005', e, { budgetMonth: month.monthName });
+      await lazyReportError('WHS-005', e, { budgetMonth: month.monthName });
       continue;
     }
 
@@ -183,7 +197,7 @@ export async function runReconcile({ monthsPerRun = MONTHS_PER_RUN, now = Date.n
     try {
       warehouseRows = await currentWarehouseRows(month.sheetId);
     } catch (e) {
-      await reportError('WHS-005', e, { budgetMonth: month.monthName, step: 'warehouse read' });
+      await lazyReportError('WHS-005', e, { budgetMonth: month.monthName, step: 'warehouse read' });
       continue;
     }
 

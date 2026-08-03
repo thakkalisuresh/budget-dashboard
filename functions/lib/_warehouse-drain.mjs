@@ -19,8 +19,6 @@
  *    the difference between "the archive is behind" and "the archive is behind
  *    and nobody knows".
  */
-import { getDb } from './firestore.mjs';
-import { reportError } from './_error-log.mjs';
 import { DATASET, TABLES, encodeRow } from './_warehouse-schema.mjs';
 import {
   OUTBOX_COLLECTION, MAX_OUTBOX_ATTEMPTS, warehouseEnabled, recordAttempt,
@@ -28,6 +26,26 @@ import {
 
 /** Cap the work per tick so one bad night can't run the function out of time. */
 export const DRAIN_BATCH = 100;
+
+/**
+ * Firestore and the error log load lazily here too — same reason as
+ * `_warehouse.mjs`. This module only ever runs inside the cron, so deferring
+ * the Admin SDK costs nothing, and it keeps the static import graph loadable
+ * without `functions/node_modules` (see warehouseSecrets.test.js).
+ */
+async function lazyGetDb() {
+  const { getDb } = await import('./firestore.mjs');
+  return getDb();
+}
+
+async function lazyReportError(code, error, context) {
+  try {
+    const { reportError } = await import('./_error-log.mjs');
+    await reportError(code, error, context);
+  } catch {
+    console.error(`${code}:`, error?.message || error);
+  }
+}
 
 /**
  * Retry queued writes.
@@ -41,7 +59,8 @@ export async function drainOutbox({ limit = DRAIN_BATCH } = {}) {
 
   let snap;
   try {
-    snap = await getDb().collection(OUTBOX_COLLECTION)
+    const db = await lazyGetDb();
+    snap = await db.collection(OUTBOX_COLLECTION)
       .where('dead', '==', false)
       .limit(limit)
       .get();
@@ -88,7 +107,7 @@ export async function drainOutbox({ limit = DRAIN_BATCH } = {}) {
       if (attempts >= MAX_OUTBOX_ATTEMPTS) {
         await markDead(doc, e?.message);
         dead++;
-        await reportError('WHS-004', e, { table: entry.table, attempts, rows: (entry.rows || []).length });
+        await lazyReportError('WHS-004', e, { table: entry.table, attempts, rows: (entry.rows || []).length });
         await recordAttempt({
           targetTable: entry.table, outcome: 'dead', attemptNumber: attempts,
           errorCode: 'WHS-004', errorMessage: e?.message,
