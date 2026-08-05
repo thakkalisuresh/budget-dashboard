@@ -6,12 +6,19 @@
 //
 // A question is raised only where guessing would write a wrong NUMBER. A shaky
 // category is a fixable label and must never appear here.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   splitExpenseSegments, extractStatedTotal, looksLikeMultiExpense,
   parseMultiExpense, classifyMulti, distributeGap, MAX_ITEMS,
 } from '../../functions/lib/_multi-expense.mjs';
-import { parseExpenseCommand } from '../../functions/lib/_bot-core.mjs';
+
+// _bot-core reaches firestore.mjs through _error-log.mjs, and firebase-admin is a
+// dependency of functions/, not of the root package CI installs. Every other bot
+// test stubs it for the same reason — without this the suite fails to load in CI
+// while passing locally for anyone whose functions/node_modules is present.
+vi.mock('../../functions/lib/firestore.mjs', () => ({ getDb: () => ({}) }));
+
+const { parseExpenseCommand } = await import('../../functions/lib/_bot-core.mjs');
 
 // The amount parser the bot uses, exposed here through parseExpenseCommand.
 const parseAmount = (s) => {
