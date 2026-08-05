@@ -202,6 +202,34 @@ export function kbEditMenu() {
   ];
 }
 
+/**
+ * Offer to remember a repeated category correction as a smart rule.
+ * "Not again" mutes the vendor rather than just declining once, so the bot cannot
+ * nag about a vendor the user has deliberately kept mixed.
+ */
+export function kbLearnOffer() {
+  return [[
+    { text: '✅ Yes, always',  callback_data: 'lrn:yes' },
+    { text: 'No',             callback_data: 'lrn:no' },
+    { text: '🔕 Not again',   callback_data: 'lrn:never' },
+  ]];
+}
+
+/**
+ * Generic one-question chooser, two buttons per row.
+ *
+ * Used by the multi-expense discrepancy prompts, where the options differ per
+ * question ("Just Shell" / "Split evenly" / "Enter each") and so cannot come from
+ * a fixed keyboard. `data` must stay inside Telegram's 64-byte callback limit.
+ */
+export function kbMultiChoice(options = []) {
+  const rows = [];
+  for (let i = 0; i < options.length; i += 2) {
+    rows.push(options.slice(i, i + 2).map(o => ({ text: o.text, callback_data: o.data })));
+  }
+  return rows;
+}
+
 /** Category picker. `prefix` is e.g. 'edit:setcat' (pending) or 'edit:lastcat' (logged). */
 export function kbCategoryPicker(categories, prefix) {
   const rows = [];

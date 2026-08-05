@@ -14,7 +14,7 @@ import {
   getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID,
   getTotals, getRecentExpenses, writeSalaryAmount, writeBudgetAmount,
   addCategory, checkMonthExists, getLatestMonthData, getUserSettings,
-  createMonth,
+  createMonth, addSmartRule,
 } from './_sheets.mjs';
 import { convertToUSD } from './_currency.mjs';
 import { reportError } from './_error-log.mjs';
@@ -23,13 +23,16 @@ import { findErrorCodeInText, explainErrorCode } from './_error-codes.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
 import { buildRewardsLine, getEffectiveRates } from './_card-rewards.mjs';
 import { resolveCardName } from './_card-resolver.mjs';
-import { resolveCategory } from './_categorize.mjs';
-import { findDuplicates } from './_duplicate-match.mjs';
+import { resolveCategory, applySmartRules } from './_categorize.mjs';
+import { findDuplicates, fuzzyNamesMatch } from './_duplicate-match.mjs';
 import {
   kbYesCancel, kbYesSkip, kbConfirmDelete, kbSplitCategory, kbCategoryConfirm, kbLogAnywayCancel,
   kbConfirmReceipt, kbLogAnywayReceipt, kbBatchReceipt, kbEditMenu, kbCategoryPicker, kbCardPicker,
-  kbLoggedActions, kbEditLoggedMenu, kbEnrichMenu,
+  kbLoggedActions, kbEditLoggedMenu, kbEnrichMenu, kbMultiChoice, kbLearnOffer,
 } from './_telegram.mjs';
+import {
+  looksLikeMultiExpense, parseMultiExpense, classifyMulti, distributeGap, MAX_ITEMS,
+} from './_multi-expense.mjs';
 import { categorizeItems, matchesSplitVendor } from './_item-categorizer.mjs';
 import { runToolLoop } from './_agent.mjs';
 
@@ -195,6 +198,16 @@ export async function handleTextReply(ctx, text) {
     return await handleEnrichCallback(ctx, text.slice('enr:'.length));
   }
 
+  // ── Multi-expense discrepancy callbacks ──
+  if (text.startsWith('mx:')) {
+    return await handleMultiCallback(ctx, text.slice('mx:'.length));
+  }
+
+  // ── "Always file this vendor here?" ──
+  if (text.startsWith('lrn:')) {
+    return await handleLearnCallback(ctx, text.slice('lrn:'.length));
+  }
+
   const normalized = text.trim().toUpperCase();
 
   // ── R10: capturing a typed value for a button-driven field edit ──
@@ -204,6 +217,17 @@ export async function handleTextReply(ctx, text) {
     const awaitingEdit = await store.get(`awaiting_edit:${userId}`, { type: 'json' }).catch(() => null);
     if (awaitingEdit) {
       return await applyAwaitingEdit(ctx, text, awaitingEdit);
+    }
+
+    // ── Answering a multi-expense question ──
+    const multiState = await store.get(MULTI_KEY(userId), { type: 'json' }).catch(() => null);
+    if (multiState?.awaiting) {
+      if (new Date(multiState.expires) > new Date()) {
+        const handled = await resumeMultiAnswer(ctx, text, multiState);
+        if (handled) return handled;
+      } else {
+        await store.delete(MULTI_KEY(userId)).catch(() => {});
+      }
     }
 
     // ── Answering "how much?" / "where?" for an add that was one field short ──
@@ -235,7 +259,7 @@ export async function handleTextReply(ctx, text) {
       `salary_pending:${userId}`, `budget_pending:${userId}`,
       `new_month_wizard:${userId}`, `delete_pending:${userId}`,
       `awaiting_edit:${userId}`, `awaiting_attach:${userId}`,
-      `awaiting_add:${userId}`, ENRICH_KEY(userId),
+      `awaiting_add:${userId}`, ENRICH_KEY(userId), MULTI_KEY(userId),
     ]) {
       try {
         const val = await store.get(key, { type: 'json' });
@@ -637,6 +661,14 @@ export async function handleTextReply(ctx, text) {
 
     await store.setJSON(key, pending);
     return ctx.send(buildUpdatedPrompt(pending), kbForPending(pending));
+  }
+
+  // ── Several expenses in one message ──
+  // Ahead of the single-command path: "walgreens 53 and shell 40" parses as one
+  // vendor called "walgreens 53 and shell" otherwise.
+  if (!SMS_MARKER.test(text) && !looksLikeQuery(text) && looksLikeMultiExpense(text, parseExpenseCommand)) {
+    const handled = await startMulti(ctx, text);
+    if (handled) return handled;
   }
 
   // ── Typed expense command: "Add walgreen $53.11" ──
@@ -2216,12 +2248,80 @@ function missingEnrichFields({ needsConfirm, paymentMethod, explicitDate, catego
   return fields;
 }
 
-async function addExpenseFromText(ctx, input) {
-  const { store, userId } = ctx;
+/**
+ * Everything the bot knows about one vendor from the current month's rows.
+ *
+ * Derived from the array the duplicate check already fetches — card inference,
+ * the amount-sanity gate and pre-filled answers all read this instead of issuing
+ * a query each. One read, three features.
+ */
+export function vendorHistory(recent, vendor) {
+  if (!vendor || !recent?.length) return null;
+  const matches = recent.filter(r => fuzzyNamesMatch(r.vendor, vendor));
+  if (!matches.length) return null;
+
+  const amounts = matches.map(m => Number(m.amount)).filter(n => Number.isFinite(n) && n > 0);
+  const cards   = matches.map(m => m.paymentMethod || m.card || '').filter(Boolean);
+
+  // A card only counts as "the usual" when it is the ONLY one ever used here —
+  // a 3-2 split is a preference, not a fact, and guessing it writes a wrong row.
+  const uniqueCards = [...new Set(cards)];
+  const usualCard = cards.length >= 2 && uniqueCards.length === 1 ? uniqueCards[0] : null;
+
+  const typical = amounts.length
+    ? amounts.slice().sort((a, b) => a - b)[Math.floor(amounts.length / 2)]   // median
+    : null;
+
+  return { count: matches.length, usualCard, typical, category: matches[0].category || null };
+}
+
+/** Fetches the month's recent rows once, for both duplicates and history. */
+async function loadMonthContext(monthName) {
+  const sheetId = await getCurrentMonthSheetId(monthName);
+  let recent = [];
+  try {
+    recent = await getRecentExpenses(sheetId, 100);
+  } catch (e) {
+    console.warn('bot-core: recent-expense fetch failed (non-fatal)', e.message);
+  }
+  return { sheetId, recent };
+}
+
+/**
+ * Resolve, then write, one expense row. Returns a plain result object rather than
+ * sending anything, so the single-add flow and the multi-expense flow share one
+ * implementation and cannot drift apart.
+ *
+ * ⚠️  Callers writing several rows MUST await these one at a time. appendExpense
+ * is a read-then-write with no locking (_sheets.mjs): it reads A:H, computes
+ * nextRow from the last row with data, and PUTs to exactly that range. Two
+ * concurrent appends to one tab compute the SAME row and the second silently
+ * overwrites the first.
+ */
+async function writeExpenseRow(ctx, input) {
   const { vendor, amount, category = null, card = null, date = null, explicitDate = false } = input;
 
   let settings = {};
   try { settings = await getUserSettings(); } catch { /* defaults are fine */ }
+
+  const txDate = date || new Date().toISOString().slice(0, 10);
+
+  // Split the date string rather than new Date(...): 'YYYY-MM-DD' parses as UTC
+  // midnight, which lands in the previous month in US timezones on the 1st.
+  const [yStr, mStr] = txDate.split('-');
+  const year      = parseInt(yStr, 10);
+  const month     = MONTH_NAMES[parseInt(mStr, 10) - 1];
+  const monthName = `${month} ${year}`;
+
+  let sheetId, recent;
+  try {
+    ({ sheetId, recent } = await loadMonthContext(monthName));
+  } catch (e) {
+    await reportError('SHT-002', e, { flow: 'text-add' });
+    return { ok: false, error: `Could not find sheet for ${monthName}. Add it from the dashboard first. [SHT-002]` };
+  }
+
+  const history = vendorHistory(recent, vendor);
 
   // An explicitly named category is the user's own words — never second-guessed.
   // Otherwise: smart rules → Groq → 'Misc', with needsConfirm below 0.75.
@@ -2233,31 +2333,24 @@ async function addExpenseFromText(ctx, input) {
     });
     resolvedCategory = decision.category;
     needsConfirm = decision.needsConfirm;
+    // Past rows for this vendor are the user's own filing decision — better
+    // evidence than an LLM guess, so they settle a shaky one.
+    if (needsConfirm && history?.category) {
+      resolvedCategory = history.category;
+      needsConfirm = false;
+    }
   }
 
-  const paymentMethod = resolveCard(card, vendor, resolvedCategory, settings);
-  const txDate = date || new Date().toISOString().slice(0, 10);
-
-  // Split the date string rather than new Date(...): 'YYYY-MM-DD' parses as UTC
-  // midnight, which lands in the previous month in US timezones on the 1st.
-  const [yStr, mStr] = txDate.split('-');
-  const year      = parseInt(yStr, 10);
-  const month     = MONTH_NAMES[parseInt(mStr, 10) - 1];
-  const monthName = `${month} ${year}`;
-
-  let sheetId;
-  try {
-    sheetId = await getCurrentMonthSheetId(monthName);
-  } catch (e) {
-    await reportError('SHT-002', e, { flow: 'text-add' });
-    return ctx.send(`Could not find sheet for ${monthName}. Add it from the dashboard first. [SHT-002]`);
-  }
+  // Rules first (explicit intent), then what the card history shows.
+  const paymentMethod = resolveCard(card, vendor, resolvedCategory, settings)
+    || (card ? '' : (history?.usualCard || ''));
 
   // Checked but never blocking: write-first means a suspected repeat is reported
   // with an Undo, not held behind a confirmation.
-  const dups = await findExistingDuplicates(monthName, {
-    store_name: vendor, total_amount: amount, purchase_date: txDate,
-  });
+  const dups = findDuplicates(
+    recent.map(e => ({ vendor: e.vendor, amount: e.amount, date: e.txDate || e.timestamp, category: e.category })),
+    { vendor, amount, date: txDate }
+  );
 
   let result;
   try {
@@ -2267,40 +2360,104 @@ async function addExpenseFromText(ctx, input) {
     });
   } catch (e) {
     await reportError('SHT-009', e, { flow: 'text-add' });
-    return ctx.send('Failed to log that to the spreadsheet. Try the dashboard. [SHT-009]');
+    return { ok: false, error: 'Failed to log that to the spreadsheet. Try the dashboard. [SHT-009]' };
   }
 
-  await store.setJSON(`lastlog:${userId}`, {
-    uuid: result.uuid, category: resolvedCategory, vendor, amount, txDate,
-    paymentMethod, bookingMethod: '', sheetId, monthName, year, month,
+  console.log(`bot-core: text-add — ${vendor} $${amount} → ${resolvedCategory} by ${ctx.userId}`);
+
+  return {
+    ok: true, uuid: result.uuid, vendor, amount, txDate, monthName, year, month,
+    sheetId, category: resolvedCategory, paymentMethod, needsConfirm, dups,
+    explicitDate, settings, history,
+    cardsConfigured: (settings.cards || []).length > 0,
+  };
+}
+
+/** Records a written row as the undo/edit target. */
+async function rememberLastLog(ctx, row) {
+  await ctx.store.setJSON(`lastlog:${ctx.userId}`, {
+    uuid: row.uuid, category: row.category, vendor: row.vendor, amount: row.amount,
+    txDate: row.txDate, paymentMethod: row.paymentMethod, bookingMethod: '',
+    sheetId: row.sheetId, monthName: row.monthName, year: row.year, month: row.month,
     driveFileId: null, driveShareLink: null,
     loggedAt: new Date().toISOString(),
   });
+}
+
+/**
+ * Flags an amount far outside what this vendor usually costs.
+ *
+ * A $4 coffee and a $1,400 flight should not get identical scrutiny — but the
+ * attention is proportional to the *surprise*, not the size, so this compares
+ * against the user's own median for that vendor rather than a fixed threshold.
+ *
+ * It reports rather than blocks: with a real median to compare against, a fat
+ * finger is obvious from the message alone, and Undo is one tap away.
+ */
+function amountLooksUnusual({ history, amount, vendor }) {
+  if (!history?.typical || history.count < 3) return '';   // too little to judge
+  const typical = Number(history.typical);
+  if (!typical) return '';
+  const ratio = amount / typical;
+  if (ratio < 3 && ratio > 1 / 3) return '';
+  return `❓ Usually ~$${typical.toFixed(2)} at ${vendor} — check the amount?`;
+}
+
+/**
+ * One line of budget context under a logged expense (§9.4).
+ *
+ * Runs after the append, so the figure already includes the row just written —
+ * "you are now at" rather than "you were at". Silent when the category has no
+ * budget set, and never fatal: a missing nudge must not sink a successful write.
+ */
+async function buildBudgetLine(row) {
+  try {
+    const totals = await getTotals(row.sheetId);
+    const cat = (totals.categories || []).find(c => c.name === row.category);
+    const budget = Number(cat?.budget) || 0;
+    if (!budget) return '';
+    const spent = Number(cat.spent) || 0;
+    const pct   = Math.round((spent / budget) * 100);
+    const left  = budget - spent;
+    return left < 0
+      ? `⚠️ ${row.category}: $${spent.toFixed(2)} of $${budget.toFixed(2)} — $${Math.abs(left).toFixed(2)} over.`
+      : `${row.category}: $${spent.toFixed(2)} of $${budget.toFixed(2)} (${pct}%) — $${left.toFixed(2)} left.`;
+  } catch (e) {
+    console.warn('bot-core: budget line failed (non-fatal)', e.message);
+    return '';
+  }
+}
+
+async function addExpenseFromText(ctx, input) {
+  const { store, userId } = ctx;
+
+  const row = await writeExpenseRow(ctx, input);
+  if (!row.ok) return ctx.send(row.error);
+
+  await rememberLastLog(ctx, row);
   await store.delete(`awaiting_add:${userId}`).catch(() => {});
 
-  console.log(`bot-core: text-add — ${vendor} $${amount} → ${resolvedCategory} by ${userId}`);
+  const fields = missingEnrichFields(row);
 
-  const fields = missingEnrichFields({
-    needsConfirm, paymentMethod, explicitDate,
-    category: resolvedCategory,
-    cardsConfigured: (settings.cards || []).length > 0,
-  });
-
-  const rewardsLine = paymentMethod
-    ? buildRewardsLine(paymentMethod, resolvedCategory, amount, vendor, getEffectiveRates(settings))
+  const rewardsLine = row.paymentMethod
+    ? buildRewardsLine(row.paymentMethod, row.category, row.amount, row.vendor, getEffectiveRates(row.settings))
     : '';
 
-  const lines = [`✅ Logged: ${vendor} · $${amount} (${resolvedCategory})`];
-  if (paymentMethod) lines.push(`Card: ${paymentMethod}`);
+  const lines = [`✅ Logged: ${row.vendor} · $${row.amount} (${row.category})`];
+  const oddLine = amountLooksUnusual(row);
+  if (oddLine) lines.push(oddLine);
+  if (row.paymentMethod) lines.push(`Card: ${row.paymentMethod}`);
   if (rewardsLine) lines.push(rewardsLine);
-  if (dups.length) lines.push('', buildDuplicateWarning(dups));
+  const budgetLine = await buildBudgetLine(row);
+  if (budgetLine) lines.push(budgetLine);
+  if (row.dups.length) lines.push('', buildDuplicateWarning(row.dups));
 
   if (fields.length) {
     await store.setJSON(ENRICH_KEY(userId), {
-      uuid: result.uuid, fields, changes: {},
+      uuid: row.uuid, fields, changes: {},
       expires: new Date(Date.now() + UNDO_WINDOW_MS).toISOString(),
     });
-    lines.push('', needsConfirm
+    lines.push('', row.needsConfirm
       ? `I guessed the category — worth a look. Anything to fix?`
       : `Want to fill in what I guessed?`);
     return ctx.send(lines.join('\n'), kbEnrichMenu(fields));
@@ -2308,6 +2465,303 @@ async function addExpenseFromText(ctx, input) {
 
   await store.delete(ENRICH_KEY(userId)).catch(() => {});
   return ctx.send(lines.join('\n'), kbLoggedActions());
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   Several expenses in one message
+
+   Clean items are written straight away; only the items an ambiguity actually
+   touches are held back. Questions are asked one at a time, after a single
+   consolidated summary of what already landed.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+const MULTI_KEY = (userId) => `multi:${userId}`;
+
+/** Writes one item. Callers MUST await these in sequence — see writeExpenseRow. */
+async function writeMultiItem(ctx, state, item) {
+  const row = await writeExpenseRow(ctx, item);
+  if (!row.ok) {
+    state.failed.push(`${item.vendor || 'item'}: ${row.error}`);
+    return row;
+  }
+  await rememberLastLog(ctx, row);
+  state.written.push({
+    uuid: row.uuid, vendor: row.vendor, amount: row.amount,
+    category: row.category, sheetId: row.sheetId,
+  });
+  return row;
+}
+
+async function startMulti(ctx, text) {
+  const parsed = parseMultiExpense(text, parseExpenseCommand, extractCommandAmount);
+  const { ready, questions } = classifyMulti(parsed);
+  if (!ready.length && !questions.length) return null;
+
+  const state = {
+    queue: questions, written: [], failed: [], skipped: 0,
+    overflow: parsed.overflow, awaiting: null,
+    expires: new Date(Date.now() + UNDO_WINDOW_MS).toISOString(),
+  };
+
+  // Strictly sequential: appendExpense reads the sheet to find its target row, so
+  // two concurrent appends to one tab would compute the same row.
+  for (const item of ready) await writeMultiItem(ctx, state, item);
+
+  const lines = [];
+  if (state.written.length) {
+    lines.push(`✅ Logged ${state.written.length}${questions.length ? ` of ${state.written.length + questions.length}` : ''}:`);
+    for (const w of state.written) lines.push(`  • ${w.vendor} · $${w.amount} (${w.category})`);
+  }
+  if (state.failed.length) {
+    lines.push('', `⚠️ ${state.failed.length} failed:`);
+    for (const f of state.failed) lines.push(`  • ${f}`);
+  }
+  if (state.overflow) lines.push('', `Only the first ${MAX_ITEMS} were read — send the rest separately.`);
+
+  return await advanceMulti(ctx, state, lines.join('\n'));
+}
+
+/** Renders the next question, or closes the batch out. */
+async function advanceMulti(ctx, state, prefixLine) {
+  const { store, userId } = ctx;
+  const next = state.queue[0];
+
+  if (!next) return await finishMulti(ctx, state, prefixLine);
+
+  const lead = prefixLine ? `${prefixLine}\n\n` : '';
+
+  if (next.type === 'D2') {
+    state.awaiting = null;
+    await store.setJSON(MULTI_KEY(userId), state);
+    const names = next.vendors.join(' and ');
+    return ctx.send(
+      `${lead}Is $${next.amount} for ${next.vendors[next.vendors.length - 1]} alone, or split across ${names}?`,
+      kbMultiChoice([
+        { text: `Just ${next.vendors[next.vendors.length - 1]}`, data: 'mx:d2:last' },
+        { text: 'Split evenly', data: 'mx:d2:split' },
+        { text: 'Enter each', data: 'mx:d2:each' },
+        { text: '❌ Drop these', data: 'mx:drop' },
+      ])
+    );
+  }
+
+  if (next.type === 'D3') {
+    state.awaiting = null;
+    await store.setJSON(MULTI_KEY(userId), state);
+    const verb = next.gap > 0 ? 'unaccounted for' : 'over';
+    return ctx.send(
+      `${lead}Those add up to $${next.sum.toFixed(2)}, but you said $${next.statedTotal.toFixed(2)} — $${Math.abs(next.gap).toFixed(2)} ${verb}.`,
+      kbMultiChoice([
+        { text: 'Spread it across them', data: 'mx:d3:dist' },
+        { text: `Add $${Math.abs(next.gap).toFixed(2)} as Misc`, data: 'mx:d3:misc' },
+        { text: 'Items are right', data: 'mx:d3:keep' },
+      ])
+    );
+  }
+
+  if (next.type === 'D4') {
+    state.awaiting = null;
+    await store.setJSON(MULTI_KEY(userId), state);
+    return ctx.send(
+      `${lead}Two identical ${next.item.vendor} charges of $${next.item.amount} — two visits, or one listed twice?`,
+      kbMultiChoice([
+        { text: 'Both are real', data: 'mx:d4:both' },
+        { text: 'Just one', data: 'mx:d4:one' },
+      ])
+    );
+  }
+
+  // D1 — one field short. Prefill the usual amount for this vendor when there is
+  // an unambiguous one, so the common answer is a tap rather than typing.
+  state.awaiting = { missing: next.missing, item: next.item };
+  await store.setJSON(MULTI_KEY(userId), state);
+
+  if (next.missing === 'vendor') {
+    return ctx.send(`${lead}$${next.item.amount} — where?`, kbMultiChoice([{ text: '⏭ Skip it', data: 'mx:skip' }]));
+  }
+
+  const suggestion = await suggestAmountFor(next.item.vendor);
+  const buttons = [];
+  if (suggestion) buttons.push({ text: `$${suggestion} (usual)`, data: `mx:amt:${suggestion}` });
+  buttons.push({ text: '⏭ Skip it', data: 'mx:skip' });
+  return ctx.send(`${lead}${next.item.vendor} — how much?`, kbMultiChoice(buttons));
+}
+
+/** The median amount previously paid at this vendor, when there is history. */
+async function suggestAmountFor(vendor) {
+  try {
+    const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    const { recent } = await loadMonthContext(monthName);
+    const history = vendorHistory(recent, vendor);
+    return history?.typical ? Number(history.typical).toFixed(2) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function finishMulti(ctx, state, prefixLine) {
+  const { store, userId } = ctx;
+  await store.delete(MULTI_KEY(userId)).catch(() => {});
+
+  const lines = [];
+  if (prefixLine) lines.push(prefixLine);
+  const parts = [`✅ ${state.written.length} logged`];
+  if (state.skipped) parts.push(`⏭ ${state.skipped} skipped`);
+  if (state.failed.length) parts.push(`⚠️ ${state.failed.length} failed`);
+  lines.push('', parts.join(', ') + '.');
+
+  if (state.written.length > 1) {
+    // lastlog only ever holds ONE row, so reversing a batch needs its own record.
+    await store.setJSON(`multi_done:${userId}`, {
+      written: state.written,
+      expires: new Date(Date.now() + UNDO_WINDOW_MS).toISOString(),
+    });
+    return ctx.send(lines.join('\n'), kbMultiChoice([
+      { text: `↩️ Undo all ${state.written.length}`, data: 'mx:undoall' },
+    ]));
+  }
+  return ctx.send(lines.join('\n'), state.written.length === 1 ? kbLoggedActions() : undefined);
+}
+
+/** Reverses every row written during this batch. */
+async function undoMultiBatch(ctx, written) {
+  let removed = 0;
+  for (const w of written) {
+    try {
+      await deleteExpenseByUUID({ category: w.category, uuid: w.uuid, sheetId: w.sheetId });
+      removed++;
+    } catch (e) {
+      console.warn('bot-core: multi undo failed for', w.uuid, e.message);
+    }
+  }
+  await ctx.store.delete(`lastlog:${ctx.userId}`).catch(() => {});
+  return removed;
+}
+
+async function handleMultiCallback(ctx, rest) {
+  const { store, userId } = ctx;
+  const state = await store.get(MULTI_KEY(userId), { type: 'json' }).catch(() => null);
+
+  if (rest === 'undoall') {
+    const last = await store.get(`multi_done:${userId}`, { type: 'json' }).catch(() => null);
+    const written = state?.written?.length ? state.written : (last?.written || []);
+    if (!written.length) return ctx.send('Nothing to undo.');
+    const removed = await undoMultiBatch(ctx, written);
+    await store.delete(`multi_done:${userId}`).catch(() => {});
+    await store.delete(MULTI_KEY(userId)).catch(() => {});
+    return ctx.send(`↩️ Removed ${removed} of ${written.length} entries.`);
+  }
+
+  if (!state) return ctx.send('Nothing left to sort out.');
+  const q = state.queue[0];
+  if (!q) return await finishMulti(ctx, state, '');
+
+  if (rest === 'drop') {
+    state.skipped += (q.items?.length || 1);
+    state.queue.shift();
+    return await advanceMulti(ctx, state, '❌ Dropped.');
+  }
+
+  if (rest === 'skip') {
+    state.skipped++;
+    state.queue.shift();
+    return await advanceMulti(ctx, state, '⏭ Skipped.');
+  }
+
+  if (rest.startsWith('amt:')) {
+    const amount = parseFloat(rest.slice('amt:'.length));
+    if (!Number.isFinite(amount) || amount <= 0) return ctx.send('Unusable amount.');
+    state.queue.shift();
+    const row = await writeMultiItem(ctx, state, { ...q.item, amount });
+    return await advanceMulti(ctx, state,
+      row.ok ? `✅ ${row.vendor} · $${row.amount} (${row.category})` : `⚠️ ${row.error}`);
+  }
+
+  if (rest === 'd2:last') {
+    state.queue.shift();
+    const last = q.items[q.items.length - 1];
+    const row = await writeMultiItem(ctx, state, { ...last, amount: q.amount });
+    // The other vendors were never charged anything — nothing to write for them.
+    state.skipped += q.items.length - 1;
+    return await advanceMulti(ctx, state,
+      row.ok ? `✅ ${row.vendor} · $${row.amount} (${row.category})` : `⚠️ ${row.error}`);
+  }
+
+  if (rest === 'd2:split') {
+    state.queue.shift();
+    const each = Math.round((q.amount / q.items.length) * 100) / 100;
+    const lines = [];
+    for (let i = 0; i < q.items.length; i++) {
+      // Last share absorbs the rounding remainder so the parts re-sum exactly.
+      const amount = i === q.items.length - 1
+        ? Math.round((q.amount - each * (q.items.length - 1)) * 100) / 100
+        : each;
+      const row = await writeMultiItem(ctx, state, { ...q.items[i], amount });
+      lines.push(row.ok ? `✅ ${row.vendor} · $${row.amount} (${row.category})` : `⚠️ ${row.error}`);
+    }
+    return await advanceMulti(ctx, state, lines.join('\n'));
+  }
+
+  if (rest === 'd2:each') {
+    // Turn the one ambiguous clause into one "how much?" per vendor.
+    state.queue.shift();
+    state.queue.unshift(...q.items.map(item => ({ type: 'D1', missing: 'amount', item: { ...item, amount: null } })));
+    return await advanceMulti(ctx, state, 'OK — one at a time.');
+  }
+
+  if (rest.startsWith('d3:')) {
+    state.queue.shift();
+    let toWrite = q.items;
+    if (rest === 'd3:dist') toWrite = distributeGap(q.items, q.gap);
+    const lines = [];
+    for (const item of toWrite) {
+      const row = await writeMultiItem(ctx, state, item);
+      lines.push(row.ok ? `✅ ${row.vendor} · $${row.amount} (${row.category})` : `⚠️ ${row.error}`);
+    }
+    if (rest === 'd3:misc' && q.gap > 0) {
+      const row = await writeMultiItem(ctx, state, { vendor: 'Unaccounted', amount: q.gap, category: 'Misc' });
+      lines.push(row.ok ? `✅ Unaccounted · $${row.amount} (Misc)` : `⚠️ ${row.error}`);
+    }
+    return await advanceMulti(ctx, state, lines.join('\n'));
+  }
+
+  if (rest === 'd4:both') {
+    state.queue.shift();
+    const row = await writeMultiItem(ctx, state, q.item);
+    return await advanceMulti(ctx, state,
+      row.ok ? `✅ ${row.vendor} · $${row.amount} (${row.category})` : `⚠️ ${row.error}`);
+  }
+
+  if (rest === 'd4:one') {
+    state.queue.shift();
+    state.skipped++;
+    return await advanceMulti(ctx, state, '⏭ Kept just the one.');
+  }
+
+  return ctx.send('Unknown action.');
+}
+
+/** A typed answer to a multi-expense question. */
+async function resumeMultiAnswer(ctx, text, state) {
+  const q = state.queue[0];
+  const awaiting = state.awaiting;
+  if (!q || !awaiting) return null;
+
+  if (awaiting.missing === 'amount') {
+    const parsed = extractCommandAmount(text);
+    if (!parsed) return ctx.send(`Send the amount for ${awaiting.item.vendor} (e.g. 53.11), or CANCEL.`);
+    state.queue.shift();
+    const row = await writeMultiItem(ctx, state, { ...awaiting.item, amount: parsed.amount });
+    return await advanceMulti(ctx, state,
+      row.ok ? `✅ ${row.vendor} · $${row.amount} (${row.category})` : `⚠️ ${row.error}`);
+  }
+
+  const vendor = text.replace(/[,;:.!?]+/g, ' ').split(/\s+/).filter(w => w && !FILLER.test(w)).join(' ').trim();
+  if (!vendor) return ctx.send('Send the store or vendor name, or CANCEL.');
+  state.queue.shift();
+  const row = await writeMultiItem(ctx, state, { ...awaiting.item, vendor });
+  return await advanceMulti(ctx, state,
+    row.ok ? `✅ ${row.vendor} · $${row.amount} (${row.category})` : `⚠️ ${row.error}`);
 }
 
 /** Entry point for a typed command; asks only when vendor or amount is missing. */
@@ -2732,6 +3186,74 @@ async function applyAwaitingEdit(ctx, text, state) {
   return ctx.send(buildUpdatedPrompt(pending), kbForPending(pending));
 }
 
+/* ══════════════════════════════════════════════════════════════════════════════
+   Learning from corrections
+
+   Until now `settings.smartRules` was only ever written from the Settings UI, so
+   every category correction — a perfectly labelled example of how this household
+   files this vendor — was thrown away, and the next charge from the same shop
+   asked the same question again.
+
+   The offer comes on the SECOND correction of a vendor, not the first: one
+   correction can be a one-off ("this Amazon order was a gift"), two is a pattern.
+   Accepting writes a rule the user can then edit or delete in Settings like any
+   other, and because smart rules are layer 1 of resolveCategory it short-circuits
+   the LLM from then on — the only change here that makes the bot cheaper as it
+   gets smarter.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+const CORRECTION_KEY = (userId, vendor) => `vlearn:${userId}:${String(vendor).toLowerCase().trim()}`;
+const OFFER_AFTER_CORRECTIONS = 2;
+
+/**
+ * Records that `vendor` was re-filed into `category`. Returns the vendor pattern
+ * to offer a rule for, or null when it is too early (or a rule already covers it).
+ */
+async function noteCategoryCorrection(ctx, vendor, category) {
+  const { store, userId } = ctx;
+  if (!vendor || !category) return null;
+
+  try {
+    const settings = await getUserSettings();
+    if (applySmartRules(vendor, settings.smartRules)) return null;   // already covered
+  } catch { /* fall through — a failed read must not block learning */ }
+
+  const key = CORRECTION_KEY(userId, vendor);
+  const prior = await store.get(key, { type: 'json' }).catch(() => null);
+  if (prior?.muted) return null;                                    // "Not again"
+
+  // Corrections to *different* categories cancel out rather than accumulate:
+  // that vendor is genuinely mixed, and a rule would be wrong for half of them.
+  const count = prior?.category === category ? (prior.count || 0) + 1 : 1;
+  await store.setJSON(key, { category, count, vendor });
+
+  return count >= OFFER_AFTER_CORRECTIONS ? { vendor, category } : null;
+}
+
+/** Buttons offering to remember a correction as a rule. */
+function ruleOfferMessage(vendor, category) {
+  return `Always put ${vendor} in ${category}?`;
+}
+
+async function handleLearnCallback(ctx, rest) {
+  const { store, userId } = ctx;
+  const pending = await store.get(`vlearn_offer:${userId}`, { type: 'json' }).catch(() => null);
+  if (!pending) return ctx.send('That offer has expired.');
+  await store.delete(`vlearn_offer:${userId}`);
+
+  if (rest === 'no') return ctx.send('OK — I won\'t assume.');
+  if (rest === 'never') {
+    await store.setJSON(CORRECTION_KEY(userId, pending.vendor), { category: null, count: 0, muted: true });
+    return ctx.send('OK — I won\'t ask about that one again.');
+  }
+
+  const added = await addSmartRule(pending.vendor, pending.category);
+  await store.delete(CORRECTION_KEY(userId, pending.vendor)).catch(() => {});
+  return ctx.send(added
+    ? `Got it — ${pending.vendor} goes to ${pending.category} from now on. Edit it in Settings → Smart Rules.`
+    : `Couldn't save that rule. Add it in Settings → Smart Rules.`);
+}
+
 /** Edits an already-logged expense by delete + re-append (no in-place update
  *  primitive exists, and a category change moves the row to another sheet tab). */
 async function editLoggedExpense(ctx, changes) {
@@ -2790,10 +3312,22 @@ async function editLoggedExpense(ctx, changes) {
 
   console.log(`bot-core: EDIT — ${next.vendor} → ${next.category} $${next.amount} by ${userId}`);
   const cardLine = next.paymentMethod ? `\nCard: ${next.paymentMethod}` : '';
-  return ctx.send(
+  const sent = await ctx.send(
     `✏️ Updated: ${next.vendor} · $${next.amount} (${next.category})${cardLine}`,
     kbLoggedActions()
   );
+
+  // A category change is the user filing this vendor by hand — the one signal
+  // worth learning from.
+  if (changes.category && changes.category !== lastlog.category) {
+    const offer = await noteCategoryCorrection(ctx, next.vendor, next.category);
+    if (offer) {
+      await store.setJSON(`vlearn_offer:${userId}`, offer);
+      await ctx.send(ruleOfferMessage(offer.vendor, offer.category), kbLearnOffer());
+    }
+  }
+
+  return sent;
 }
 
 /* ── R8: conversational agent fallback (Haiku, deterministic-first everywhere) ─ */
@@ -2862,13 +3396,47 @@ async function runBotAgent(ctx, text) {
     'For questions, answer directly using get_month_overview / get_recent_expenses.',
   ].join('\n');
 
-  const { text: finalText, acted } = await runToolLoop({ userText: text, system, tools, execute });
+  const history = await recallConversation(ctx);
+  const { text: finalText, acted } = await runToolLoop({ userText: text, system, tools, execute, history });
 
+  await rememberTurn(ctx, 'user', text);
   if (finalText && finalText.trim()) {
+    await rememberTurn(ctx, 'assistant', finalText.trim());
     await ctx.send(finalText.trim());
     return true;
   }
   return acted;   // a tool already messaged the user → handled; else not handled
+}
+
+/* ── Short conversational memory for the agent (§9.6) ─────────────────────────
+   Every message used to arrive stateless, so "actually that was on the amex"
+   could not resolve what "that" meant. Three turns each way is enough for the
+   follow-ups people actually send, and small enough not to move the token bill. */
+
+const CONVO_KEY  = (userId) => `convo:${userId}`;
+const CONVO_TURNS = 6;                        // 3 exchanges
+const CONVO_TTL_MS = 30 * 60 * 1000;
+
+async function recallConversation(ctx) {
+  const state = await ctx.store.get(CONVO_KEY(ctx.userId), { type: 'json' }).catch(() => null);
+  if (!state) return [];
+  if (new Date(state.expires) <= new Date()) {
+    await ctx.store.delete(CONVO_KEY(ctx.userId)).catch(() => {});
+    return [];
+  }
+  return state.turns || [];
+}
+
+async function rememberTurn(ctx, role, content) {
+  try {
+    const state = await ctx.store.get(CONVO_KEY(ctx.userId), { type: 'json' }).catch(() => null);
+    const turns = [...(state?.turns || []), { role, content }].slice(-CONVO_TURNS);
+    await ctx.store.setJSON(CONVO_KEY(ctx.userId), {
+      turns, expires: new Date(Date.now() + CONVO_TTL_MS).toISOString(),
+    });
+  } catch (e) {
+    console.warn('bot-core: conversation memory write failed (non-fatal)', e.message);
+  }
 }
 
 export { CATEGORIES, DAILY_LIMIT, getRateCount };

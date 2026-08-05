@@ -53,10 +53,19 @@ function textFrom(content) {
  * sent a user-facing message (so the caller can suppress a redundant reply).
  * Throws on any API/response failure.
  */
-export async function runToolLoop({ userText, system, tools, execute }) {
+export async function runToolLoop({ userText, system, tools, execute, history = [] }) {
   if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not configured');
 
-  const messages = [{ role: 'user', content: userText }];
+  // Prior turns let a follow-up resolve what it refers to: "add walgreens 53"
+  // then "actually that was on the amex" is meaningless without them. Only plain
+  // text turns are carried — replaying old tool_use blocks would invite the model
+  // to re-run actions that already happened.
+  const messages = [
+    ...history
+      .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
+      .map(m => ({ role: m.role, content: m.content })),
+    { role: 'user', content: userText },
+  ];
   let acted = false;
 
   for (let iter = 0; iter < MAX_ITERS; iter++) {
