@@ -2282,7 +2282,9 @@ async function loadMonthContext(monthName) {
   try {
     recent = await getRecentExpenses(sheetId, 100);
   } catch (e) {
-    console.warn('bot-core: recent-expense fetch failed (non-fatal)', e.message);
+    // Non-fatal for the write, but it silently disables duplicate detection,
+    // card inference and the amount check — so it is reported, not just logged.
+    await reportError('BOT-011', e, { flow: 'text-add', monthName });
   }
   return { sheetId, recent };
 }
@@ -2626,16 +2628,24 @@ async function finishMulti(ctx, state, prefixLine) {
 /** Reverses every row written during this batch. */
 async function undoMultiBatch(ctx, written) {
   let removed = 0;
+  const stuck = [];
   for (const w of written) {
     try {
       await deleteExpenseByUUID({ category: w.category, uuid: w.uuid, sheetId: w.sheetId });
       removed++;
     } catch (e) {
+      stuck.push(w);
       console.warn('bot-core: multi undo failed for', w.uuid, e.message);
     }
   }
+  // A half-undone batch leaves rows the user believes are gone but which still
+  // count against the budget — the reply says so, and so does the digest.
+  if (stuck.length) {
+    await reportError('BOT-009', new Error(`${stuck.length} of ${written.length} rows survived undo`),
+      { flow: 'multi-undo', uuids: stuck.map(s => s.uuid).join(',') });
+  }
   await ctx.store.delete(`lastlog:${ctx.userId}`).catch(() => {});
-  return removed;
+  return { removed, stuck };
 }
 
 async function handleMultiCallback(ctx, rest) {
@@ -2646,9 +2656,15 @@ async function handleMultiCallback(ctx, rest) {
     const last = await store.get(`multi_done:${userId}`, { type: 'json' }).catch(() => null);
     const written = state?.written?.length ? state.written : (last?.written || []);
     if (!written.length) return ctx.send('Nothing to undo.');
-    const removed = await undoMultiBatch(ctx, written);
+    const { removed, stuck } = await undoMultiBatch(ctx, written);
     await store.delete(`multi_done:${userId}`).catch(() => {});
     await store.delete(MULTI_KEY(userId)).catch(() => {});
+    if (stuck.length) {
+      return ctx.send(
+        `↩️ Removed ${removed} of ${written.length}.\n` +
+        `⚠️ Still in the sheet: ${stuck.map(s => `${s.vendor} $${s.amount}`).join(', ')} — remove from the dashboard. [BOT-009]`
+      );
+    }
     return ctx.send(`↩️ Removed ${removed} of ${written.length} entries.`);
   }
 
@@ -3247,11 +3263,19 @@ async function handleLearnCallback(ctx, rest) {
     return ctx.send('OK — I won\'t ask about that one again.');
   }
 
-  const added = await addSmartRule(pending.vendor, pending.category);
+  const outcome = await addSmartRule(pending.vendor, pending.category);
   await store.delete(CORRECTION_KEY(userId, pending.vendor)).catch(() => {});
-  return ctx.send(added
-    ? `Got it — ${pending.vendor} goes to ${pending.category} from now on. Edit it in Settings → Smart Rules.`
-    : `Couldn't save that rule. Add it in Settings → Smart Rules.`);
+  if (outcome === 'exists') {
+    return ctx.send(`Already covered — ${pending.vendor} goes to ${pending.category}.`);
+  }
+  if (outcome === 'failed') {
+    // addSmartRule swallows its own failure (learning must never break the
+    // correction), so this is the only place the loss can be reported.
+    await reportError('BOT-010', new Error(`rule not saved: ${pending.vendor} → ${pending.category}`),
+      { flow: 'learn-rule' });
+    return ctx.send(`Couldn't save that rule. Add it in Settings → Smart Rules. [BOT-010]`);
+  }
+  return ctx.send(`Got it — ${pending.vendor} goes to ${pending.category} from now on. Edit it in Settings → Smart Rules.`);
 }
 
 /** Edits an already-logged expense by delete + re-append (no in-place update

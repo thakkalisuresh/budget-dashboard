@@ -36,6 +36,12 @@ const getUserSettings     = vi.fn();
 const getRecentExpenses   = vi.fn();
 const getTotals           = vi.fn();
 const addSmartRule        = vi.fn();
+const reportError         = vi.fn();
+
+vi.mock('../../functions/lib/_error-log.mjs', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, reportError: (...a) => reportError(...a) };
+});
 
 vi.mock('../../functions/lib/firestore.mjs', () => ({ getDb: () => ({}) }));
 vi.mock('../../functions/lib/bot-store.mjs', () => ({ createBotStore: () => mockStore }));
@@ -100,7 +106,9 @@ beforeEach(() => {
   getTotals.mockReset();
   getTotals.mockResolvedValue({ salary: 5000, categories: [] });
   addSmartRule.mockReset();
-  addSmartRule.mockResolvedValue(true);
+  addSmartRule.mockResolvedValue('added');
+  reportError.mockReset();
+  reportError.mockResolvedValue(undefined);
 });
 
 describe('multi-expense: the clean path', () => {
@@ -401,6 +409,70 @@ describe('§9.2/9.3 — history inferred from the fetch dedup already makes', ()
     const ctx = makeCtx();
     await handleTextReply(ctx, 'add walgreens 21.00');
     expect(allText(ctx)).not.toContain('check the amount');
+  });
+});
+
+describe('error reporting reaches the logger', () => {
+  // WAL-001 was marked fatal but every call site bypassed reportError, so it was
+  // invisible to both alerts and the daily digest. These assert the wiring, not
+  // just that a code exists in the registry.
+  it('reports a half-undone batch, and names the survivors', async () => {
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'walgreens 53.11 and shell 40');
+    deleteExpenseByUUID.mockRejectedValueOnce(new Error('row moved'));
+    await handleTextReply(ctx, 'mx:undoall');
+
+    expect(reportError).toHaveBeenCalledWith('BOT-009', expect.any(Error), expect.anything());
+    // The user is told which rows are still there — a silent partial undo leaves
+    // phantom spending in the budget.
+    expect(lastSent(ctx).text).toContain('Still in the sheet');
+    expect(lastSent(ctx).text).toContain('BOT-009');
+  });
+
+  it('reports a lost learned rule', async () => {
+    addSmartRule.mockResolvedValue('failed');
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'add walgreens 53.11');
+    await handleTextReply(ctx, 'edit:lastcat:10');
+    await handleTextReply(ctx, 'add walgreens 21.00');
+    await handleTextReply(ctx, 'edit:lastcat:10');
+    await handleTextReply(ctx, 'lrn:yes');
+
+    expect(reportError).toHaveBeenCalledWith('BOT-010', expect.any(Error), expect.anything());
+    expect(lastSent(ctx).text).toContain('BOT-010');
+  });
+
+  it('stays quiet when the rule was merely already there', async () => {
+    addSmartRule.mockResolvedValue('exists');
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'add walgreens 53.11');
+    await handleTextReply(ctx, 'edit:lastcat:10');
+    await handleTextReply(ctx, 'add walgreens 21.00');
+    await handleTextReply(ctx, 'edit:lastcat:10');
+    await handleTextReply(ctx, 'lrn:yes');
+
+    // A no-op must not cry wolf in the digest.
+    expect(reportError).not.toHaveBeenCalledWith('BOT-010', expect.anything(), expect.anything());
+  });
+
+  it('reports when the lookup behind dedup and card inference fails', async () => {
+    getRecentExpenses.mockRejectedValue(new Error('Sheets 500'));
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'add walgreens 53.11');
+
+    // The write still happens — but silently losing duplicate detection is
+    // exactly the kind of degradation that should not go unnoticed.
+    expect(appendExpense).toHaveBeenCalledTimes(1);
+    expect(reportError).toHaveBeenCalledWith('BOT-011', expect.any(Error), expect.anything());
+  });
+
+  it('reports a failed expense write', async () => {
+    appendExpense.mockRejectedValueOnce(new Error('Sheets 503'));
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'add walgreens 53.11');
+
+    expect(reportError).toHaveBeenCalledWith('SHT-009', expect.any(Error), expect.anything());
+    expect(lastSent(ctx).text).toContain('SHT-009');
   });
 });
 

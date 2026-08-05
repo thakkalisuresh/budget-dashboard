@@ -674,14 +674,16 @@ export async function createMonth({ monthName, salary, budgetChanges }) {
  * rule the bot learned is managed, renamed or deleted exactly like one typed by
  * hand — no second store, no new surface to maintain.
  *
- * Returns true when a rule was added, false when one already covered the vendor
- * (or the write could not be attempted). Never throws: failing to learn must not
- * break the correction the user actually asked for.
+ * Returns 'added', 'exists' (a rule already covered the vendor — benign), or
+ * 'failed'. The three are kept apart because only 'failed' is worth reporting:
+ * collapsing them into a boolean would either hide a real loss or cry wolf on a
+ * no-op. Never throws — failing to learn must not break the correction the user
+ * actually asked for.
  */
 export async function addSmartRule(pattern, category) {
-  if (!TEMPLATE_ID || ALLOWED_EMAILS.length === 0) return false;
+  if (!TEMPLATE_ID || ALLOWED_EMAILS.length === 0) return 'failed';
   const clean = String(pattern || '').trim();
-  if (!clean || !category) return false;
+  if (!clean || !category) return 'failed';
 
   try {
     const range = encodeURIComponent("'UserSettings'!A:B");
@@ -689,11 +691,11 @@ export async function addSmartRule(pattern, category) {
     const rows = data.values || [];
 
     const rowIndex = rows.findIndex(r => r[0] === ALLOWED_EMAILS[0]);
-    if (rowIndex < 0) return false;
+    if (rowIndex < 0) return 'failed';
 
     const settings = JSON.parse(rows[rowIndex][1] || '{}');
     const rules = settings.smartRules || [];
-    if (rules.some(r => r.pattern?.toLowerCase().trim() === clean.toLowerCase())) return false;
+    if (rules.some(r => r.pattern?.toLowerCase().trim() === clean.toLowerCase())) return 'exists';
 
     rules.push({ id: `learned-${Date.now()}`, pattern: clean, category });
     settings.smartRules = rules;
@@ -707,10 +709,10 @@ export async function addSmartRule(pattern, category) {
     // The settings read is cached for the bot's hot path; without this the rule
     // would not take effect until the TTL expired.
     _settingsCache = null;
-    return true;
+    return 'added';
   } catch (e) {
     console.warn('addSmartRule failed (non-fatal):', e.message);
-    return false;
+    return 'failed';
   }
 }
 
