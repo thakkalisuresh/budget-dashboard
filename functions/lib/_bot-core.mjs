@@ -28,13 +28,16 @@ import { findDuplicates } from './_duplicate-match.mjs';
 import {
   kbYesCancel, kbYesSkip, kbConfirmDelete, kbSplitCategory, kbCategoryConfirm, kbLogAnywayCancel,
   kbConfirmReceipt, kbLogAnywayReceipt, kbBatchReceipt, kbEditMenu, kbCategoryPicker, kbCardPicker,
-  kbLoggedActions, kbEditLoggedMenu,
+  kbLoggedActions, kbEditLoggedMenu, kbEnrichMenu,
 } from './_telegram.mjs';
 import { categorizeItems, matchesSplitVendor } from './_item-categorizer.mjs';
 import { runToolLoop } from './_agent.mjs';
 
 const DAILY_LIMIT    = 50;
 const UNDO_WINDOW_MS = 10 * 60 * 1000;
+
+/** Staged post-write enrichment for a typed add (see addExpenseFromText). */
+const ENRICH_KEY = (userId) => `enrich:${userId}`;
 const DASHBOARD_URL  = process.env.SITE_URL || 'https://fundient-dashboard.web.app';
 
 /* ── Card resolution (server-side mirror of src/smartRules + resolveCardName) ──
@@ -187,6 +190,11 @@ export async function handleTextReply(ctx, text) {
     return await handleEditCallback(ctx, text.slice('edit:'.length));
   }
 
+  // ── Post-write enrichment callbacks for a typed add ──
+  if (text.startsWith('enr:')) {
+    return await handleEnrichCallback(ctx, text.slice('enr:'.length));
+  }
+
   const normalized = text.trim().toUpperCase();
 
   // ── R10: capturing a typed value for a button-driven field edit ──
@@ -196,6 +204,15 @@ export async function handleTextReply(ctx, text) {
     const awaitingEdit = await store.get(`awaiting_edit:${userId}`, { type: 'json' }).catch(() => null);
     if (awaitingEdit) {
       return await applyAwaitingEdit(ctx, text, awaitingEdit);
+    }
+
+    // ── Answering "how much?" / "where?" for an add that was one field short ──
+    const awaitingAdd = await store.get(`awaiting_add:${userId}`, { type: 'json' }).catch(() => null);
+    if (awaitingAdd) {
+      if (new Date(awaitingAdd.expires) > new Date()) {
+        return await resumePendingAdd(ctx, text, awaitingAdd);
+      }
+      await store.delete(`awaiting_add:${userId}`).catch(() => {});
     }
   }
 
@@ -218,6 +235,7 @@ export async function handleTextReply(ctx, text) {
       `salary_pending:${userId}`, `budget_pending:${userId}`,
       `new_month_wizard:${userId}`, `delete_pending:${userId}`,
       `awaiting_edit:${userId}`, `awaiting_attach:${userId}`,
+      `awaiting_add:${userId}`, ENRICH_KEY(userId),
     ]) {
       try {
         const val = await store.get(key, { type: 'json' });
@@ -619,6 +637,15 @@ export async function handleTextReply(ctx, text) {
 
     await store.setJSON(key, pending);
     return ctx.send(buildUpdatedPrompt(pending), kbForPending(pending));
+  }
+
+  // ── Typed expense command: "Add walgreen $53.11" ──
+  // Ahead of both the manual form and the SMS extractor: writes immediately when
+  // vendor and amount are both present, asks one question when exactly one is
+  // missing, and stands aside (returns null) otherwise.
+  if (looksLikeExpenseCommand(text)) {
+    const handled = await handleExpenseCommand(ctx, text);
+    if (handled) return handled;
   }
 
   // ── Manual entry: "Walmart 45.23 Grocery" ──
@@ -2027,6 +2054,291 @@ function looksLikeTransactionText(text) {
   return /[\$₹€£¥]|\b(usd|inr|eur|gbp|aed|jpy|cad|aud)\b|\d+\.\d{2}/i.test(trimmed);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════════
+   Typed expense commands: "Add walgreen $53.11"
+
+   These used to be swallowed by looksLikeTransactionText (≥15 chars containing a
+   "$"), which routed them to the *bank-SMS* extractor — the wrong model for a
+   plain instruction, and a Gemini→Gemini→Claude chain for something a regex can
+   read. Handled here instead, ahead of that check.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/** Imperative openers people actually use to log something. */
+const EXPENSE_VERB = /^(add|log|spent|spend|paid|pay|bought|buy|got|grabbed|expense)\b/i;
+
+/**
+ * Markers that mean "this is a bank/payment notification", not a command.
+ * Their presence hands the message back to the SMS extractor, which understands
+ * transfers, embedded dates and card fragments that this parser deliberately
+ * does not.
+ */
+const SMS_MARKER = /\b(debited|credited|a\/c|acct|account|txn|transaction|ref\s*no|available\s+bal|avl\s+bal|balance|ending\s+in|was\s+(charged|used)|xx+\d{2,})\b/i;
+
+/** Words that glue a command together but are never part of the vendor name. */
+const FILLER = /^(add|log|spent|spend|paid|pay|bought|buy|got|grabbed|expense|at|on|for|in|to|from|of|the|a|an|my|me|i|dollars?|bucks?|usd|please|pls)$/i;
+
+/**
+ * Pull an amount out of a command. Prefers a currency-marked figure ("$53.11",
+ * "53.11 dollars") over a bare number so "add 2 coffees $9" reads as $9, not $2.
+ * Returns { amount, span } where span is the matched text, or null.
+ */
+function extractCommandAmount(text) {
+  const currency = text.match(/\$\s*(\d+(?:\.\d{1,2})?)|(\d+(?:\.\d{1,2})?)\s*(?:dollars?|bucks?|usd)\b/i);
+  if (currency) {
+    const value = parseFloat(currency[1] ?? currency[2]);
+    if (!isNaN(value) && value > 0) return { amount: value, span: currency[0] };
+  }
+  // Bare number — skip anything that looks like part of a date (2026-08-04, 8/4).
+  const bare = text.match(/(?<![\d/-])(\d+(?:\.\d{1,2})?)(?![\d/-])/);
+  if (bare) {
+    const value = parseFloat(bare[1]);
+    if (!isNaN(value) && value > 0) return { amount: value, span: bare[0] };
+  }
+  return null;
+}
+
+/** "today" / "yesterday" → YYYY-MM-DD. Anything richer is left to the agent. */
+function extractCommandDate(text) {
+  if (/\byesterday\b/i.test(text)) {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return { date: d.toISOString().slice(0, 10), span: text.match(/\byesterday\b/i)[0] };
+  }
+  const iso = text.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+  if (iso) return { date: iso[1], span: iso[0] };
+  if (/\btoday\b/i.test(text)) {
+    return { date: new Date().toISOString().slice(0, 10), span: text.match(/\btoday\b/i)[0] };
+  }
+  return null;
+}
+
+/**
+ * The existing three-part manual form ("Walmart 45.23 Grocery") names its own
+ * category and has its own confirm-first handler. Detected here so the command
+ * parser stands aside rather than racing it.
+ */
+function matchesManualEntry(text) {
+  const m = text.trim().match(/^(.+?)\s+([\d.]+)\s+(\w[\w\s-]*)$/);
+  if (!m) return false;
+  return CATEGORIES.some(c => c.toLowerCase() === m[3].trim().toLowerCase());
+}
+
+/**
+ * Parse a typed expense command into its parts. Any of them may come back null —
+ * the caller decides whether what's missing is worth asking about (§ vendor and
+ * amount are mandatory; everything else has a safe default).
+ */
+export function parseExpenseCommand(text) {
+  const raw = (text || '').trim();
+  const amountMatch = extractCommandAmount(raw);
+  const dateMatch   = extractCommandDate(raw);
+
+  let rest = raw;
+  if (amountMatch) rest = rest.replace(amountMatch.span, ' ');
+  if (dateMatch)   rest = rest.replace(dateMatch.span, ' ');
+
+  const vendor = rest
+    .replace(/[,;:.!?]+/g, ' ')
+    .split(/\s+/)
+    .filter(w => w && !FILLER.test(w))
+    .join(' ')
+    .trim();
+
+  return {
+    vendor: vendor || null,
+    amount: amountMatch ? amountMatch.amount : null,
+    date:   dateMatch ? dateMatch.date : null,
+    explicitDate: Boolean(dateMatch),
+  };
+}
+
+/**
+ * Is this a "log an expense" instruction rather than a question, a bank SMS, or
+ * the three-part manual form?
+ *
+ * Two accepted shapes:
+ *   • an imperative verb plus an amount  — "add walgreens $53.11", "spent 40 at shell"
+ *   • a bare "<vendor> <amount>" pair    — "walgreens 53.11"
+ *
+ * A verb with no amount still counts ("add walgreens"), because the missing
+ * amount is a question worth asking; a bare noun with no amount does not, or
+ * every stray word would become an expense.
+ */
+export function looksLikeExpenseCommand(text) {
+  const raw = (text || '').trim();
+  if (!raw) return false;
+  if (SMS_MARKER.test(raw)) return false;
+  if (looksLikeQuery(raw)) return false;
+  if (matchesManualEntry(raw)) return false;
+
+  const hasVerb   = EXPENSE_VERB.test(raw);
+  const parsed    = parseExpenseCommand(raw);
+  const hasAmount = parsed.amount != null;
+
+  if (hasVerb) return hasAmount || Boolean(parsed.vendor);
+  // No verb: only a tight "<vendor> <amount>" pair, to stay out of conversation.
+  if (!hasAmount || !parsed.vendor) return false;
+  return raw.split(/\s+/).length <= 4;
+}
+
+/* ── Write-first expense add (shared by the regex fast path and the agent) ──── */
+
+/**
+ * Vendor and amount are the mandatory minimum — everything else is derived or
+ * defaulted, then offered back for correction *after* the write.
+ *
+ * Amount and category are what appendExpense actually needs (category selects the
+ * sheet tab), but nobody types a category, so it is derived — and every
+ * derivation keys on the vendor string: smart rules match on it, the Groq prompt
+ * is built from it, and the duplicate matcher requires a vendor match, where
+ * "Unknown" fuzzy-matches every other "Unknown". That is why a missing vendor is
+ * worth one question rather than a default.
+ */
+async function askForMissingField(ctx, field, known) {
+  const { store, userId } = ctx;
+  await store.setJSON(`awaiting_add:${userId}`, {
+    ...known,
+    missing: field,
+    expires: new Date(Date.now() + UNDO_WINDOW_MS).toISOString(),
+  });
+  return ctx.send(field === 'amount'
+    ? `How much at ${known.vendor}?`
+    : `$${known.amount} — where?`);
+}
+
+/** Which derived fields the bot had to guess at, worst-guess first. */
+function missingEnrichFields({ needsConfirm, paymentMethod, explicitDate, category, cardsConfigured }) {
+  const fields = [];
+  if (needsConfirm) fields.push('cat');                       // shakiest value leads
+  if (!paymentMethod && cardsConfigured) fields.push('card');
+  if (!explicitDate) fields.push('date');
+  if (category === 'Travel' || category === 'Holiday') fields.push('booking');
+  return fields;
+}
+
+async function addExpenseFromText(ctx, input) {
+  const { store, userId } = ctx;
+  const { vendor, amount, category = null, card = null, date = null, explicitDate = false } = input;
+
+  let settings = {};
+  try { settings = await getUserSettings(); } catch { /* defaults are fine */ }
+
+  // An explicitly named category is the user's own words — never second-guessed.
+  // Otherwise: smart rules → Groq → 'Misc', with needsConfirm below 0.75.
+  let resolvedCategory = CATEGORIES.find(c => c.toLowerCase() === String(category || '').toLowerCase()) || null;
+  let needsConfirm = false;
+  if (!resolvedCategory) {
+    const decision = await resolveCategory({
+      vendor, amount, extractedCategory: null, categories: CATEGORIES, settings,
+    });
+    resolvedCategory = decision.category;
+    needsConfirm = decision.needsConfirm;
+  }
+
+  const paymentMethod = resolveCard(card, vendor, resolvedCategory, settings);
+  const txDate = date || new Date().toISOString().slice(0, 10);
+
+  // Split the date string rather than new Date(...): 'YYYY-MM-DD' parses as UTC
+  // midnight, which lands in the previous month in US timezones on the 1st.
+  const [yStr, mStr] = txDate.split('-');
+  const year      = parseInt(yStr, 10);
+  const month     = MONTH_NAMES[parseInt(mStr, 10) - 1];
+  const monthName = `${month} ${year}`;
+
+  let sheetId;
+  try {
+    sheetId = await getCurrentMonthSheetId(monthName);
+  } catch (e) {
+    await reportError('SHT-002', e, { flow: 'text-add' });
+    return ctx.send(`Could not find sheet for ${monthName}. Add it from the dashboard first. [SHT-002]`);
+  }
+
+  // Checked but never blocking: write-first means a suspected repeat is reported
+  // with an Undo, not held behind a confirmation.
+  const dups = await findExistingDuplicates(monthName, {
+    store_name: vendor, total_amount: amount, purchase_date: txDate,
+  });
+
+  let result;
+  try {
+    result = await appendExpense({
+      category: resolvedCategory, vendor, amount, txDate, sheetId, monthName,
+      paymentMethod, channel: ctx.channel, bookingMethod: '',
+    });
+  } catch (e) {
+    await reportError('SHT-009', e, { flow: 'text-add' });
+    return ctx.send('Failed to log that to the spreadsheet. Try the dashboard. [SHT-009]');
+  }
+
+  await store.setJSON(`lastlog:${userId}`, {
+    uuid: result.uuid, category: resolvedCategory, vendor, amount, txDate,
+    paymentMethod, bookingMethod: '', sheetId, monthName, year, month,
+    driveFileId: null, driveShareLink: null,
+    loggedAt: new Date().toISOString(),
+  });
+  await store.delete(`awaiting_add:${userId}`).catch(() => {});
+
+  console.log(`bot-core: text-add — ${vendor} $${amount} → ${resolvedCategory} by ${userId}`);
+
+  const fields = missingEnrichFields({
+    needsConfirm, paymentMethod, explicitDate,
+    category: resolvedCategory,
+    cardsConfigured: (settings.cards || []).length > 0,
+  });
+
+  const rewardsLine = paymentMethod
+    ? buildRewardsLine(paymentMethod, resolvedCategory, amount, vendor, getEffectiveRates(settings))
+    : '';
+
+  const lines = [`✅ Logged: ${vendor} · $${amount} (${resolvedCategory})`];
+  if (paymentMethod) lines.push(`Card: ${paymentMethod}`);
+  if (rewardsLine) lines.push(rewardsLine);
+  if (dups.length) lines.push('', buildDuplicateWarning(dups));
+
+  if (fields.length) {
+    await store.setJSON(ENRICH_KEY(userId), {
+      uuid: result.uuid, fields, changes: {},
+      expires: new Date(Date.now() + UNDO_WINDOW_MS).toISOString(),
+    });
+    lines.push('', needsConfirm
+      ? `I guessed the category — worth a look. Anything to fix?`
+      : `Want to fill in what I guessed?`);
+    return ctx.send(lines.join('\n'), kbEnrichMenu(fields));
+  }
+
+  await store.delete(ENRICH_KEY(userId)).catch(() => {});
+  return ctx.send(lines.join('\n'), kbLoggedActions());
+}
+
+/** Entry point for a typed command; asks only when vendor or amount is missing. */
+async function handleExpenseCommand(ctx, text) {
+  const parsed = parseExpenseCommand(text);
+  if (parsed.vendor && parsed.amount != null) return await addExpenseFromText(ctx, parsed);
+  if (parsed.vendor)     return await askForMissingField(ctx, 'amount', parsed);
+  if (parsed.amount != null) return await askForMissingField(ctx, 'vendor', parsed);
+  return null;   // neither — let the router keep going
+}
+
+/** Completes an add that was one field short. */
+async function resumePendingAdd(ctx, text, state) {
+  const { store, userId } = ctx;
+  const value = text.trim();
+
+  if (state.missing === 'amount') {
+    const parsedAmount = extractCommandAmount(value);
+    if (!parsedAmount) {
+      return ctx.send('Send the amount as a number (e.g. 53.11), or CANCEL.');
+    }
+    await store.delete(`awaiting_add:${userId}`);
+    return await addExpenseFromText(ctx, { ...state, amount: parsedAmount.amount });
+  }
+
+  const vendor = value.replace(/[,;:.!?]+/g, ' ').split(/\s+/).filter(w => w && !FILLER.test(w)).join(' ').trim();
+  if (!vendor) return ctx.send('Send the store or vendor name, or CANCEL.');
+  await store.delete(`awaiting_add:${userId}`);
+  return await addExpenseFromText(ctx, { ...state, vendor });
+}
+
 async function findFailedPending(store, blobs, userId) {
   if (!blobs || blobs.length === 0) return null;
   for (const blob of blobs) {
@@ -2059,37 +2371,81 @@ function greetingReply() {
 
 /* ── R10: shared field-edit logic + button-driven edit flows ──────────────── */
 
+/**
+ * Validate one user-supplied field value. Returns { ok, value } with the value
+ * canonicalised (matched category casing, resolved card name), or
+ * { ok: false, error }.
+ *
+ * Pulled out so the pending-receipt, logged-expense and post-write enrichment
+ * flows all reject the same bad input with the same wording, instead of each
+ * growing its own half-copy of these checks.
+ */
+async function validateFieldValue(field, value) {
+  if (field === 'category') {
+    const matched = CATEGORIES.find(c => c.toLowerCase() === value.toLowerCase());
+    if (!matched) return { ok: false, error: `Unknown category. Choose from:\n${CATEGORIES.join(', ')}` };
+    return { ok: true, value: matched };
+  }
+  if (field === 'amount' || field === 'tip') {
+    const num = parseFloat(String(value).replace(/[$,]/g, ''));
+    const label = field === 'tip' ? 'tip' : 'amount';
+    if (isNaN(num) || num <= 0) return { ok: false, error: `Invalid ${label}. Use a positive number (e.g., '${label}: 52.10')` };
+    return { ok: true, value: num };
+  }
+  if (field === 'store') {
+    const name = String(value).trim();
+    if (!name) return { ok: false, error: 'Send a store or vendor name.' };
+    return { ok: true, value: name };
+  }
+  if (field === 'date') {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return { ok: false, error: "Date must be YYYY-MM-DD (e.g., 'date: 2026-05-20')" };
+    return { ok: true, value };
+  }
+  if (field === 'card') {
+    let settings = {};
+    try { settings = await getUserSettings(); } catch { /* none */ }
+    const cards = settings.cards || [];
+    const matched = resolveCardName(value, cards) || cards.find(c => c.toLowerCase() === value.toLowerCase());
+    if (!matched) return { ok: false, error: cards.length ? `Unknown card. Choose from:\n${cards.join(', ')}` : 'No cards configured. Add cards in the dashboard settings first.' };
+    return { ok: true, value: matched };
+  }
+  if (field === 'booking') {
+    const method = String(value).toLowerCase().trim();
+    if (method !== 'portal' && method !== 'direct') return { ok: false, error: "Booking must be 'portal' (8x UR) or 'direct' (4x UR)." };
+    return { ok: true, value: method === 'direct' ? 'direct' : '' };
+  }
+  return { ok: false, error: 'Unknown field.' };
+}
+
 /** Apply a single field edit to a pending receipt's extraction. Returns
  *  { ok } or { ok: false, error }. Shared by typed edits ("amount: X") and the
  *  button flow. Async because `card` needs user settings. */
 async function applyExtractionField(pending, field, value) {
   const ex = pending.extraction;
   if (field === 'category') {
-    const matched = CATEGORIES.find(c => c.toLowerCase() === value.toLowerCase());
-    if (!matched) return { ok: false, error: `Unknown category. Choose from:\n${CATEGORIES.join(', ')}` };
-    ex.reward_category = matched;
+    const res = await validateFieldValue('category', value);
+    if (!res.ok) return res;
+    ex.reward_category = res.value;
   } else if (field === 'amount') {
-    const num = parseFloat(value);
-    if (isNaN(num) || num <= 0) return { ok: false, error: "Invalid amount. Use a positive number (e.g., 'amount: 52.10')" };
-    ex.total_amount = num;
+    const res = await validateFieldValue('amount', value);
+    if (!res.ok) return res;
+    ex.total_amount = res.value;
   } else if (field === 'store') {
     ex.store_name = value;
   } else if (field === 'date') {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return { ok: false, error: "Date must be YYYY-MM-DD (e.g., 'date: 2026-05-20')" };
-    ex.purchase_date = value;
+    const res = await validateFieldValue('date', value);
+    if (!res.ok) return res;
+    ex.purchase_date = res.value;
     pending.year = new Date(value).getFullYear();
     pending.month = new Date(value).toLocaleString('en-US', { month: 'long' });
   } else if (field === 'card') {
-    let settings = {};
-    try { settings = await getUserSettings(); } catch { /* none */ }
-    const cards = settings.cards || [];
-    const matched = resolveCardName(value, cards) || cards.find(c => c.toLowerCase() === value.toLowerCase());
-    if (!matched) return { ok: false, error: cards.length ? `Unknown card. Choose from:\n${cards.join(', ')}` : 'No cards configured. Add cards in the dashboard settings first.' };
-    ex.payment_method = matched;
+    const res = await validateFieldValue('card', value);
+    if (!res.ok) return res;
+    ex.payment_method = res.value;
   } else if (field === 'booking') {
-    const method = value.toLowerCase();
-    if (method !== 'portal' && method !== 'direct') return { ok: false, error: "Booking must be 'portal' (8x UR) or 'direct' (4x UR)." };
-    ex.booking_method = method === 'direct' ? 'direct' : '';
+    const res = await validateFieldValue('booking', value);
+    if (!res.ok) return res;
+    ex.booking_method = res.value;
   } else if (field === 'tip') {
     const num = parseFloat(value);
     if (isNaN(num) || num <= 0) return { ok: false, error: "Invalid tip. Use a positive number (e.g., 'tip: 5.00')" };
@@ -2140,20 +2496,44 @@ async function handleEditCallback(ctx, rest) {
   if (rest === 'last') {
     const lastlog = await store.get(`lastlog:${userId}`, { type: 'json' }).catch(() => null);
     if (!lastlog || !lastlog.uuid) return ctx.send('No recent entry to edit.');
+    const travel = lastlog.category === 'Travel' || lastlog.category === 'Holiday';
     return ctx.send(
       `Edit last entry:\n${lastlog.vendor} · $${lastlog.amount} (${lastlog.category})\n\nWhat do you want to change?`,
-      kbEditLoggedMenu()
+      kbEditLoggedMenu({ booking: travel })
     );
   }
   if (rest === 'lf:cat') return ctx.send('Pick a category:', kbCategoryPicker(CATEGORIES, 'edit:lastcat'));
-  if (rest === 'lf:amt') {
-    await store.setJSON(`awaiting_edit:${userId}`, { scope: 'logged', field: 'amount' });
-    return ctx.send('Send the new amount (e.g. 52.10):');
+  if (rest === 'lf:card') {
+    let settings = {};
+    try { settings = await getUserSettings(); } catch { /* none */ }
+    const cards = settings.cards || [];
+    if (!cards.length) return ctx.send('No cards configured. Add cards in the dashboard settings first.');
+    return ctx.send('Pick a card:', kbCardPicker(cards, 'edit:lastcard'));
+  }
+  if (['lf:amt', 'lf:store', 'lf:date', 'lf:booking'].includes(rest)) {
+    const field = { 'lf:amt': 'amount', 'lf:store': 'store', 'lf:date': 'date', 'lf:booking': 'booking' }[rest];
+    await store.setJSON(`awaiting_edit:${userId}`, { scope: 'logged', field });
+    const prompts = {
+      amount:  'Send the new amount (e.g. 52.10):',
+      store:   'Send the new store/vendor name:',
+      date:    'Send the new date (YYYY-MM-DD):',
+      booking: "Booking method — send 'portal' (8x UR) or 'direct' (4x UR):",
+    };
+    return ctx.send(prompts[field]);
   }
   if (rest.startsWith('lastcat:')) {
     const category = CATEGORIES[parseInt(rest.slice('lastcat:'.length), 10)];
     if (!category) return ctx.send('Unknown category.');
     return await editLoggedExpense(ctx, { category });
+  }
+  if (rest.startsWith('lastcard:')) {
+    const idx = parseInt(rest.slice('lastcard:'.length), 10);
+    if (idx === -1) return await editLoggedExpense(ctx, { paymentMethod: '' });
+    let settings = {};
+    try { settings = await getUserSettings(); } catch { /* none */ }
+    const card = (settings.cards || [])[idx];
+    if (!card) return ctx.send('Unknown card.');
+    return await editLoggedExpense(ctx, { paymentMethod: card });
   }
 
   // ── Pending-receipt edits (operate on the current confirm blob) ──
@@ -2207,19 +2587,137 @@ async function handleEditCallback(ctx, rest) {
   return ctx.send('Unknown edit action.');
 }
 
+/* ── Post-write enrichment (typed adds) ──────────────────────────────────────
+   The row is already in the sheet, so nothing here blocks. Answers are staged in
+   the enrich blob and written in ONE delete+re-append when the user is done —
+   applying each field as it arrives would cost a full Sheets round trip and a
+   fresh UUID per answer. */
+
+async function getEnrichState(ctx) {
+  const { store, userId } = ctx;
+  const state = await store.get(ENRICH_KEY(userId), { type: 'json' }).catch(() => null);
+  if (!state) return null;
+  if (new Date(state.expires) <= new Date()) {
+    await store.delete(ENRICH_KEY(userId)).catch(() => {});
+    return null;
+  }
+  return state;
+}
+
+const ENRICH_FIELD_LABEL = { cat: 'Category', card: 'Card', date: 'Date', booking: 'Booking' };
+
+/** Re-renders the enrich prompt with what's been staged and what's still open. */
+async function renderEnrich(ctx, state, prefixLine) {
+  const { store, userId } = ctx;
+  await store.setJSON(ENRICH_KEY(userId), state);
+
+  const staged = Object.entries(state.changes || {});
+  const lines = [];
+  if (prefixLine) lines.push(prefixLine);
+  if (staged.length) {
+    lines.push('', 'Staged (not saved yet):');
+    for (const [k, v] of staged) lines.push(`• ${ENRICH_FIELD_LABEL[k] || k}: ${v === '' ? 'None' : v}`);
+  }
+  lines.push('', state.fields.length
+    ? 'Anything else? Tap 👍 All good to save.'
+    : 'Tap 👍 All good to save.');
+  return ctx.send(lines.join('\n'), kbEnrichMenu(state.fields));
+}
+
+/** Marks a field answered and stages its value. */
+function stageEnrich(state, field, value) {
+  state.changes = { ...(state.changes || {}), [field]: value };
+  state.fields  = (state.fields || []).filter(f => f !== field);
+  return state;
+}
+
+async function handleEnrichCallback(ctx, rest) {
+  const { store, userId } = ctx;
+  const state = await getEnrichState(ctx);
+  if (!state) return ctx.send('Nothing left to fill in.');
+
+  if (rest === 'cat')  return ctx.send('Pick a category:', kbCategoryPicker(CATEGORIES, 'enr:setcat'));
+  if (rest === 'card') {
+    let settings = {};
+    try { settings = await getUserSettings(); } catch { /* none */ }
+    const cards = settings.cards || [];
+    if (!cards.length) return ctx.send('No cards configured. Add cards in the dashboard settings first.');
+    return ctx.send('Pick a card:', kbCardPicker(cards, 'enr:setcard'));
+  }
+  if (rest === 'date') {
+    await store.setJSON(`awaiting_edit:${userId}`, { scope: 'enrich', field: 'date' });
+    return ctx.send('Send the date (YYYY-MM-DD):');
+  }
+  if (rest === 'booking') {
+    await store.setJSON(`awaiting_edit:${userId}`, { scope: 'enrich', field: 'booking' });
+    return ctx.send("Booking method — send 'portal' (8x UR) or 'direct' (4x UR):");
+  }
+
+  if (rest.startsWith('setcat:')) {
+    const category = CATEGORIES[parseInt(rest.slice('setcat:'.length), 10)];
+    if (!category) return ctx.send('Unknown category.');
+    return await renderEnrich(ctx, stageEnrich(state, 'cat', category), `🏷 Category → ${category}`);
+  }
+  if (rest.startsWith('setcard:')) {
+    const idx = parseInt(rest.slice('setcard:'.length), 10);
+    if (idx === -1) return await renderEnrich(ctx, stageEnrich(state, 'card', ''), '💳 Card → None');
+    let settings = {};
+    try { settings = await getUserSettings(); } catch { /* none */ }
+    const card = (settings.cards || [])[idx];
+    if (!card) return ctx.send('Unknown card.');
+    return await renderEnrich(ctx, stageEnrich(state, 'card', card), `💳 Card → ${card}`);
+  }
+
+  if (rest === 'done') {
+    await store.delete(ENRICH_KEY(userId));
+    const changes = state.changes || {};
+    const diff = {};
+    if (changes.cat !== undefined)     diff.category      = changes.cat;
+    if (changes.card !== undefined)    diff.paymentMethod = changes.card;
+    if (changes.date !== undefined)    diff.txDate        = changes.date;
+    if (changes.booking !== undefined) diff.bookingMethod = changes.booking;
+    if (!Object.keys(diff).length) return ctx.send('👍 Left as logged.', kbLoggedActions());
+    return await editLoggedExpense(ctx, diff);
+  }
+
+  return ctx.send('Unknown action.');
+}
+
 /** Applies a typed value captured for a button-driven field edit. */
 async function applyAwaitingEdit(ctx, text, state) {
   const { store, userId } = ctx;
   await store.delete(`awaiting_edit:${userId}`);
   const value = text.trim();
 
-  if (state.scope === 'logged') {
-    const num = parseFloat(value.replace(/[$,]/g, ''));
-    if (isNaN(num) || num <= 0) {
-      await store.setJSON(`awaiting_edit:${userId}`, state);   // keep waiting
-      return ctx.send('Invalid amount. Send a positive number (e.g. 52.10), or CANCEL.');
+  // ── Staged answer for a post-write enrichment question (no write yet) ──
+  if (state.scope === 'enrich') {
+    const enrich = await getEnrichState(ctx);
+    if (!enrich) return ctx.send('Nothing left to fill in.');
+    const res = await validateFieldValue(state.field, value);
+    if (!res.ok) {
+      await store.setJSON(`awaiting_edit:${userId}`, state);   // re-prompt
+      return ctx.send(`${res.error}\n(or CANCEL)`);
     }
-    return await editLoggedExpense(ctx, { amount: num });
+    const key = state.field === 'date' ? 'date' : 'booking';
+    const shown = key === 'booking' ? (res.value || 'portal') : res.value;
+    return await renderEnrich(ctx, stageEnrich(enrich, key, res.value),
+      `${key === 'date' ? '📅 Date' : '🧾 Booking'} → ${shown}`);
+  }
+
+  if (state.scope === 'logged') {
+    const res = await validateFieldValue(state.field, value);
+    if (!res.ok) {
+      await store.setJSON(`awaiting_edit:${userId}`, state);   // keep waiting
+      return ctx.send(`${res.error}\n(or CANCEL)`);
+    }
+    const diff = {
+      amount:  { amount: res.value },
+      store:   { vendor: res.value },
+      date:    { txDate: res.value },
+      booking: { bookingMethod: res.value },
+    }[state.field];
+    if (!diff) return ctx.send('Unknown field.');
+    return await editLoggedExpense(ctx, diff);
   }
 
   const current = await getCurrentPending(store, userId);
@@ -2241,8 +2739,30 @@ async function editLoggedExpense(ctx, changes) {
   const lastlog = await store.get(`lastlog:${userId}`, { type: 'json' }).catch(() => null);
   if (!lastlog || !lastlog.uuid) return ctx.send('No recent entry to edit.');
 
-  const newCategory = changes.category ?? lastlog.category;
-  const newAmount   = changes.amount ?? lastlog.amount;
+  // `??` rather than `||` throughout: clearing the card is `paymentMethod: ''`,
+  // which is a real edit and must not fall back to the old value.
+  const next = {
+    category:      changes.category      ?? lastlog.category,
+    amount:        changes.amount        ?? lastlog.amount,
+    vendor:        changes.vendor        ?? lastlog.vendor,
+    txDate:        changes.txDate        ?? lastlog.txDate,
+    paymentMethod: changes.paymentMethod ?? lastlog.paymentMethod ?? '',
+    bookingMethod: changes.bookingMethod ?? lastlog.bookingMethod ?? '',
+  };
+
+  // A date that crosses a month boundary belongs in a different month's sheet,
+  // and this delete+re-append only ever touches lastlog.sheetId. Refuse rather
+  // than silently write the row into the wrong month.
+  if (changes.txDate) {
+    const [y, m] = String(changes.txDate).split('-');
+    const targetMonth = `${MONTH_NAMES[parseInt(m, 10) - 1]} ${parseInt(y, 10)}`;
+    if (targetMonth !== lastlog.monthName) {
+      return ctx.send(
+        `That date is in ${targetMonth}, but this entry is on the ${lastlog.monthName} sheet.\n` +
+        `Moving it between months has to be done from the dashboard.`
+      );
+    }
+  }
 
   try {
     await deleteExpenseByUUID({ category: lastlog.category, uuid: lastlog.uuid, sheetId: lastlog.sheetId });
@@ -2254,9 +2774,9 @@ async function editLoggedExpense(ctx, changes) {
   let result;
   try {
     result = await appendExpense({
-      category: newCategory, vendor: lastlog.vendor, amount: newAmount,
-      txDate: lastlog.txDate, sheetId: lastlog.sheetId, monthName: lastlog.monthName,
-      paymentMethod: lastlog.paymentMethod || '', bookingMethod: lastlog.bookingMethod || '',
+      category: next.category, vendor: next.vendor, amount: next.amount,
+      txDate: next.txDate, sheetId: lastlog.sheetId, monthName: lastlog.monthName,
+      paymentMethod: next.paymentMethod, bookingMethod: next.bookingMethod,
       channel: ctx.channel,
     });
   } catch (e) {
@@ -2265,12 +2785,15 @@ async function editLoggedExpense(ctx, changes) {
   }
 
   await store.setJSON(`lastlog:${userId}`, {
-    ...lastlog, uuid: result.uuid, category: newCategory, amount: newAmount,
-    loggedAt: new Date().toISOString(),
+    ...lastlog, ...next, uuid: result.uuid, loggedAt: new Date().toISOString(),
   });
 
-  console.log(`bot-core: EDIT — ${lastlog.vendor} → ${newCategory} $${newAmount} by ${userId}`);
-  return ctx.send(`✏️ Updated: ${lastlog.vendor} · $${newAmount} (${newCategory})`, kbLoggedActions());
+  console.log(`bot-core: EDIT — ${next.vendor} → ${next.category} $${next.amount} by ${userId}`);
+  const cardLine = next.paymentMethod ? `\nCard: ${next.paymentMethod}` : '';
+  return ctx.send(
+    `✏️ Updated: ${next.vendor} · $${next.amount} (${next.category})${cardLine}`,
+    kbLoggedActions()
+  );
 }
 
 /* ── R8: conversational agent fallback (Haiku, deterministic-first everywhere) ─ */
@@ -2282,7 +2805,7 @@ async function runBotAgent(ctx, text) {
   const tools = [
     { name: 'get_month_overview', description: "Get this month's salary, total spent, and per-category budget/spent/remaining.", input_schema: { type: 'object', properties: {} } },
     { name: 'get_recent_expenses', description: 'List the most recent logged expenses.', input_schema: { type: 'object', properties: { count: { type: 'integer', description: 'How many (max 20)' } } } },
-    { name: 'log_expense', description: 'Propose logging a new expense; the user is shown a confirmation to approve.', input_schema: { type: 'object', properties: { vendor: { type: 'string' }, amount: { type: 'number' }, category: { type: 'string', enum: CATEGORIES }, card: { type: 'string' } }, required: ['vendor', 'amount', 'category'] } },
+    { name: 'log_expense', description: 'Log a new expense straight to the sheet. Vendor and amount are required; omit category unless the user named one, and omit date unless they said when.', input_schema: { type: 'object', properties: { vendor: { type: 'string' }, amount: { type: 'number' }, category: { type: 'string', enum: CATEGORIES }, card: { type: 'string' }, date: { type: 'string', description: 'YYYY-MM-DD, only if the user stated a date' } }, required: ['vendor', 'amount'] } },
     { name: 'set_salary', description: "Set/update this month's salary (asks the user to confirm if one already exists).", input_schema: { type: 'object', properties: { amount: { type: 'number' } }, required: ['amount'] } },
     { name: 'set_budget', description: 'Set/update a category budget for this month.', input_schema: { type: 'object', properties: { category: { type: 'string' }, amount: { type: 'number' } }, required: ['category', 'amount'] } },
     { name: 'add_category', description: 'Add a new budget category.', input_schema: { type: 'object', properties: { name: { type: 'string' }, amount: { type: 'number' }, type: { type: 'string', enum: ['need', 'want', 'saving'] } }, required: ['name', 'amount'] } },
@@ -2305,23 +2828,22 @@ async function runBotAgent(ctx, text) {
       return recent.map(r => `${r.txDate || ''} ${r.vendor || 'Unknown'} $${(r.amount || 0).toFixed(2)} (${r.category})`).join('\n');
     }
     if (name === 'log_expense') {
-      const category = CATEGORIES.find(c => c.toLowerCase() === String(input.category || '').toLowerCase()) || 'Misc';
       const amount = parseFloat(input.amount);
       if (isNaN(amount) || amount <= 0) return 'Invalid amount.';
-      const now = new Date();
-      let cardName = '';
-      if (input.card) { try { const s = await getUserSettings(); cardName = resolveCardName(input.card, s.cards || []) || ''; } catch { /* none */ } }
-      const receiptId = crypto.randomUUID();
-      await store.setJSON(`confirm:${userId}:${receiptId}`, {
-        id: receiptId, phone: userId,
-        extraction: { store_name: String(input.vendor || 'Unknown'), purchase_date: now.toISOString().slice(0, 10), total_amount: amount, tax_amount: null, currency: 'USD', items: [], reward_category: category, payment_method: cardName },
-        year: now.getFullYear(), month: now.toLocaleString('en-US', { month: 'long' }), status: 'awaiting_confirmation',
+      const vendor = String(input.vendor || '').trim();
+      if (!vendor) return 'Vendor is required — ask the user where the money went.';
+      // Same write-first path as the typed fast path: category is resolved
+      // server-side (smart rules → Groq) unless the user named one, and the
+      // enrichment menu handles whatever was guessed.
+      const explicitDate = /^\d{4}-\d{2}-\d{2}$/.test(String(input.date || ''));
+      await addExpenseFromText(ctx, {
+        vendor, amount,
+        category: input.category || null,
+        card: input.card || null,
+        date: explicitDate ? input.date : null,
+        explicitDate,
       });
-      const lines = ['Got it:', `Store: ${input.vendor}`, `Category: ${category}`, `Total: $${amount}`];
-      if (cardName) lines.push(`Card: ${cardName}`);
-      lines.push('', 'Reply YES to log, or CANCEL');
-      await ctx.send(lines.join('\n'), kbConfirmReceipt());
-      return { result: 'Confirmation shown to user.', userNotified: true };
+      return { result: 'Expense logged and shown to the user.', userNotified: true };
     }
     if (name === 'set_salary')  { await handleSetSalary(ctx, String(input.amount)); return { result: 'Prompted user.', userNotified: true }; }
     if (name === 'set_budget')  { await handleSetBudget(ctx, String(input.category), String(input.amount)); return { result: 'Prompted user.', userNotified: true }; }
@@ -2334,7 +2856,9 @@ async function runBotAgent(ctx, text) {
     'You are Fundient, a friendly Telegram assistant for a personal/household budget tracker.',
     'Be concise and warm. Use tools to read data and to take actions — never invent numbers.',
     `Expense categories: ${CATEGORIES.join(', ')}.`,
-    'For any money-changing action (log_expense, set_salary, set_budget, add_category, delete_last) the tool already shows the user a confirmation; after calling one, reply with at most a short one-line acknowledgement (or nothing).',
+    'log_expense writes straight to the sheet and shows the user the result with an Undo button — do not ask them to confirm first. Vendor and amount are required; if either is missing from what they said, ask for just that one thing instead of guessing.',
+    'Omit the category unless the user named one explicitly — the server resolves it from their own rules. Omit the date unless they said when.',
+    'For the other money-changing actions (set_salary, set_budget, add_category, delete_last) the tool shows a confirmation; after calling one, reply with at most a short one-line acknowledgement (or nothing).',
     'For questions, answer directly using get_month_overview / get_recent_expenses.',
   ].join('\n');
 

@@ -241,15 +241,57 @@ export function kbLoggedActions() {
   ]];
 }
 
-/** Field picker for an already-logged expense (category / amount only). */
-export function kbEditLoggedMenu() {
-  return [
+/**
+ * Field picker for an already-logged expense.
+ *
+ * Booking method only exists on the Travel/Holiday sheets (col G), so its button
+ * is opt-in rather than always shown — offering it elsewhere would advertise a
+ * field the row cannot store.
+ */
+export function kbEditLoggedMenu({ booking = false } = {}) {
+  const rows = [
     [
       { text: 'Category', callback_data: 'edit:lf:cat' },
       { text: 'Amount',   callback_data: 'edit:lf:amt' },
     ],
-    [{ text: '❌ Cancel', callback_data: 'CANCEL' }],
+    [
+      { text: 'Store', callback_data: 'edit:lf:store' },
+      { text: 'Date',  callback_data: 'edit:lf:date' },
+    ],
+    [{ text: 'Card', callback_data: 'edit:lf:card' }],
   ];
+  if (booking) rows[2].push({ text: 'Booking', callback_data: 'edit:lf:booking' });
+  rows.push([{ text: '❌ Cancel', callback_data: 'CANCEL' }]);
+  return rows;
+}
+
+/**
+ * Post-write enrichment menu: offered *after* an expense has already been logged
+ * from a typed message, listing only the fields that were guessed or defaulted.
+ *
+ * `fields` is an ordered subset of ['cat','card','date','booking'] — the caller
+ * decides what counts as missing, and puts a low-confidence category first so the
+ * shakiest value is the one under the user's thumb. An empty list means the bot
+ * got everything right and no menu is shown at all.
+ *
+ * Undo sits here rather than in a separate message because "cancel" on a
+ * write-first flow means reversing the row, not dismissing the prompt.
+ */
+export function kbEnrichMenu(fields = []) {
+  const LABELS = {
+    cat:     { text: '🏷 Category', callback_data: 'enr:cat' },
+    card:    { text: '💳 Card',     callback_data: 'enr:card' },
+    date:    { text: '📅 Date',     callback_data: 'enr:date' },
+    booking: { text: '🧾 Booking',  callback_data: 'enr:booking' },
+  };
+  const buttons = fields.map(f => LABELS[f]).filter(Boolean);
+  const rows = [];
+  for (let i = 0; i < buttons.length; i += 2) rows.push(buttons.slice(i, i + 2));
+  rows.push([
+    { text: '👍 All good', callback_data: 'enr:done' },
+    { text: '↩️ Undo',      callback_data: 'UNDO' },
+  ]);
+  return rows;
 }
 
 /**
