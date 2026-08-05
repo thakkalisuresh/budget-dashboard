@@ -540,3 +540,8 @@ export async function extractTransactionText(text) {
 }
 
 export { CATEGORIES };
+
+/* Exported for scripts/eval-vision.mjs so an offline provider comparison runs the
+ * EXACT prompts production uses. An eval against a lookalike prompt measures the
+ * lookalike, not the bot. Not used by any deployed code path. */
+export const __evalInternals = { SYSTEM_PROMPT, buildUserPrompt, buildTextPrompt, parseJSON };
