@@ -3,7 +3,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.stubEnv('WALLET_WEBHOOK_SECRET', 'test-wallet-secret');
 
 // Shared mock state (hoisted so the vi.mock factories can close over it).
-const { extractMock, appendMock, sheetIdMock, webpushSend, getSettingsMock, telegramSend, splitStore, ctl, recentMock } = vi.hoisted(() => ({
+const { extractMock, appendMock, sheetIdMock, webpushSend, getSettingsMock, telegramSend, splitStore, ctl, recentMock, reportErrorMock } = vi.hoisted(() => ({
+  reportErrorMock: vi.fn(async () => {}),
   recentMock: vi.fn(async () => []),
   extractMock: vi.fn(),
   appendMock: vi.fn(),
@@ -41,6 +42,10 @@ vi.mock('../../functions/lib/_sheets.mjs', () => ({
   getUserSettingsByEmail: (...args) => getSettingsMock(...args),
 }));
 vi.mock('web-push', () => ({ default: { setVapidDetails: vi.fn(), sendNotification: webpushSend } }));
+// Mocked so the validation tests can assert a rejected charge is actually
+// reported. The real reportError writes to Firestore and Telegram-alerts on
+// fatal codes; neither belongs in a unit test.
+vi.mock('../../functions/lib/_error-log.mjs', () => ({ reportError: reportErrorMock }));
 // The wallet split path builds a bot store + sends Telegram; stub both so the
 // import chain doesn't pull in firebase-admin and no real network calls fire.
 vi.mock('../../functions/lib/bot-store.mjs', () => ({ createBotStore: () => splitStore }));
@@ -104,6 +109,7 @@ beforeEach(() => {
   getSettingsMock.mockReset().mockResolvedValue({});
   telegramSend.mockReset().mockResolvedValue({ ok: true });
   recentMock.mockReset().mockResolvedValue([]);
+  reportErrorMock.mockReset().mockResolvedValue(undefined);
   splitStore.data.clear();
   ctl.pushDoc = null;
   ctl.deleted = false;
@@ -166,6 +172,39 @@ describe('wallet-webhook — validation', () => {
     const res = await call(req({ body: { ...validBody, email: 'not-an-email' } }));
     expect(res.status).toBe(400);
     expect(res.json.error).toMatch(/email/i);
+  });
+
+  // These three sites returned a bare 400 and reported nothing, so a charge the
+  // automation failed to describe was invisible: no alert, no digest, no row.
+  // WAL-001 is severity 'fatal', so reporting it also alerts immediately.
+  it.each([
+    ['merchant', { merchant: undefined }],
+    ['amount',   { amount: 'abc' }],
+    ['email',    { email: 'not-an-email' }],
+  ])('reports WAL-001 when %s is rejected', async (field, override) => {
+    await call(req({ body: { ...validBody, ...override } }));
+    expect(reportErrorMock).toHaveBeenCalledTimes(1);
+    const [code, error, context] = reportErrorMock.mock.calls[0];
+    expect(code).toBe('WAL-001');
+    expect(error.message).toMatch(new RegExp(field, 'i'));
+    expect(context.field).toBe(field);
+  });
+
+  // The Android automation posts raw notification text; a Samsung Wallet promo
+  // reaches this path with nothing parseable in it. fromRawText is what tells
+  // "the parser could not read a real notification" apart from "the automation
+  // is sending the wrong shape", which have different fixes.
+  it('flags a rejection that came from the raw-text path', async () => {
+    extractMock.mockResolvedValue({ ok: true, data: {} });
+    await call(req({ body: { email: validBody.email, text: 'Samsung Wallet is running' } }));
+    const [, , context] = reportErrorMock.mock.calls[0];
+    expect(context.fromRawText).toBe(true);
+    expect(context.textLength).toBe('Samsung Wallet is running'.length);
+  });
+
+  it('does not report WAL-001 on a valid charge', async () => {
+    await call(req({ body: validBody }));
+    expect(reportErrorMock).not.toHaveBeenCalledWith('WAL-001', expect.anything(), expect.anything());
   });
 
   it('resolves current-month sheet when sheetId is omitted (200)', async () => {

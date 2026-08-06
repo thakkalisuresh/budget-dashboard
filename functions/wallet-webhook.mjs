@@ -103,16 +103,35 @@ export const walletWebhook = onRequest(
     // Transaction trigger). Strip everything except digits, dot and minus before parsing.
     const amount = parseFloat(String(amountRaw ?? '').replace(/[^\d.-]/g, ''));
 
+    // A rejected request is a charge that never got logged, so it belongs in the
+    // digest exactly like WAL-002 below. These three sites returned a bare 400
+    // and reported nothing, which was survivable while iOS Shortcuts was the
+    // only client — it sends structured fields that rarely fail validation. The
+    // Android automation posts raw notification text to an LLM parser, so a
+    // rejection here is now a live failure mode, and an unreported one is
+    // invisible: no alert, no digest entry, and the charge simply absent.
+    const reject = async (field) => {
+      const error = `Missing or invalid ${field}`;
+      // fromRawText separates "the automation sent the wrong shape" from "the
+      // parser could not read a real notification" — different fixes entirely.
+      await reportError('WAL-001', new Error(error), {
+        field,
+        fromRawText: Boolean(rawText),
+        textLength: rawText.length,
+      });
+      res.status(400).json({ ok: false, code: 'WAL-001', error });
+    };
+
     if (!merchant || typeof merchant !== 'string') {
-      res.status(400).json({ ok: false, code: 'WAL-001', error: 'Missing or invalid merchant' });
+      await reject('merchant');
       return;
     }
     if (isNaN(amount) || amount <= 0) {
-      res.status(400).json({ ok: false, code: 'WAL-001', error: 'Missing or invalid amount' });
+      await reject('amount');
       return;
     }
     if (!email || !email.includes('@')) {
-      res.status(400).json({ ok: false, code: 'WAL-001', error: 'Missing or invalid email' });
+      await reject('email');
       return;
     }
     const monthName = new Date(txDate + 'T00:00:00').toLocaleString('en-US', {
