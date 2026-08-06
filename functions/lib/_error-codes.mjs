@@ -327,6 +327,25 @@ export const ERROR_CODES = {
     fix: 'The pending record is kept deliberately so tapping again retries. Do not clear it.',
   },
 
+  'BOT-009': {
+    title: 'Batch undo removed only some rows',
+    severity: 'fatal',
+    cause: 'Undo all N on a multi-expense message failed partway, so some rows are gone and others remain. The reply reports the real count, but the survivors are still counted in the budget.',
+    fix: 'Delete the leftovers from the dashboard. The uuids are in the log line next to this code.',
+  },
+  'BOT-010': {
+    title: 'Learned category rule could not be saved',
+    severity: 'degraded',
+    cause: 'The user accepted "always file this vendor here" but the smart rule could not be written to UserSettings.',
+    fix: 'Add the rule by hand in Settings → Smart Rules. Nothing else is affected — the expense itself was already logged and corrected.',
+  },
+  'BOT-011': {
+    title: 'Recent-expense lookup failed',
+    severity: 'degraded',
+    cause: 'The one read that backs duplicate detection, card inference and the amount-sanity check returned nothing. The expense is still written, but silently without those checks.',
+    fix: 'Usually a transient Sheets read failure. Repeated occurrences mean duplicates are going undetected — check SHT-001 alongside.',
+  },
+
   'BOT-008': {
     title: 'Category move left a duplicate',
     severity: 'fatal',

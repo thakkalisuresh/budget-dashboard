@@ -202,6 +202,34 @@ export function kbEditMenu() {
   ];
 }
 
+/**
+ * Offer to remember a repeated category correction as a smart rule.
+ * "Not again" mutes the vendor rather than just declining once, so the bot cannot
+ * nag about a vendor the user has deliberately kept mixed.
+ */
+export function kbLearnOffer() {
+  return [[
+    { text: '✅ Yes, always',  callback_data: 'lrn:yes' },
+    { text: 'No',             callback_data: 'lrn:no' },
+    { text: '🔕 Not again',   callback_data: 'lrn:never' },
+  ]];
+}
+
+/**
+ * Generic one-question chooser, two buttons per row.
+ *
+ * Used by the multi-expense discrepancy prompts, where the options differ per
+ * question ("Just Shell" / "Split evenly" / "Enter each") and so cannot come from
+ * a fixed keyboard. `data` must stay inside Telegram's 64-byte callback limit.
+ */
+export function kbMultiChoice(options = []) {
+  const rows = [];
+  for (let i = 0; i < options.length; i += 2) {
+    rows.push(options.slice(i, i + 2).map(o => ({ text: o.text, callback_data: o.data })));
+  }
+  return rows;
+}
+
 /** Category picker. `prefix` is e.g. 'edit:setcat' (pending) or 'edit:lastcat' (logged). */
 export function kbCategoryPicker(categories, prefix) {
   const rows = [];
@@ -241,15 +269,57 @@ export function kbLoggedActions() {
   ]];
 }
 
-/** Field picker for an already-logged expense (category / amount only). */
-export function kbEditLoggedMenu() {
-  return [
+/**
+ * Field picker for an already-logged expense.
+ *
+ * Booking method only exists on the Travel/Holiday sheets (col G), so its button
+ * is opt-in rather than always shown — offering it elsewhere would advertise a
+ * field the row cannot store.
+ */
+export function kbEditLoggedMenu({ booking = false } = {}) {
+  const rows = [
     [
       { text: 'Category', callback_data: 'edit:lf:cat' },
       { text: 'Amount',   callback_data: 'edit:lf:amt' },
     ],
-    [{ text: '❌ Cancel', callback_data: 'CANCEL' }],
+    [
+      { text: 'Store', callback_data: 'edit:lf:store' },
+      { text: 'Date',  callback_data: 'edit:lf:date' },
+    ],
+    [{ text: 'Card', callback_data: 'edit:lf:card' }],
   ];
+  if (booking) rows[2].push({ text: 'Booking', callback_data: 'edit:lf:booking' });
+  rows.push([{ text: '❌ Cancel', callback_data: 'CANCEL' }]);
+  return rows;
+}
+
+/**
+ * Post-write enrichment menu: offered *after* an expense has already been logged
+ * from a typed message, listing only the fields that were guessed or defaulted.
+ *
+ * `fields` is an ordered subset of ['cat','card','date','booking'] — the caller
+ * decides what counts as missing, and puts a low-confidence category first so the
+ * shakiest value is the one under the user's thumb. An empty list means the bot
+ * got everything right and no menu is shown at all.
+ *
+ * Undo sits here rather than in a separate message because "cancel" on a
+ * write-first flow means reversing the row, not dismissing the prompt.
+ */
+export function kbEnrichMenu(fields = []) {
+  const LABELS = {
+    cat:     { text: '🏷 Category', callback_data: 'enr:cat' },
+    card:    { text: '💳 Card',     callback_data: 'enr:card' },
+    date:    { text: '📅 Date',     callback_data: 'enr:date' },
+    booking: { text: '🧾 Booking',  callback_data: 'enr:booking' },
+  };
+  const buttons = fields.map(f => LABELS[f]).filter(Boolean);
+  const rows = [];
+  for (let i = 0; i < buttons.length; i += 2) rows.push(buttons.slice(i, i + 2));
+  rows.push([
+    { text: '👍 All good', callback_data: 'enr:done' },
+    { text: '↩️ Undo',      callback_data: 'UNDO' },
+  ]);
+  return rows;
 }
 
 /**

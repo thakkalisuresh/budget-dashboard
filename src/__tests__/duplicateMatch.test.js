@@ -181,3 +181,41 @@ describe('frontend/backend mirror parity', () => {
     }
   });
 });
+
+/*
+ * Sheets serial dates.
+ *
+ * getRecentExpenses reads with UNFORMATTED_VALUE, so txDate arrives as a serial
+ * number (46234), not '2026-07-24'. Date.parse('46234') does NOT return NaN —
+ * it returns the year 46234. So parseRowDate produced a non-null date 44,000
+ * years in the future, isSameTransaction applied the ±3-day filter instead of
+ * skipping it, and every duplicate comparison against a row with a txDate
+ * failed. The whole duplicate feature was inert on live data.
+ */
+describe('Sheets serial dates', () => {
+  it('reads a serial as the date it represents', () => {
+    // 46234 = 2026-07-31 in Sheets' 1899-12-30 epoch. Confirmed against a real
+    // History row whose timestamp was 2026-07-31 and whose txDate was 46234.
+    const ms = parseRowDate(46234);
+    expect(new Date(ms).toISOString().slice(0, 10)).toBe('2026-07-31');
+  });
+
+  it('matches a serial-dated row against an ISO-dated candidate', () => {
+    expect(isSameTransaction(
+      { vendor: 'WINGSTOP', amount: 16.48, date: 46234 },
+      { vendor: 'Wingstop', amount: 16.48, date: '2026-07-31' },
+    )).toBe(true);
+  });
+
+  it('still respects the window when both sides are serials', () => {
+    expect(isSameTransaction(
+      { vendor: 'Safeway', amount: 4.19, date: 46234 },
+      { vendor: 'Safeway', amount: 4.19, date: '2026-08-24' },
+    )).toBe(false);
+  });
+
+  it('does not mistake a plain number for a date', () => {
+    expect(parseRowDate(42)).toBeNull();
+    expect(parseRowDate(999999)).toBeNull();
+  });
+});

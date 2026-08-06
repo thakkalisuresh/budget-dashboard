@@ -667,6 +667,55 @@ export async function createMonth({ monthName, salary, budgetChanges }) {
   return { sheetId: newSheetId };
 }
 
+/**
+ * Persist a learned "vendor → category" smart rule.
+ *
+ * Writes into the same `settings.smartRules` array the Settings UI edits, so a
+ * rule the bot learned is managed, renamed or deleted exactly like one typed by
+ * hand — no second store, no new surface to maintain.
+ *
+ * Returns 'added', 'exists' (a rule already covered the vendor — benign), or
+ * 'failed'. The three are kept apart because only 'failed' is worth reporting:
+ * collapsing them into a boolean would either hide a real loss or cry wolf on a
+ * no-op. Never throws — failing to learn must not break the correction the user
+ * actually asked for.
+ */
+export async function addSmartRule(pattern, category) {
+  if (!TEMPLATE_ID || ALLOWED_EMAILS.length === 0) return 'failed';
+  const clean = String(pattern || '').trim();
+  if (!clean || !category) return 'failed';
+
+  try {
+    const range = encodeURIComponent("'UserSettings'!A:B");
+    const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
+    const rows = data.values || [];
+
+    const rowIndex = rows.findIndex(r => r[0] === ALLOWED_EMAILS[0]);
+    if (rowIndex < 0) return 'failed';
+
+    const settings = JSON.parse(rows[rowIndex][1] || '{}');
+    const rules = settings.smartRules || [];
+    if (rules.some(r => r.pattern?.toLowerCase().trim() === clean.toLowerCase())) return 'exists';
+
+    rules.push({ id: `learned-${Date.now()}`, pattern: clean, category });
+    settings.smartRules = rules;
+
+    const writeRange = encodeURIComponent(`'UserSettings'!B${rowIndex + 1}`);
+    await sheetsRequest(TEMPLATE_ID, `/values/${writeRange}?valueInputOption=RAW`, {
+      method: 'PUT',
+      body: JSON.stringify({ values: [[JSON.stringify(settings)]] }),
+    });
+
+    // The settings read is cached for the bot's hot path; without this the rule
+    // would not take effect until the TTL expired.
+    _settingsCache = null;
+    return 'added';
+  } catch (e) {
+    console.warn('addSmartRule failed (non-fatal):', e.message);
+    return 'failed';
+  }
+}
+
 async function addCategoryToUserSettings(categoryName) {
   if (!TEMPLATE_ID || ALLOWED_EMAILS.length === 0) return;
   const userId = ALLOWED_EMAILS[0];

@@ -35,6 +35,11 @@ export function fuzzyNamesMatch(a, b) {
 }
 
 /** Parse a sheet date to epoch ms, or null if it isn't a date we understand. */
+/** Sheets' epoch is 1899-12-30; 25569 is the serial for 1970-01-01. */
+const SHEETS_EPOCH_OFFSET_DAYS = 25569;
+const MIN_SHEET_SERIAL = 20000;   // ~1954
+const MAX_SHEET_SERIAL = 80000;   // ~2119
+
 export function parseRowDate(value) {
   if (!value) return null;
   const s = String(value).trim();
@@ -44,6 +49,21 @@ export function parseRowDate(value) {
     const ms = Date.parse(`${iso[1]}-${iso[2]}-${iso[3]}T00:00:00Z`);
     return Number.isNaN(ms) ? null : ms;
   }
+
+  // Sheets returns dates as SERIAL NUMBERS when read with UNFORMATTED_VALUE,
+  // which is exactly how getRecentExpenses reads them. Date.parse('46234')
+  // does not fail — it yields the year 46234, a date 44,000 years out. That is
+  // not null, so isSameTransaction does not skip the date filter; it applies it
+  // and every comparison fails the ±3-day window. Duplicate detection therefore
+  // matched nothing at all for any row carrying a txDate.
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const serial = Number(s);
+    if (serial >= MIN_SHEET_SERIAL && serial <= MAX_SHEET_SERIAL) {
+      return Math.round((serial - SHEETS_EPOCH_OFFSET_DAYS) * 86400000);
+    }
+    return null;   // a bare number outside the plausible band is not a date
+  }
+
   const ms = Date.parse(s);
   return Number.isNaN(ms) ? null : ms;
 }
