@@ -78,7 +78,11 @@ function makeCtx() {
     userId: USER,
     channel: 'telegram',
     sent,
-    send: (text, keyboard) => { sent.push({ text, keyboard }); return Promise.resolve({ ok: true }); },
+    // Mirrors production EXACTLY: telegram-webhook's ctx.send awaits sendMessage
+    // and returns undefined. A mock that resolves to a truthy value hid a real
+    // bug — the router treated send's return as "handled", so a typed add fell
+    // through to the SMS extractor and sent a second, phantom confirmation.
+    send: (text, keyboard) => { sent.push({ text, keyboard }); return Promise.resolve(undefined); },
   };
 }
 
@@ -225,6 +229,39 @@ describe('write-first add', () => {
 
     expect(appendExpense).toHaveBeenCalledTimes(1);          // written anyway
     expect(lastSent(ctx).text).toContain('Possible duplicate');
+  });
+});
+
+describe('exactly one reply per message', () => {
+  /*
+   * Live bug, seen on the first real Telegram test: "Add walgreens 1.23" logged
+   * the row correctly AND THEN sent a second "Transaction found… Reply YES to
+   * log" from the bank-SMS extractor. Tapping YES would have written the expense
+   * a second time.
+   *
+   * Cause: the router used `ctx.send`'s return value as the "handled" signal.
+   * telegram-webhook's send awaits sendMessage and returns UNDEFINED, so the
+   * check was always false and the message fell through the rest of the router.
+   * Invisible under test until the mock stopped returning a truthy value.
+   */
+  it('does not also run the SMS extractor after logging', async () => {
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'Add walgreens 1.23');
+
+    expect(extractTransactionText).not.toHaveBeenCalled();
+    expect(appendExpense).toHaveBeenCalledTimes(1);
+    expect(ctx.sent).toHaveLength(1);
+    expect(ctx.sent[0].text).toContain('Logged');
+    // A stray pending confirm is the dangerous part: its YES writes a 2nd row.
+    expect([...mockStore.data.keys()].some(k => k.startsWith(`confirm:${USER}:`))).toBe(false);
+  });
+
+  it('sends one reply when asking for a missing amount', async () => {
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'add walgreens');
+
+    expect(ctx.sent).toHaveLength(1);
+    expect(extractTransactionText).not.toHaveBeenCalled();
   });
 });
 

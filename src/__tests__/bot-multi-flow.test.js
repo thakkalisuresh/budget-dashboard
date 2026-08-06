@@ -70,7 +70,11 @@ function makeCtx() {
   const sent = [];
   return {
     store: mockStore, userId: USER, channel: 'telegram', sent,
-    send: (text, keyboard) => { sent.push({ text, keyboard }); return Promise.resolve({ ok: true }); },
+    // Mirrors production EXACTLY: telegram-webhook's ctx.send awaits sendMessage
+    // and returns undefined. A mock that resolves to a truthy value hid a real
+    // bug — the router treated send's return as "handled", so a typed add fell
+    // through to the SMS extractor and sent a second, phantom confirmation.
+    send: (text, keyboard) => { sent.push({ text, keyboard }); return Promise.resolve(undefined); },
   };
 }
 const flatButtons = (kb) => (kb || []).flat().map(b => b.callback_data);

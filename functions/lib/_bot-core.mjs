@@ -154,20 +154,26 @@ async function advanceBatch(ctx, pending, prefixLine) {
 /**
  * Drop just the current batch item and move on.
  *
- * Returns the send result when it handled a batch item, or null when there is no
- * batch in progress — so callers can fall through to whatever SKIP/CANCEL means
- * in their own flow. A single pending receipt (no batchTotal) is deliberately
- * left alone: cancelling one of one is the wholesale path, not this one.
+ * Returns TRUE when it handled a batch item, false when there is no batch in
+ * progress — so callers can fall through to whatever SKIP/CANCEL means in their
+ * own flow. A single pending receipt (no batchTotal) is deliberately left alone:
+ * cancelling one of one is the wholesale path, not this one.
+ *
+ * It used to return `advanceBatch(...)`, i.e. `ctx.send(...)`, which resolves to
+ * UNDEFINED in production — so `if (skipped) return skipped` never fired and a
+ * CANCEL on a batch skipped one item and then fell through to the branch that
+ * wipes the whole queue: exactly the bug this function exists to prevent. It
+ * looked fine under test only because the mock ctx.send returned a truthy value.
  */
 async function skipCurrentBatchItem(ctx) {
   const { store, userId } = ctx;
 
   const { blobs } = await store.list({ prefix: `confirm:${userId}:` });
-  if (!blobs || blobs.length === 0) return null;
+  if (!blobs || blobs.length === 0) return false;
 
   const key     = blobs.sort((a, b) => a.key.localeCompare(b.key))[0].key;
   const pending = await store.get(key, { type: 'json' });
-  if (!pending?.batchTotal) return null;   // not a batch — leave it to the caller
+  if (!pending?.batchTotal) return false;   // not a batch — leave it to the caller
 
   await store.delete(key);
   await bumpBatchSkipped(store, userId);
@@ -177,8 +183,9 @@ async function skipCurrentBatchItem(ctx) {
   const amount = e.total_amount != null ? ` $${e.total_amount}` : '';
   console.log(`bot-core: batch item ${pending.id} skipped by ${userId}`);
 
-  return await advanceBatch(ctx, pending,
+  await advanceBatch(ctx, pending,
     `⏭ ${pending.batchIndex}/${pending.batchTotal} skipped: ${vendor}${amount}`);
+  return true;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════
@@ -223,8 +230,7 @@ export async function handleTextReply(ctx, text) {
     const multiState = await store.get(MULTI_KEY(userId), { type: 'json' }).catch(() => null);
     if (multiState?.awaiting) {
       if (new Date(multiState.expires) > new Date()) {
-        const handled = await resumeMultiAnswer(ctx, text, multiState);
-        if (handled) return handled;
+        if (await resumeMultiAnswer(ctx, text, multiState)) return;
       } else {
         await store.delete(MULTI_KEY(userId)).catch(() => {});
       }
@@ -249,8 +255,7 @@ export async function handleTextReply(ctx, text) {
   // four. On a batch it now means "skip this one"; wiping the queue has to be
   // asked for by name.
   if (normalized === 'CANCEL') {
-    const skipped = await skipCurrentBatchItem(ctx);
-    if (skipped) return skipped;
+    if (await skipCurrentBatchItem(ctx)) return;
   }
 
   if (normalized === 'CANCEL' || normalized === 'CANCEL ALL') {
@@ -339,8 +344,7 @@ export async function handleTextReply(ctx, text) {
       return await handleSplitSkip(ctx, blobs[0].key);
     }
     // No split awaiting — try the batch queue before falling through.
-    const skipped = await skipCurrentBatchItem(ctx);
-    if (skipped) return skipped;
+    if (await skipCurrentBatchItem(ctx)) return;
     // Neither — fall through (SKIP may belong to another flow / be noise)
   }
 
@@ -666,9 +670,13 @@ export async function handleTextReply(ctx, text) {
   // ── Several expenses in one message ──
   // Ahead of the single-command path: "walgreens 53 and shell 40" parses as one
   // vendor called "walgreens 53 and shell" otherwise.
+  // `ctx.send` resolves to undefined, so its return value can NEVER stand in for
+  // "this was handled" — doing that let the message fall through to the SMS
+  // extractor after the row had already been written, producing a second,
+  // phantom confirmation whose YES would have written the expense twice.
+  // These helpers report handling explicitly.
   if (!SMS_MARKER.test(text) && !looksLikeQuery(text) && looksLikeMultiExpense(text, parseExpenseCommand)) {
-    const handled = await startMulti(ctx, text);
-    if (handled) return handled;
+    if (await startMulti(ctx, text)) return;
   }
 
   // ── Typed expense command: "Add walgreen $53.11" ──
@@ -676,8 +684,7 @@ export async function handleTextReply(ctx, text) {
   // vendor and amount are both present, asks one question when exactly one is
   // missing, and stands aside (returns null) otherwise.
   if (looksLikeExpenseCommand(text)) {
-    const handled = await handleExpenseCommand(ctx, text);
-    if (handled) return handled;
+    if (await handleExpenseCommand(ctx, text)) return;
   }
 
   // ── Manual entry: "Walmart 45.23 Grocery" ──
@@ -2494,10 +2501,11 @@ async function writeMultiItem(ctx, state, item) {
   return row;
 }
 
+/** Returns TRUE when it handled the message (see handleExpenseCommand). */
 async function startMulti(ctx, text) {
   const parsed = parseMultiExpense(text, parseExpenseCommand, extractCommandAmount);
   const { ready, questions } = classifyMulti(parsed);
-  if (!ready.length && !questions.length) return null;
+  if (!ready.length && !questions.length) return false;
 
   const state = {
     queue: questions, written: [], failed: [], skipped: 0,
@@ -2520,7 +2528,8 @@ async function startMulti(ctx, text) {
   }
   if (state.overflow) lines.push('', `Only the first ${MAX_ITEMS} were read — send the rest separately.`);
 
-  return await advanceMulti(ctx, state, lines.join('\n'));
+  await advanceMulti(ctx, state, lines.join('\n'));
+  return true;
 }
 
 /** Renders the next question, or closes the batch out. */
@@ -2757,36 +2766,59 @@ async function handleMultiCallback(ctx, rest) {
   return ctx.send('Unknown action.');
 }
 
-/** A typed answer to a multi-expense question. */
+/** A typed answer to a multi-expense question. Returns TRUE when it handled it. */
 async function resumeMultiAnswer(ctx, text, state) {
   const q = state.queue[0];
   const awaiting = state.awaiting;
-  if (!q || !awaiting) return null;
+  if (!q || !awaiting) return false;
 
   if (awaiting.missing === 'amount') {
     const parsed = extractCommandAmount(text);
-    if (!parsed) return ctx.send(`Send the amount for ${awaiting.item.vendor} (e.g. 53.11), or CANCEL.`);
+    if (!parsed) {
+      await ctx.send(`Send the amount for ${awaiting.item.vendor} (e.g. 53.11), or CANCEL.`);
+      return true;
+    }
     state.queue.shift();
     const row = await writeMultiItem(ctx, state, { ...awaiting.item, amount: parsed.amount });
-    return await advanceMulti(ctx, state,
+    await advanceMulti(ctx, state,
       row.ok ? `✅ ${row.vendor} · $${row.amount} (${row.category})` : `⚠️ ${row.error}`);
+    return true;
   }
 
   const vendor = text.replace(/[,;:.!?]+/g, ' ').split(/\s+/).filter(w => w && !FILLER.test(w)).join(' ').trim();
-  if (!vendor) return ctx.send('Send the store or vendor name, or CANCEL.');
+  if (!vendor) {
+    await ctx.send('Send the store or vendor name, or CANCEL.');
+    return true;
+  }
   state.queue.shift();
   const row = await writeMultiItem(ctx, state, { ...awaiting.item, vendor });
-  return await advanceMulti(ctx, state,
+  await advanceMulti(ctx, state,
     row.ok ? `✅ ${row.vendor} · $${row.amount} (${row.category})` : `⚠️ ${row.error}`);
+  return true;
 }
 
-/** Entry point for a typed command; asks only when vendor or amount is missing. */
+/**
+ * Entry point for a typed command; asks only when vendor or amount is missing.
+ *
+ * Returns TRUE when it handled the message and false when the router should keep
+ * looking. Deliberately not `return ctx.send(...)`: send resolves to undefined,
+ * so passing it up as the handled flag silently means "not handled".
+ */
 async function handleExpenseCommand(ctx, text) {
   const parsed = parseExpenseCommand(text);
-  if (parsed.vendor && parsed.amount != null) return await addExpenseFromText(ctx, parsed);
-  if (parsed.vendor)     return await askForMissingField(ctx, 'amount', parsed);
-  if (parsed.amount != null) return await askForMissingField(ctx, 'vendor', parsed);
-  return null;   // neither — let the router keep going
+  if (parsed.vendor && parsed.amount != null) {
+    await addExpenseFromText(ctx, parsed);
+    return true;
+  }
+  if (parsed.vendor) {
+    await askForMissingField(ctx, 'amount', parsed);
+    return true;
+  }
+  if (parsed.amount != null) {
+    await askForMissingField(ctx, 'vendor', parsed);
+    return true;
+  }
+  return false;   // neither — let the router keep going
 }
 
 /** Completes an add that was one field short. */
