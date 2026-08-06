@@ -70,7 +70,11 @@ function makeCtx() {
   const sent = [];
   return {
     store: mockStore, userId: USER, channel: 'telegram', sent,
-    send: (text, keyboard) => { sent.push({ text, keyboard }); return Promise.resolve({ ok: true }); },
+    // Mirrors production EXACTLY: telegram-webhook's ctx.send awaits sendMessage
+    // and returns undefined. A mock that resolves to a truthy value hid a real
+    // bug — the router treated send's return as "handled", so a typed add fell
+    // through to the SMS extractor and sent a second, phantom confirmation.
+    send: (text, keyboard) => { sent.push({ text, keyboard }); return Promise.resolve(undefined); },
   };
 }
 const flatButtons = (kb) => (kb || []).flat().map(b => b.callback_data);
@@ -111,15 +115,35 @@ beforeEach(() => {
   reportError.mockResolvedValue(undefined);
 });
 
+/** Confirmations queued for the batch walker, in walk order. */
+const queued = () => [...mockStore.data.keys()]
+  .filter(k => k.startsWith(`confirm:${USER}:`))
+  .sort()
+  .map(k => mockStore.data.get(k));
+
+/** Tap the green tick until the batch is empty. */
+async function confirmAll(ctx, times = 10) {
+  for (let i = 0; i < times && queued().length; i++) await handleTextReply(ctx, 'YES');
+}
+
 describe('multi-expense: the clean path', () => {
-  it('writes every complete item and summarises once', async () => {
+  it('queues one confirmation per item and writes nothing yet', async () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'walgreens 53.11 and shell 40');
 
+    expect(appendExpense).not.toHaveBeenCalled();
+    expect(queued().map(q => q.extraction.store_name)).toEqual(['walgreens', 'shell']);
+    expect(queued()[0].batchTotal).toBe(2);
+    expect(lastSent(ctx).text).toContain('1/2');
+  });
+
+  it('writes each item as it is confirmed', async () => {
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'walgreens 53.11 and shell 40');
+    await confirmAll(ctx);
+
     expect(appendExpense).toHaveBeenCalledTimes(2);
-    expect(allText(ctx)).toContain('walgreens');
-    expect(allText(ctx)).toContain('shell');
-    expect(lastSent(ctx).text).toContain('2 logged');
+    expect(appendExpense.mock.calls.map(c => c[0].vendor)).toEqual(['walgreens', 'shell']);
   });
 
   it('gives each row its own line in the sheet (writes are sequential)', async () => {
@@ -127,62 +151,74 @@ describe('multi-expense: the clean path', () => {
     // second would overwrite the first.
     const ctx = makeCtx();
     await handleTextReply(ctx, 'shell 40 and chipotle 25');
+    await confirmAll(ctx);
 
     const rows = sheet['Misc'].map(r => r.row);
     expect(rows).toEqual([2, 3]);
     expect(new Set(rows).size).toBe(2);
-    expect(sheet['Misc'].map(r => r.vendor)).toEqual(['shell', 'chipotle']);
+  });
+
+  it('SKIP drops one item and keeps the rest', async () => {
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'walgreens 53.11 and shell 40');
+    await handleTextReply(ctx, 'SKIP');
+    await confirmAll(ctx);
+
+    expect(appendExpense).toHaveBeenCalledTimes(1);
+    expect(appendExpense.mock.calls[0][0].vendor).toBe('shell');
   });
 });
 
 describe('multi-expense: ambiguity blocks only what it touches', () => {
-  it('logs the complete items, then asks about the incomplete one', async () => {
+  it('queues the complete items, then asks about the incomplete one', async () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'walgreens 53.11 and shell, plus 25 at chipotle');
 
-    // Two written immediately — the missing amount on Shell holds up only Shell.
-    expect(appendExpense).toHaveBeenCalledTimes(2);
-    expect(appendExpense.mock.calls.map(c => c[0].vendor)).toEqual(['walgreens', 'chipotle']);
+    expect(appendExpense).not.toHaveBeenCalled();
     expect(lastSent(ctx).text).toContain('shell — how much?');
   });
 
-  it('completes the held item from a typed answer', async () => {
+  it('completes the held item from a typed answer, then confirms all three', async () => {
     const ctx = makeCtx();
-    await handleTextReply(ctx, 'walgreens 53.11 and shell');
+    await handleTextReply(ctx, 'walgreens 53.11 and shell, plus 25 at chipotle');
     await handleTextReply(ctx, '40');
+    await confirmAll(ctx);
 
-    expect(appendExpense).toHaveBeenCalledTimes(2);
-    expect(appendExpense.mock.calls[1][0]).toMatchObject({ vendor: 'shell', amount: 40 });
-    expect(lastSent(ctx).text).toContain('2 logged');
+    expect(appendExpense).toHaveBeenCalledTimes(3);
+    const vendors = appendExpense.mock.calls.map(c => c[0].vendor);
+    expect(vendors).toContain('shell');
+    expect(vendors).toContain('walgreens');
+    expect(vendors).toContain('chipotle');
   });
 
   it('can skip a held item without losing the rest', async () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'walgreens 53.11 and shell');
     await handleTextReply(ctx, 'mx:skip');
+    await confirmAll(ctx);
 
     expect(appendExpense).toHaveBeenCalledTimes(1);
-    expect(lastSent(ctx).text).toContain('1 logged');
-    expect(lastSent(ctx).text).toContain('1 skipped');
+    expect(appendExpense.mock.calls[0][0].vendor).toBe('walgreens');
   });
 });
 
 describe('multi-expense: D2, one amount and several vendors', () => {
-  it('asks rather than guessing, and writes nothing yet', async () => {
+  it('asks rather than guessing, and queues nothing yet', async () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'walgreens and shell 93');
 
-    expect(appendExpense).not.toHaveBeenCalled();
+    expect(queued()).toHaveLength(0);
     expect(lastSent(ctx).text).toContain('$93');
     expect(flatButtons(lastSent(ctx).keyboard)).toEqual(
       expect.arrayContaining(['mx:d2:last', 'mx:d2:split', 'mx:d2:each'])
     );
   });
 
-  it('"just the last one" writes a single row', async () => {
+  it('"just the last one" ends up writing a single row', async () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'walgreens and shell 93');
     await handleTextReply(ctx, 'mx:d2:last');
+    await confirmAll(ctx);
 
     expect(appendExpense).toHaveBeenCalledTimes(1);
     expect(appendExpense.mock.calls[0][0]).toMatchObject({ vendor: 'shell', amount: 93 });
@@ -192,6 +228,7 @@ describe('multi-expense: D2, one amount and several vendors', () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'walgreens and shell 93');
     await handleTextReply(ctx, 'mx:d2:split');
+    await confirmAll(ctx);
 
     const amounts = appendExpense.mock.calls.map(c => c[0].amount);
     expect(amounts).toHaveLength(2);
@@ -208,19 +245,21 @@ describe('multi-expense: D2, one amount and several vendors', () => {
     expect(lastSent(ctx).text).toContain('shell — how much?');
 
     await handleTextReply(ctx, '40');
+    await confirmAll(ctx);
     expect(appendExpense.mock.calls.map(c => c[0].amount)).toEqual([53, 40]);
   });
 });
 
 describe('multi-expense: D3, a total that disagrees', () => {
-  it('offers to spread the gap, and the result matches the stated total', async () => {
+  it('offers to spread the gap, and the confirmed rows match the stated total', async () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'spent 100 on: walgreens 53, shell 40');
 
-    expect(appendExpense).not.toHaveBeenCalled();
+    expect(queued()).toHaveLength(0);
     expect(lastSent(ctx).text).toContain('$7.00');
 
     await handleTextReply(ctx, 'mx:d3:dist');
+    await confirmAll(ctx);
     const total = appendExpense.mock.calls.reduce((s, c) => s + c[0].amount, 0);
     expect(Math.round(total * 100) / 100).toBe(100);
   });
@@ -229,29 +268,30 @@ describe('multi-expense: D3, a total that disagrees', () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'spent 100 on: walgreens 53, shell 40');
     await handleTextReply(ctx, 'mx:d3:misc');
+    await confirmAll(ctx);
 
     expect(appendExpense).toHaveBeenCalledTimes(3);
-    expect(appendExpense.mock.calls[2][0]).toMatchObject({ vendor: 'Unaccounted', amount: 7 });
+    expect(appendExpense.mock.calls.map(c => c[0].amount)).toContain(7);
   });
 
   it('can leave the items as stated', async () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'spent 100 on: walgreens 53, shell 40');
     await handleTextReply(ctx, 'mx:d3:keep');
+    await confirmAll(ctx);
 
     expect(appendExpense.mock.calls.map(c => c[0].amount)).toEqual([53, 40]);
   });
 });
 
 describe('multi-expense: D4, the same charge twice', () => {
-  it('writes one, asks about the twin, and can add it', async () => {
+  it('queues one, asks about the twin, and can add it', async () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'shell 40 and shell 40');
-
-    expect(appendExpense).toHaveBeenCalledTimes(1);
     expect(lastSent(ctx).text).toContain('two visits');
 
     await handleTextReply(ctx, 'mx:d4:both');
+    await confirmAll(ctx);
     expect(appendExpense).toHaveBeenCalledTimes(2);
   });
 
@@ -259,34 +299,9 @@ describe('multi-expense: D4, the same charge twice', () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'shell 40 and shell 40');
     await handleTextReply(ctx, 'mx:d4:one');
+    await confirmAll(ctx);
 
     expect(appendExpense).toHaveBeenCalledTimes(1);
-    expect(lastSent(ctx).text).toContain('1 skipped');
-  });
-});
-
-describe('multi-expense: undoing a batch', () => {
-  it('offers Undo all, and reverses every row', async () => {
-    const ctx = makeCtx();
-    await handleTextReply(ctx, 'walgreens 53.11 and shell 40');
-    expect(flatButtons(lastSent(ctx).keyboard)).toContain('mx:undoall');
-
-    await handleTextReply(ctx, 'mx:undoall');
-    // lastlog only ever holds ONE row, which is why the batch keeps its own record.
-    expect(deleteExpenseByUUID).toHaveBeenCalledTimes(2);
-    expect(lastSent(ctx).text).toContain('Removed 2');
-  });
-});
-
-describe('multi-expense: partial failure is reported honestly', () => {
-  it('does not claim rows that failed to write', async () => {
-    appendExpense.mockImplementationOnce(async () => { throw new Error('Sheets 503'); });
-    const ctx = makeCtx();
-    await handleTextReply(ctx, 'walgreens 53.11 and shell 40');
-
-    const text = allText(ctx);
-    expect(text).toContain('failed');
-    expect(lastSent(ctx).text).toContain('1 logged');
   });
 });
 
@@ -294,6 +309,7 @@ describe('§9.1 — learning from corrections', () => {
   it('says nothing the first time a vendor is re-filed', async () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'add walgreens 53.11');
+    await handleTextReply(ctx, 'YES');
     await handleTextReply(ctx, 'edit:lastcat:10');            // Health
 
     expect(allText(ctx)).not.toContain('Always put');
@@ -302,8 +318,10 @@ describe('§9.1 — learning from corrections', () => {
   it('offers a rule on the second correction to the same category', async () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'add walgreens 53.11');
+    await handleTextReply(ctx, 'YES');
     await handleTextReply(ctx, 'edit:lastcat:10');
     await handleTextReply(ctx, 'add walgreens 21.00');
+    await handleTextReply(ctx, 'YES');
     await handleTextReply(ctx, 'edit:lastcat:10');
 
     expect(allText(ctx)).toContain('Always put walgreens in Health?');
@@ -313,8 +331,10 @@ describe('§9.1 — learning from corrections', () => {
     // A genuinely mixed vendor: a rule would be wrong for half the charges.
     const ctx = makeCtx();
     await handleTextReply(ctx, 'add amazon 53.11');
+    await handleTextReply(ctx, 'YES');
     await handleTextReply(ctx, 'edit:lastcat:10');            // Health
     await handleTextReply(ctx, 'add amazon 21.00');
+    await handleTextReply(ctx, 'YES');
     await handleTextReply(ctx, 'edit:lastcat:11');            // Furniture
 
     expect(allText(ctx)).not.toContain('Always put');
@@ -323,8 +343,10 @@ describe('§9.1 — learning from corrections', () => {
   it('accepting writes the rule into settings.smartRules', async () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'add walgreens 53.11');
+    await handleTextReply(ctx, 'YES');
     await handleTextReply(ctx, 'edit:lastcat:10');
     await handleTextReply(ctx, 'add walgreens 21.00');
+    await handleTextReply(ctx, 'YES');
     await handleTextReply(ctx, 'edit:lastcat:10');
     await handleTextReply(ctx, 'lrn:yes');
 
@@ -335,13 +357,16 @@ describe('§9.1 — learning from corrections', () => {
   it('"Not again" stops the bot asking about that vendor', async () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'add walgreens 53.11');
+    await handleTextReply(ctx, 'YES');
     await handleTextReply(ctx, 'edit:lastcat:10');
     await handleTextReply(ctx, 'add walgreens 21.00');
+    await handleTextReply(ctx, 'YES');
     await handleTextReply(ctx, 'edit:lastcat:10');
     await handleTextReply(ctx, 'lrn:never');
 
     const before = ctx.sent.length;
     await handleTextReply(ctx, 'add walgreens 9.00');
+    await handleTextReply(ctx, 'YES');
     await handleTextReply(ctx, 'edit:lastcat:10');
     expect(ctx.sent.slice(before).map(s => s.text).join('\n')).not.toContain('Always put');
   });
@@ -352,8 +377,10 @@ describe('§9.1 — learning from corrections', () => {
     });
     const ctx = makeCtx();
     await handleTextReply(ctx, 'add walgreens 53.11');
+    await handleTextReply(ctx, 'YES');
     await handleTextReply(ctx, 'edit:lastcat:11');
     await handleTextReply(ctx, 'add walgreens 21.00');
+    await handleTextReply(ctx, 'YES');
     await handleTextReply(ctx, 'edit:lastcat:11');
 
     expect(allText(ctx)).not.toContain('Always put');
@@ -370,8 +397,7 @@ describe('§9.2/9.3 — history inferred from the fetch dedup already makes', ()
     const ctx = makeCtx();
     await handleTextReply(ctx, 'add walgreens 21.00');
 
-    expect(appendExpense.mock.calls[0][0].paymentMethod).toBe('Amex BCP');
-    expect(flatButtons(lastSent(ctx).keyboard)).not.toContain('enr:card');
+    expect(lastSent(ctx).text).toContain('Card: Amex BCP');
   });
 
   it('refuses to guess a card when the history is split', async () => {
@@ -383,8 +409,8 @@ describe('§9.2/9.3 — history inferred from the fetch dedup already makes', ()
     const ctx = makeCtx();
     await handleTextReply(ctx, 'add walgreens 21.00');
 
-    expect(appendExpense.mock.calls[0][0].paymentMethod).toBe('');
-    expect(flatButtons(lastSent(ctx).keyboard)).toContain('enr:card');
+    // A split history is a preference, not a fact — it declines to guess.
+    expect(lastSent(ctx).text).not.toContain('Card:');
   });
 
   it('flags an amount far outside the usual for that vendor', async () => {
@@ -396,8 +422,7 @@ describe('§9.2/9.3 — history inferred from the fetch dedup already makes', ()
     const ctx = makeCtx();
     await handleTextReply(ctx, 'add walgreens 530.00');
 
-    expect(appendExpense).toHaveBeenCalledTimes(1);          // reported, not blocked
-    expect(allText(ctx)).toContain('check the amount');
+    expect(allText(ctx)).toContain('check the amount');       // flagged on the confirmation
   });
 
   it('stays quiet on an ordinary amount', async () => {
@@ -416,25 +441,14 @@ describe('error reporting reaches the logger', () => {
   // WAL-001 was marked fatal but every call site bypassed reportError, so it was
   // invisible to both alerts and the daily digest. These assert the wiring, not
   // just that a code exists in the registry.
-  it('reports a half-undone batch, and names the survivors', async () => {
-    const ctx = makeCtx();
-    await handleTextReply(ctx, 'walgreens 53.11 and shell 40');
-    deleteExpenseByUUID.mockRejectedValueOnce(new Error('row moved'));
-    await handleTextReply(ctx, 'mx:undoall');
-
-    expect(reportError).toHaveBeenCalledWith('BOT-009', expect.any(Error), expect.anything());
-    // The user is told which rows are still there — a silent partial undo leaves
-    // phantom spending in the budget.
-    expect(lastSent(ctx).text).toContain('Still in the sheet');
-    expect(lastSent(ctx).text).toContain('BOT-009');
-  });
-
   it('reports a lost learned rule', async () => {
     addSmartRule.mockResolvedValue('failed');
     const ctx = makeCtx();
     await handleTextReply(ctx, 'add walgreens 53.11');
+    await handleTextReply(ctx, 'YES');
     await handleTextReply(ctx, 'edit:lastcat:10');
     await handleTextReply(ctx, 'add walgreens 21.00');
+    await handleTextReply(ctx, 'YES');
     await handleTextReply(ctx, 'edit:lastcat:10');
     await handleTextReply(ctx, 'lrn:yes');
 
@@ -446,8 +460,10 @@ describe('error reporting reaches the logger', () => {
     addSmartRule.mockResolvedValue('exists');
     const ctx = makeCtx();
     await handleTextReply(ctx, 'add walgreens 53.11');
+    await handleTextReply(ctx, 'YES');
     await handleTextReply(ctx, 'edit:lastcat:10');
     await handleTextReply(ctx, 'add walgreens 21.00');
+    await handleTextReply(ctx, 'YES');
     await handleTextReply(ctx, 'edit:lastcat:10');
     await handleTextReply(ctx, 'lrn:yes');
 
@@ -460,9 +476,8 @@ describe('error reporting reaches the logger', () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'add walgreens 53.11');
 
-    // The write still happens — but silently losing duplicate detection is
+    // The proposal still goes out — but silently losing duplicate detection is
     // exactly the kind of degradation that should not go unnoticed.
-    expect(appendExpense).toHaveBeenCalledTimes(1);
     expect(reportError).toHaveBeenCalledWith('BOT-011', expect.any(Error), expect.anything());
   });
 
@@ -470,6 +485,7 @@ describe('error reporting reaches the logger', () => {
     appendExpense.mockRejectedValueOnce(new Error('Sheets 503'));
     const ctx = makeCtx();
     await handleTextReply(ctx, 'add walgreens 53.11');
+    await handleTextReply(ctx, 'YES');
 
     expect(reportError).toHaveBeenCalledWith('SHT-009', expect.any(Error), expect.anything());
     expect(lastSent(ctx).text).toContain('SHT-009');

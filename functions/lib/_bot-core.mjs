@@ -8,7 +8,7 @@
  */
 
 import crypto from 'node:crypto';
-import { extractReceipt, extractReceiptBatch, extractTransactionText, CATEGORIES } from './_extraction.mjs';
+import { extractReceipt, extractReceiptBatch, extractTransactionText, todayISO, CATEGORIES } from './_extraction.mjs';
 import { uploadReceiptImage, moveFile, buildFolderPath } from './_drive.mjs';
 import {
   getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID,
@@ -28,7 +28,7 @@ import { findDuplicates, fuzzyNamesMatch } from './_duplicate-match.mjs';
 import {
   kbYesCancel, kbYesSkip, kbConfirmDelete, kbSplitCategory, kbCategoryConfirm, kbLogAnywayCancel,
   kbConfirmReceipt, kbLogAnywayReceipt, kbBatchReceipt, kbEditMenu, kbCategoryPicker, kbCardPicker,
-  kbLoggedActions, kbEditLoggedMenu, kbEnrichMenu, kbMultiChoice, kbLearnOffer,
+  kbLoggedActions, kbEditLoggedMenu, kbMultiChoice, kbLearnOffer,
 } from './_telegram.mjs';
 import {
   looksLikeMultiExpense, parseMultiExpense, classifyMulti, distributeGap, MAX_ITEMS,
@@ -154,20 +154,26 @@ async function advanceBatch(ctx, pending, prefixLine) {
 /**
  * Drop just the current batch item and move on.
  *
- * Returns the send result when it handled a batch item, or null when there is no
- * batch in progress — so callers can fall through to whatever SKIP/CANCEL means
- * in their own flow. A single pending receipt (no batchTotal) is deliberately
- * left alone: cancelling one of one is the wholesale path, not this one.
+ * Returns TRUE when it handled a batch item, false when there is no batch in
+ * progress — so callers can fall through to whatever SKIP/CANCEL means in their
+ * own flow. A single pending receipt (no batchTotal) is deliberately left alone:
+ * cancelling one of one is the wholesale path, not this one.
+ *
+ * It used to return `advanceBatch(...)`, i.e. `ctx.send(...)`, which resolves to
+ * UNDEFINED in production — so `if (skipped) return skipped` never fired and a
+ * CANCEL on a batch skipped one item and then fell through to the branch that
+ * wipes the whole queue: exactly the bug this function exists to prevent. It
+ * looked fine under test only because the mock ctx.send returned a truthy value.
  */
 async function skipCurrentBatchItem(ctx) {
   const { store, userId } = ctx;
 
   const { blobs } = await store.list({ prefix: `confirm:${userId}:` });
-  if (!blobs || blobs.length === 0) return null;
+  if (!blobs || blobs.length === 0) return false;
 
   const key     = blobs.sort((a, b) => a.key.localeCompare(b.key))[0].key;
   const pending = await store.get(key, { type: 'json' });
-  if (!pending?.batchTotal) return null;   // not a batch — leave it to the caller
+  if (!pending?.batchTotal) return false;   // not a batch — leave it to the caller
 
   await store.delete(key);
   await bumpBatchSkipped(store, userId);
@@ -177,8 +183,9 @@ async function skipCurrentBatchItem(ctx) {
   const amount = e.total_amount != null ? ` $${e.total_amount}` : '';
   console.log(`bot-core: batch item ${pending.id} skipped by ${userId}`);
 
-  return await advanceBatch(ctx, pending,
+  await advanceBatch(ctx, pending,
     `⏭ ${pending.batchIndex}/${pending.batchTotal} skipped: ${vendor}${amount}`);
+  return true;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════
@@ -191,11 +198,6 @@ export async function handleTextReply(ctx, text) {
   // ── R10: inline-keyboard edit callbacks (callback_data arrives here as text) ──
   if (text.startsWith('edit:')) {
     return await handleEditCallback(ctx, text.slice('edit:'.length));
-  }
-
-  // ── Post-write enrichment callbacks for a typed add ──
-  if (text.startsWith('enr:')) {
-    return await handleEnrichCallback(ctx, text.slice('enr:'.length));
   }
 
   // ── Multi-expense discrepancy callbacks ──
@@ -223,8 +225,7 @@ export async function handleTextReply(ctx, text) {
     const multiState = await store.get(MULTI_KEY(userId), { type: 'json' }).catch(() => null);
     if (multiState?.awaiting) {
       if (new Date(multiState.expires) > new Date()) {
-        const handled = await resumeMultiAnswer(ctx, text, multiState);
-        if (handled) return handled;
+        if (await resumeMultiAnswer(ctx, text, multiState)) return;
       } else {
         await store.delete(MULTI_KEY(userId)).catch(() => {});
       }
@@ -249,8 +250,7 @@ export async function handleTextReply(ctx, text) {
   // four. On a batch it now means "skip this one"; wiping the queue has to be
   // asked for by name.
   if (normalized === 'CANCEL') {
-    const skipped = await skipCurrentBatchItem(ctx);
-    if (skipped) return skipped;
+    if (await skipCurrentBatchItem(ctx)) return;
   }
 
   if (normalized === 'CANCEL' || normalized === 'CANCEL ALL') {
@@ -259,7 +259,7 @@ export async function handleTextReply(ctx, text) {
       `salary_pending:${userId}`, `budget_pending:${userId}`,
       `new_month_wizard:${userId}`, `delete_pending:${userId}`,
       `awaiting_edit:${userId}`, `awaiting_attach:${userId}`,
-      `awaiting_add:${userId}`, ENRICH_KEY(userId), MULTI_KEY(userId),
+      `awaiting_add:${userId}`, MULTI_KEY(userId),
     ]) {
       try {
         const val = await store.get(key, { type: 'json' });
@@ -339,8 +339,7 @@ export async function handleTextReply(ctx, text) {
       return await handleSplitSkip(ctx, blobs[0].key);
     }
     // No split awaiting — try the batch queue before falling through.
-    const skipped = await skipCurrentBatchItem(ctx);
-    if (skipped) return skipped;
+    if (await skipCurrentBatchItem(ctx)) return;
     // Neither — fall through (SKIP may belong to another flow / be noise)
   }
 
@@ -404,7 +403,11 @@ export async function handleTextReply(ctx, text) {
       return ctx.send("No pending action to confirm.");
     }
 
-    const key     = blobs[0].key;
+    // store.list ordering is not guaranteed and batch ids are zero-padded on
+    // purpose, so sort: YES must confirm the item that was just SHOWN, which is
+    // the one advanceBatch picked by the same rule. Without this, confirming a
+    // batch logs an arbitrary member of it.
+    const key     = blobs.sort((a, b) => a.key.localeCompare(b.key))[0].key;
     const pending = await store.get(key, { type: 'json' });
 
     if (!pending) {
@@ -666,9 +669,13 @@ export async function handleTextReply(ctx, text) {
   // ── Several expenses in one message ──
   // Ahead of the single-command path: "walgreens 53 and shell 40" parses as one
   // vendor called "walgreens 53 and shell" otherwise.
+  // `ctx.send` resolves to undefined, so its return value can NEVER stand in for
+  // "this was handled" — doing that let the message fall through to the SMS
+  // extractor after the row had already been written, producing a second,
+  // phantom confirmation whose YES would have written the expense twice.
+  // These helpers report handling explicitly.
   if (!SMS_MARKER.test(text) && !looksLikeQuery(text) && looksLikeMultiExpense(text, parseExpenseCommand)) {
-    const handled = await startMulti(ctx, text);
-    if (handled) return handled;
+    if (await startMulti(ctx, text)) return;
   }
 
   // ── Typed expense command: "Add walgreen $53.11" ──
@@ -676,8 +683,7 @@ export async function handleTextReply(ctx, text) {
   // vendor and amount are both present, asks one question when exactly one is
   // missing, and stands aside (returns null) otherwise.
   if (looksLikeExpenseCommand(text)) {
-    const handled = await handleExpenseCommand(ctx, text);
-    if (handled) return handled;
+    if (await handleExpenseCommand(ctx, text)) return;
   }
 
   // ── Manual entry: "Walmart 45.23 Grocery" ──
@@ -717,7 +723,7 @@ export async function handleTextReply(ctx, text) {
       ...pendingData,
       extraction: {
         store_name: vendor.trim(),
-        purchase_date: now.toISOString().slice(0, 10),
+        purchase_date: todayISO(),
         total_amount: amount,
         tax_amount: null,
         currency: 'USD',
@@ -2134,12 +2140,12 @@ function extractCommandDate(text) {
   if (/\byesterday\b/i.test(text)) {
     const d = new Date();
     d.setDate(d.getDate() - 1);
-    return { date: d.toISOString().slice(0, 10), span: text.match(/\byesterday\b/i)[0] };
+    return { date: todayISO(d), span: text.match(/\byesterday\b/i)[0] };
   }
   const iso = text.match(/\b(\d{4}-\d{2}-\d{2})\b/);
   if (iso) return { date: iso[1], span: iso[0] };
   if (/\btoday\b/i.test(text)) {
-    return { date: new Date().toISOString().slice(0, 10), span: text.match(/\btoday\b/i)[0] };
+    return { date: todayISO(), span: text.match(/\btoday\b/i)[0] };
   }
   return null;
 }
@@ -2238,16 +2244,6 @@ async function askForMissingField(ctx, field, known) {
     : `$${known.amount} — where?`);
 }
 
-/** Which derived fields the bot had to guess at, worst-guess first. */
-function missingEnrichFields({ needsConfirm, paymentMethod, explicitDate, category, cardsConfigured }) {
-  const fields = [];
-  if (needsConfirm) fields.push('cat');                       // shakiest value leads
-  if (!paymentMethod && cardsConfigured) fields.push('card');
-  if (!explicitDate) fields.push('date');
-  if (category === 'Travel' || category === 'Holiday') fields.push('booking');
-  return fields;
-}
-
 /**
  * Everything the bot knows about one vendor from the current month's rows.
  *
@@ -2290,23 +2286,21 @@ async function loadMonthContext(monthName) {
 }
 
 /**
- * Resolve, then write, one expense row. Returns a plain result object rather than
- * sending anything, so the single-add flow and the multi-expense flow share one
- * implementation and cannot drift apart.
+ * Resolve everything about one expense — category, card, date, month sheet,
+ * duplicates — WITHOUT writing it. Returns a plain object rather than sending
+ * anything, so the single-add and multi-expense flows share one resolver and
+ * cannot drift apart.
  *
- * ⚠️  Callers writing several rows MUST await these one at a time. appendExpense
- * is a read-then-write with no locking (_sheets.mjs): it reads A:H, computes
- * nextRow from the last row with data, and PUTs to exactly that range. Two
- * concurrent appends to one tab compute the SAME row and the second silently
- * overwrites the first.
+ * The write itself belongs to the existing YES handler, which every other entry
+ * point already uses.
  */
-async function writeExpenseRow(ctx, input) {
+async function prepareExpense(ctx, input) {
   const { vendor, amount, category = null, card = null, date = null, explicitDate = false } = input;
 
   let settings = {};
   try { settings = await getUserSettings(); } catch { /* defaults are fine */ }
 
-  const txDate = date || new Date().toISOString().slice(0, 10);
+  const txDate = date || todayISO();   // user's local date, not the server's UTC one
 
   // Split the date string rather than new Date(...): 'YYYY-MM-DD' parses as UTC
   // midnight, which lands in the previous month in US timezones on the 1st.
@@ -2347,43 +2341,19 @@ async function writeExpenseRow(ctx, input) {
   const paymentMethod = resolveCard(card, vendor, resolvedCategory, settings)
     || (card ? '' : (history?.usualCard || ''));
 
-  // Checked but never blocking: write-first means a suspected repeat is reported
-  // with an Undo, not held behind a confirmation.
+  // Surfaced on the confirmation rather than after the fact, so a suspected
+  // repeat is something the user decides about before the row exists.
   const dups = findDuplicates(
     recent.map(e => ({ vendor: e.vendor, amount: e.amount, date: e.txDate || e.timestamp, category: e.category })),
     { vendor, amount, date: txDate }
   );
 
-  let result;
-  try {
-    result = await appendExpense({
-      category: resolvedCategory, vendor, amount, txDate, sheetId, monthName,
-      paymentMethod, channel: ctx.channel, bookingMethod: '',
-    });
-  } catch (e) {
-    await reportError('SHT-009', e, { flow: 'text-add' });
-    return { ok: false, error: 'Failed to log that to the spreadsheet. Try the dashboard. [SHT-009]' };
-  }
-
-  console.log(`bot-core: text-add — ${vendor} $${amount} → ${resolvedCategory} by ${ctx.userId}`);
-
   return {
-    ok: true, uuid: result.uuid, vendor, amount, txDate, monthName, year, month,
+    ok: true, vendor, amount, txDate, monthName, year, month,
     sheetId, category: resolvedCategory, paymentMethod, needsConfirm, dups,
     explicitDate, settings, history,
     cardsConfigured: (settings.cards || []).length > 0,
   };
-}
-
-/** Records a written row as the undo/edit target. */
-async function rememberLastLog(ctx, row) {
-  await ctx.store.setJSON(`lastlog:${ctx.userId}`, {
-    uuid: row.uuid, category: row.category, vendor: row.vendor, amount: row.amount,
-    txDate: row.txDate, paymentMethod: row.paymentMethod, bookingMethod: '',
-    sheetId: row.sheetId, monthName: row.monthName, year: row.year, month: row.month,
-    driveFileId: null, driveShareLink: null,
-    loggedAt: new Date().toISOString(),
-  });
 }
 
 /**
@@ -2430,43 +2400,69 @@ async function buildBudgetLine(row) {
   }
 }
 
+/**
+ * Propose an expense and wait for the green tick.
+ *
+ * This was originally write-first — the row went straight to the sheet and
+ * whatever had been guessed was offered back afterwards. Seeing it live, the
+ * category and amount are exactly the two things worth a glance BEFORE the row
+ * exists, because fixing a category afterwards means a cross-tab delete and
+ * re-append. So the resolved values are shown and nothing is written until the
+ * user confirms.
+ *
+ * The confirmation blob is shaped exactly like the one the receipt flow builds,
+ * so the existing YES handler does the write — one write path, already proven,
+ * rather than a second one that could drift.
+ */
 async function addExpenseFromText(ctx, input) {
   const { store, userId } = ctx;
 
-  const row = await writeExpenseRow(ctx, input);
-  if (!row.ok) return ctx.send(row.error);
+  const proposal = await prepareExpense(ctx, input);
+  if (!proposal.ok) return ctx.send(proposal.error);
 
-  await rememberLastLog(ctx, row);
   await store.delete(`awaiting_add:${userId}`).catch(() => {});
 
-  const fields = missingEnrichFields(row);
+  const receiptId = crypto.randomUUID();
+  await store.setJSON(`confirm:${userId}:${receiptId}`, {
+    id: receiptId,
+    phone: userId,
+    extraction: {
+      store_name: proposal.vendor,
+      purchase_date: proposal.txDate,
+      total_amount: proposal.amount,
+      tax_amount: null,
+      currency: 'USD',
+      items: [],
+      reward_category: proposal.category,
+      payment_method: proposal.paymentMethod,
+    },
+    year: proposal.year,
+    month: proposal.month,
+    status: 'awaiting_confirmation',
+  });
 
-  const rewardsLine = row.paymentMethod
-    ? buildRewardsLine(row.paymentMethod, row.category, row.amount, row.vendor, getEffectiveRates(row.settings))
-    : '';
+  const lines = [
+    'Got it:',
+    `Store: ${proposal.vendor}`,
+    `Category: ${proposal.category}${proposal.needsConfirm ? '  (a guess — check me)' : ''}`,
+    `Total: $${proposal.amount}`,
+    `Date: ${proposal.txDate}`,
+  ];
+  if (proposal.paymentMethod) lines.push(`Card: ${proposal.paymentMethod}`);
 
-  const lines = [`✅ Logged: ${row.vendor} · $${row.amount} (${row.category})`];
-  const oddLine = amountLooksUnusual(row);
+  const oddLine = amountLooksUnusual(proposal);
   if (oddLine) lines.push(oddLine);
-  if (row.paymentMethod) lines.push(`Card: ${row.paymentMethod}`);
-  if (rewardsLine) lines.push(rewardsLine);
-  const budgetLine = await buildBudgetLine(row);
+
+  const budgetLine = await buildBudgetLine(proposal);
   if (budgetLine) lines.push(budgetLine);
-  if (row.dups.length) lines.push('', buildDuplicateWarning(row.dups));
 
-  if (fields.length) {
-    await store.setJSON(ENRICH_KEY(userId), {
-      uuid: row.uuid, fields, changes: {},
-      expires: new Date(Date.now() + UNDO_WINDOW_MS).toISOString(),
-    });
-    lines.push('', row.needsConfirm
-      ? `I guessed the category — worth a look. Anything to fix?`
-      : `Want to fill in what I guessed?`);
-    return ctx.send(lines.join('\n'), kbEnrichMenu(fields));
-  }
+  if (proposal.dups.length) lines.push('', buildDuplicateWarning(proposal.dups));
+  lines.push('', 'Tap ✅ to log it, or ✏️ Edit to change something.');
 
-  await store.delete(ENRICH_KEY(userId)).catch(() => {});
-  return ctx.send(lines.join('\n'), kbLoggedActions());
+  // A suspected repeat gets the same buttons with a warier label, so the
+  // affirmative is never a reflex tap.
+  return ctx.send(lines.join('\n'),
+    proposal.dups.length ? kbLogAnywayReceipt() : kbConfirmReceipt());
 }
 
 /* ══════════════════════════════════════════════════════════════════════════════
@@ -2479,25 +2475,45 @@ async function addExpenseFromText(ctx, input) {
 
 const MULTI_KEY = (userId) => `multi:${userId}`;
 
-/** Writes one item. Callers MUST await these in sequence — see writeExpenseRow. */
+/**
+ * Queues one item as a pending confirmation rather than writing it.
+ *
+ * Multi-expense used to append as it went. Now that a single add waits for the
+ * green tick, a batch does too — each item becomes a `confirm:` blob, and the
+ * existing batch walker (advanceBatch / kbBatchReceipt) steps through them with
+ * YES / SKIP / Edit / CANCEL ALL. Keys are zero-padded so "next" is the same
+ * item for every caller, which store.list ordering does not otherwise guarantee.
+ */
 async function writeMultiItem(ctx, state, item) {
-  const row = await writeExpenseRow(ctx, item);
+  const row = await prepareExpense(ctx, item);
   if (!row.ok) {
     state.failed.push(`${item.vendor || 'item'}: ${row.error}`);
     return row;
   }
-  await rememberLastLog(ctx, row);
-  state.written.push({
-    uuid: row.uuid, vendor: row.vendor, amount: row.amount,
-    category: row.category, sheetId: row.sheetId,
+
+  const index = state.written.length;
+  await ctx.store.setJSON(`confirm:${ctx.userId}:mx_${String(index).padStart(3, '0')}`, {
+    id: `mx_${String(index).padStart(3, '0')}`,
+    phone: ctx.userId,
+    extraction: {
+      store_name: row.vendor, purchase_date: row.txDate, total_amount: row.amount,
+      tax_amount: null, currency: 'USD', items: [],
+      reward_category: row.category, payment_method: row.paymentMethod,
+    },
+    year: row.year, month: row.month,
+    status: 'awaiting_confirmation',
+    batchIndex: index + 1,
+    batchTotal: 0,                 // patched once the batch size is known
   });
+  state.written.push({ vendor: row.vendor, amount: row.amount, category: row.category });
   return row;
 }
 
+/** Returns TRUE when it handled the message (see handleExpenseCommand). */
 async function startMulti(ctx, text) {
   const parsed = parseMultiExpense(text, parseExpenseCommand, extractCommandAmount);
   const { ready, questions } = classifyMulti(parsed);
-  if (!ready.length && !questions.length) return null;
+  if (!ready.length && !questions.length) return false;
 
   const state = {
     queue: questions, written: [], failed: [], skipped: 0,
@@ -2520,7 +2536,8 @@ async function startMulti(ctx, text) {
   }
   if (state.overflow) lines.push('', `Only the first ${MAX_ITEMS} were read — send the rest separately.`);
 
-  return await advanceMulti(ctx, state, lines.join('\n'));
+  await advanceMulti(ctx, state, lines.join('\n'));
+  return true;
 }
 
 /** Renders the next question, or closes the batch out. */
@@ -2601,72 +2618,50 @@ async function suggestAmountFor(vendor) {
   }
 }
 
+/**
+ * Every discrepancy is settled — hand the queued items to the batch walker so
+ * each one gets its own green tick.
+ */
 async function finishMulti(ctx, state, prefixLine) {
   const { store, userId } = ctx;
   await store.delete(MULTI_KEY(userId)).catch(() => {});
 
+  const total = state.written.length;
   const lines = [];
   if (prefixLine) lines.push(prefixLine);
-  const parts = [`✅ ${state.written.length} logged`];
-  if (state.skipped) parts.push(`⏭ ${state.skipped} skipped`);
-  if (state.failed.length) parts.push(`⚠️ ${state.failed.length} failed`);
-  lines.push('', parts.join(', ') + '.');
+  if (state.skipped) lines.push(`⏭ ${state.skipped} skipped.`);
+  if (state.failed.length) {
+    lines.push(`⚠️ ${state.failed.length} could not be prepared:`);
+    for (const f of state.failed) lines.push(`  • ${f}`);
+  }
 
-  if (state.written.length > 1) {
-    // lastlog only ever holds ONE row, so reversing a batch needs its own record.
-    await store.setJSON(`multi_done:${userId}`, {
-      written: state.written,
-      expires: new Date(Date.now() + UNDO_WINDOW_MS).toISOString(),
-    });
-    return ctx.send(lines.join('\n'), kbMultiChoice([
-      { text: `↩️ Undo all ${state.written.length}`, data: 'mx:undoall' },
-    ]));
+  if (!total) {
+    lines.push('', 'Nothing left to log.');
+    return ctx.send(lines.join('\n'));
   }
-  return ctx.send(lines.join('\n'), state.written.length === 1 ? kbLoggedActions() : undefined);
-}
 
-/** Reverses every row written during this batch. */
-async function undoMultiBatch(ctx, written) {
-  let removed = 0;
-  const stuck = [];
-  for (const w of written) {
-    try {
-      await deleteExpenseByUUID({ category: w.category, uuid: w.uuid, sheetId: w.sheetId });
-      removed++;
-    } catch (e) {
-      stuck.push(w);
-      console.warn('bot-core: multi undo failed for', w.uuid, e.message);
-    }
+  // batchTotal was unknown while queueing; stamp it now so the walker can count.
+  const { blobs } = await store.list({ prefix: `confirm:${userId}:mx_` });
+  for (const b of (blobs || [])) {
+    const pending = await store.get(b.key, { type: 'json' });
+    if (pending) await store.setJSON(b.key, { ...pending, batchTotal: total });
   }
-  // A half-undone batch leaves rows the user believes are gone but which still
-  // count against the budget — the reply says so, and so does the digest.
-  if (stuck.length) {
-    await reportError('BOT-009', new Error(`${stuck.length} of ${written.length} rows survived undo`),
-      { flow: 'multi-undo', uuids: stuck.map(s => s.uuid).join(',') });
-  }
-  await ctx.store.delete(`lastlog:${ctx.userId}`).catch(() => {});
-  return { removed, stuck };
+
+  lines.push('', `${total} to confirm — one at a time.`);
+  await ctx.send(lines.join('\n'));
+
+  const first = (blobs || []).sort((a, b) => a.key.localeCompare(b.key))[0];
+  const pending = first ? await store.get(first.key, { type: 'json' }) : null;
+  if (!pending) return;
+  return ctx.send(
+    buildConfirmPrompt(pending.extraction, null, { index: pending.batchIndex, total }),
+    kbBatchReceipt()
+  );
 }
 
 async function handleMultiCallback(ctx, rest) {
   const { store, userId } = ctx;
   const state = await store.get(MULTI_KEY(userId), { type: 'json' }).catch(() => null);
-
-  if (rest === 'undoall') {
-    const last = await store.get(`multi_done:${userId}`, { type: 'json' }).catch(() => null);
-    const written = state?.written?.length ? state.written : (last?.written || []);
-    if (!written.length) return ctx.send('Nothing to undo.');
-    const { removed, stuck } = await undoMultiBatch(ctx, written);
-    await store.delete(`multi_done:${userId}`).catch(() => {});
-    await store.delete(MULTI_KEY(userId)).catch(() => {});
-    if (stuck.length) {
-      return ctx.send(
-        `↩️ Removed ${removed} of ${written.length}.\n` +
-        `⚠️ Still in the sheet: ${stuck.map(s => `${s.vendor} $${s.amount}`).join(', ')} — remove from the dashboard. [BOT-009]`
-      );
-    }
-    return ctx.send(`↩️ Removed ${removed} of ${written.length} entries.`);
-  }
 
   if (!state) return ctx.send('Nothing left to sort out.');
   const q = state.queue[0];
@@ -2757,36 +2752,59 @@ async function handleMultiCallback(ctx, rest) {
   return ctx.send('Unknown action.');
 }
 
-/** A typed answer to a multi-expense question. */
+/** A typed answer to a multi-expense question. Returns TRUE when it handled it. */
 async function resumeMultiAnswer(ctx, text, state) {
   const q = state.queue[0];
   const awaiting = state.awaiting;
-  if (!q || !awaiting) return null;
+  if (!q || !awaiting) return false;
 
   if (awaiting.missing === 'amount') {
     const parsed = extractCommandAmount(text);
-    if (!parsed) return ctx.send(`Send the amount for ${awaiting.item.vendor} (e.g. 53.11), or CANCEL.`);
+    if (!parsed) {
+      await ctx.send(`Send the amount for ${awaiting.item.vendor} (e.g. 53.11), or CANCEL.`);
+      return true;
+    }
     state.queue.shift();
     const row = await writeMultiItem(ctx, state, { ...awaiting.item, amount: parsed.amount });
-    return await advanceMulti(ctx, state,
+    await advanceMulti(ctx, state,
       row.ok ? `✅ ${row.vendor} · $${row.amount} (${row.category})` : `⚠️ ${row.error}`);
+    return true;
   }
 
   const vendor = text.replace(/[,;:.!?]+/g, ' ').split(/\s+/).filter(w => w && !FILLER.test(w)).join(' ').trim();
-  if (!vendor) return ctx.send('Send the store or vendor name, or CANCEL.');
+  if (!vendor) {
+    await ctx.send('Send the store or vendor name, or CANCEL.');
+    return true;
+  }
   state.queue.shift();
   const row = await writeMultiItem(ctx, state, { ...awaiting.item, vendor });
-  return await advanceMulti(ctx, state,
+  await advanceMulti(ctx, state,
     row.ok ? `✅ ${row.vendor} · $${row.amount} (${row.category})` : `⚠️ ${row.error}`);
+  return true;
 }
 
-/** Entry point for a typed command; asks only when vendor or amount is missing. */
+/**
+ * Entry point for a typed command; asks only when vendor or amount is missing.
+ *
+ * Returns TRUE when it handled the message and false when the router should keep
+ * looking. Deliberately not `return ctx.send(...)`: send resolves to undefined,
+ * so passing it up as the handled flag silently means "not handled".
+ */
 async function handleExpenseCommand(ctx, text) {
   const parsed = parseExpenseCommand(text);
-  if (parsed.vendor && parsed.amount != null) return await addExpenseFromText(ctx, parsed);
-  if (parsed.vendor)     return await askForMissingField(ctx, 'amount', parsed);
-  if (parsed.amount != null) return await askForMissingField(ctx, 'vendor', parsed);
-  return null;   // neither — let the router keep going
+  if (parsed.vendor && parsed.amount != null) {
+    await addExpenseFromText(ctx, parsed);
+    return true;
+  }
+  if (parsed.vendor) {
+    await askForMissingField(ctx, 'amount', parsed);
+    return true;
+  }
+  if (parsed.amount != null) {
+    await askForMissingField(ctx, 'vendor', parsed);
+    return true;
+  }
+  return false;   // neither — let the router keep going
 }
 
 /** Completes an add that was one field short. */
@@ -2846,9 +2864,8 @@ function greetingReply() {
  * canonicalised (matched category casing, resolved card name), or
  * { ok: false, error }.
  *
- * Pulled out so the pending-receipt, logged-expense and post-write enrichment
- * flows all reject the same bad input with the same wording, instead of each
- * growing its own half-copy of these checks.
+ * Pulled out so the pending-receipt and logged-expense flows reject the same bad
+ * input with the same wording, instead of each growing its own half-copy.
  */
 async function validateFieldValue(field, value) {
   if (field === 'category') {
@@ -2945,9 +2962,12 @@ function buildUpdatedPrompt(pending) {
 }
 
 async function getCurrentPending(store, userId) {
-  const { blobs } = await store.list({ prefix: `confirm:${userId}:`, limit: 1 });
+  // No `limit: 1` — taking the first of an unordered page can hand back a
+  // different item than the one on screen. Sort, then take the head, matching
+  // advanceBatch and the YES handler.
+  const { blobs } = await store.list({ prefix: `confirm:${userId}:` });
   if (!blobs || blobs.length === 0) return null;
-  const key = blobs[0].key;
+  const key = blobs.sort((a, b) => a.key.localeCompare(b.key))[0].key;
   const pending = await store.get(key, { type: 'json' });
   if (!pending) return null;
   return { key, pending };
@@ -3057,122 +3077,11 @@ async function handleEditCallback(ctx, rest) {
   return ctx.send('Unknown edit action.');
 }
 
-/* ── Post-write enrichment (typed adds) ──────────────────────────────────────
-   The row is already in the sheet, so nothing here blocks. Answers are staged in
-   the enrich blob and written in ONE delete+re-append when the user is done —
-   applying each field as it arrives would cost a full Sheets round trip and a
-   fresh UUID per answer. */
-
-async function getEnrichState(ctx) {
-  const { store, userId } = ctx;
-  const state = await store.get(ENRICH_KEY(userId), { type: 'json' }).catch(() => null);
-  if (!state) return null;
-  if (new Date(state.expires) <= new Date()) {
-    await store.delete(ENRICH_KEY(userId)).catch(() => {});
-    return null;
-  }
-  return state;
-}
-
-const ENRICH_FIELD_LABEL = { cat: 'Category', card: 'Card', date: 'Date', booking: 'Booking' };
-
-/** Re-renders the enrich prompt with what's been staged and what's still open. */
-async function renderEnrich(ctx, state, prefixLine) {
-  const { store, userId } = ctx;
-  await store.setJSON(ENRICH_KEY(userId), state);
-
-  const staged = Object.entries(state.changes || {});
-  const lines = [];
-  if (prefixLine) lines.push(prefixLine);
-  if (staged.length) {
-    lines.push('', 'Staged (not saved yet):');
-    for (const [k, v] of staged) lines.push(`• ${ENRICH_FIELD_LABEL[k] || k}: ${v === '' ? 'None' : v}`);
-  }
-  lines.push('', state.fields.length
-    ? 'Anything else? Tap 👍 All good to save.'
-    : 'Tap 👍 All good to save.');
-  return ctx.send(lines.join('\n'), kbEnrichMenu(state.fields));
-}
-
-/** Marks a field answered and stages its value. */
-function stageEnrich(state, field, value) {
-  state.changes = { ...(state.changes || {}), [field]: value };
-  state.fields  = (state.fields || []).filter(f => f !== field);
-  return state;
-}
-
-async function handleEnrichCallback(ctx, rest) {
-  const { store, userId } = ctx;
-  const state = await getEnrichState(ctx);
-  if (!state) return ctx.send('Nothing left to fill in.');
-
-  if (rest === 'cat')  return ctx.send('Pick a category:', kbCategoryPicker(CATEGORIES, 'enr:setcat'));
-  if (rest === 'card') {
-    let settings = {};
-    try { settings = await getUserSettings(); } catch { /* none */ }
-    const cards = settings.cards || [];
-    if (!cards.length) return ctx.send('No cards configured. Add cards in the dashboard settings first.');
-    return ctx.send('Pick a card:', kbCardPicker(cards, 'enr:setcard'));
-  }
-  if (rest === 'date') {
-    await store.setJSON(`awaiting_edit:${userId}`, { scope: 'enrich', field: 'date' });
-    return ctx.send('Send the date (YYYY-MM-DD):');
-  }
-  if (rest === 'booking') {
-    await store.setJSON(`awaiting_edit:${userId}`, { scope: 'enrich', field: 'booking' });
-    return ctx.send("Booking method — send 'portal' (8x UR) or 'direct' (4x UR):");
-  }
-
-  if (rest.startsWith('setcat:')) {
-    const category = CATEGORIES[parseInt(rest.slice('setcat:'.length), 10)];
-    if (!category) return ctx.send('Unknown category.');
-    return await renderEnrich(ctx, stageEnrich(state, 'cat', category), `🏷 Category → ${category}`);
-  }
-  if (rest.startsWith('setcard:')) {
-    const idx = parseInt(rest.slice('setcard:'.length), 10);
-    if (idx === -1) return await renderEnrich(ctx, stageEnrich(state, 'card', ''), '💳 Card → None');
-    let settings = {};
-    try { settings = await getUserSettings(); } catch { /* none */ }
-    const card = (settings.cards || [])[idx];
-    if (!card) return ctx.send('Unknown card.');
-    return await renderEnrich(ctx, stageEnrich(state, 'card', card), `💳 Card → ${card}`);
-  }
-
-  if (rest === 'done') {
-    await store.delete(ENRICH_KEY(userId));
-    const changes = state.changes || {};
-    const diff = {};
-    if (changes.cat !== undefined)     diff.category      = changes.cat;
-    if (changes.card !== undefined)    diff.paymentMethod = changes.card;
-    if (changes.date !== undefined)    diff.txDate        = changes.date;
-    if (changes.booking !== undefined) diff.bookingMethod = changes.booking;
-    if (!Object.keys(diff).length) return ctx.send('👍 Left as logged.', kbLoggedActions());
-    return await editLoggedExpense(ctx, diff);
-  }
-
-  return ctx.send('Unknown action.');
-}
-
 /** Applies a typed value captured for a button-driven field edit. */
 async function applyAwaitingEdit(ctx, text, state) {
   const { store, userId } = ctx;
   await store.delete(`awaiting_edit:${userId}`);
   const value = text.trim();
-
-  // ── Staged answer for a post-write enrichment question (no write yet) ──
-  if (state.scope === 'enrich') {
-    const enrich = await getEnrichState(ctx);
-    if (!enrich) return ctx.send('Nothing left to fill in.');
-    const res = await validateFieldValue(state.field, value);
-    if (!res.ok) {
-      await store.setJSON(`awaiting_edit:${userId}`, state);   // re-prompt
-      return ctx.send(`${res.error}\n(or CANCEL)`);
-    }
-    const key = state.field === 'date' ? 'date' : 'booking';
-    const shown = key === 'booking' ? (res.value || 'portal') : res.value;
-    return await renderEnrich(ctx, stageEnrich(enrich, key, res.value),
-      `${key === 'date' ? '📅 Date' : '🧾 Booking'} → ${shown}`);
-  }
 
   if (state.scope === 'logged') {
     const res = await validateFieldValue(state.field, value);
@@ -3390,9 +3299,9 @@ async function runBotAgent(ctx, text) {
       if (isNaN(amount) || amount <= 0) return 'Invalid amount.';
       const vendor = String(input.vendor || '').trim();
       if (!vendor) return 'Vendor is required — ask the user where the money went.';
-      // Same write-first path as the typed fast path: category is resolved
-      // server-side (smart rules → Groq) unless the user named one, and the
-      // enrichment menu handles whatever was guessed.
+      // Same path as the typed fast path: category is resolved server-side
+      // (smart rules → Groq) unless the user named one, and the user gets the
+      // same confirmation before anything is written.
       const explicitDate = /^\d{4}-\d{2}-\d{2}$/.test(String(input.date || ''));
       await addExpenseFromText(ctx, {
         vendor, amount,
