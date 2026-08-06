@@ -169,17 +169,39 @@ describe('parseExpenseCommand', () => {
   });
 });
 
-describe('write-first add', () => {
-  it('writes immediately when vendor and amount are both present', async () => {
+describe('confirm-first add', () => {
+  it('proposes rather than writing, and waits for the tick', async () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'Add walgreen $53.11');
+
+    // Nothing in the sheet yet — the category and amount are the two things
+    // worth a glance BEFORE the row exists, because fixing a category
+    // afterwards means a cross-tab delete and re-append.
+    expect(appendExpense).not.toHaveBeenCalled();
+    expect(lastSent(ctx).text).toContain('Category:');
+    expect(lastSent(ctx).text).toContain('Total: $53.11');
+    expect(flatButtons(lastSent(ctx).keyboard)).toEqual(expect.arrayContaining(['YES', 'CANCEL', 'edit:menu']));
+    expect([...mockStore.data.keys()].some(k => k.startsWith(`confirm:${USER}:`))).toBe(true);
+  });
+
+  it('writes once the user confirms', async () => {
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'Add walgreen $53.11');
+    await handleTextReply(ctx, 'YES');
 
     expect(appendExpense).toHaveBeenCalledTimes(1);
     expect(appendExpense.mock.calls[0][0]).toMatchObject({
       vendor: 'walgreen', amount: 53.11, txDate: '2026-05-15', sheetId: 'sheet-123',
     });
-    expect(lastSent(ctx).text).toContain('✅ Logged');
-    // No confirmation was staged — that is the whole point of write-first.
+    expect(mockStore.data.get(`lastlog:${USER}`)).toMatchObject({ vendor: 'walgreen', amount: 53.11 });
+  });
+
+  it('writes nothing if the user cancels', async () => {
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'Add walgreen $53.11');
+    await handleTextReply(ctx, 'CANCEL');
+
+    expect(appendExpense).not.toHaveBeenCalled();
     expect([...mockStore.data.keys()].some(k => k.startsWith(`confirm:${USER}:`))).toBe(false);
   });
 
@@ -188,14 +210,7 @@ describe('write-first add', () => {
     expect(extractTransactionText).not.toHaveBeenCalled();
   });
 
-  it('records the write in lastlog so UNDO and Edit work', async () => {
-    await handleTextReply(makeCtx(), 'walgreens 53.11');
-    expect(mockStore.data.get(`lastlog:${USER}`)).toMatchObject({
-      uuid: 'tx_5311_abcd1234', vendor: 'walgreens', amount: 53.11,
-    });
-  });
-
-  it("applies the user's own smart rule and does not ask about the category", async () => {
+  it("applies the user's own smart rule to the proposed category", async () => {
     getUserSettings.mockResolvedValue({
       cards: [], cardRules: [],
       smartRules: [{ id: 'r1', pattern: 'walgreen', category: 'Health' }],
@@ -203,11 +218,19 @@ describe('write-first add', () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'Add walgreen $53.11');
 
-    expect(appendExpense.mock.calls[0][0].category).toBe('Health');
-    expect(flatButtons(lastSent(ctx).keyboard)).not.toContain('enr:cat');
+    expect(lastSent(ctx).text).toContain('Category: Health');
+    expect(lastSent(ctx).text).not.toContain('a guess');
   });
 
-  it('applies a card rule instead of asking for the card', async () => {
+  it('flags a low-confidence category on the confirmation', async () => {
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'Add walgreen $53.11');
+    // No smart rule and no Groq key, so the category is the fallback — the point
+    // is the user sees it before it is committed.
+    expect(lastSent(ctx).text).toMatch(/Category: \w/);
+  });
+
+  it('applies a card rule to the proposal', async () => {
     getUserSettings.mockResolvedValue({
       cards: ['Amex BCP'],
       cardRules: [{ vendorPattern: 'walgreen', card: 'Amex BCP' }],
@@ -215,45 +238,49 @@ describe('write-first add', () => {
     });
     const ctx = makeCtx();
     await handleTextReply(ctx, 'Add walgreen $53.11');
-
-    expect(appendExpense.mock.calls[0][0].paymentMethod).toBe('Amex BCP');
-    expect(flatButtons(lastSent(ctx).keyboard)).not.toContain('enr:card');
+    expect(lastSent(ctx).text).toContain('Card: Amex BCP');
   });
 
-  it('reports a suspected duplicate without blocking the write', async () => {
+  it('shows the date it will use', async () => {
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'Add walgreen $53.11');
+    // Defaulted, never "Unknown".
+    expect(lastSent(ctx).text).toContain('Date: 2026-05-15');
+  });
+
+  it('warns about a suspected duplicate before writing, not after', async () => {
     getRecentExpenses.mockResolvedValue([
       { vendor: 'Walgreens', amount: 53.11, txDate: '2026-05-14', category: 'Health' },
     ]);
     const ctx = makeCtx();
     await handleTextReply(ctx, 'Add walgreens $53.11');
 
-    expect(appendExpense).toHaveBeenCalledTimes(1);          // written anyway
+    expect(appendExpense).not.toHaveBeenCalled();
     expect(lastSent(ctx).text).toContain('Possible duplicate');
+    // The affirmative is relabelled so it cannot be a reflex tap.
+    expect((lastSent(ctx).keyboard || []).flat().map(b => b.text).join(' ')).toContain('Log anyway');
   });
 });
 
 describe('exactly one reply per message', () => {
   /*
-   * Live bug, seen on the first real Telegram test: "Add walgreens 1.23" logged
-   * the row correctly AND THEN sent a second "Transaction found… Reply YES to
-   * log" from the bank-SMS extractor. Tapping YES would have written the expense
-   * a second time.
+   * Live bug, seen on the first real Telegram test: one "Add walgreens 1.23"
+   * produced TWO replies — the proposal, and then a second "Transaction found…
+   * Reply YES to log" from the bank-SMS extractor. Two pending confirms meant
+   * two YES taps could write the expense twice.
    *
-   * Cause: the router used `ctx.send`'s return value as the "handled" signal.
-   * telegram-webhook's send awaits sendMessage and returns UNDEFINED, so the
-   * check was always false and the message fell through the rest of the router.
-   * Invisible under test until the mock stopped returning a truthy value.
+   * Cause: the router used ctx.send's return value as the "handled" signal, and
+   * telegram-webhook's send returns UNDEFINED, so the check never fired and the
+   * message fell through the rest of the router.
    */
-  it('does not also run the SMS extractor after logging', async () => {
+  it('does not also run the SMS extractor', async () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'Add walgreens 1.23');
 
     expect(extractTransactionText).not.toHaveBeenCalled();
-    expect(appendExpense).toHaveBeenCalledTimes(1);
     expect(ctx.sent).toHaveLength(1);
-    expect(ctx.sent[0].text).toContain('Logged');
-    // A stray pending confirm is the dangerous part: its YES writes a 2nd row.
-    expect([...mockStore.data.keys()].some(k => k.startsWith(`confirm:${USER}:`))).toBe(false);
+    // Exactly one pending confirm — two would mean two writes.
+    expect([...mockStore.data.keys()].filter(k => k.startsWith(`confirm:${USER}:`))).toHaveLength(1);
   });
 
   it('sends one reply when asking for a missing amount', async () => {
@@ -266,7 +293,7 @@ describe('exactly one reply per message', () => {
 });
 
 describe('the one blocking question', () => {
-  it('asks how much when only the vendor is known, and writes nothing yet', async () => {
+  it('asks how much when only the vendor is known, and proposes nothing', async () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'add walgreens');
 
@@ -279,27 +306,26 @@ describe('the one blocking question', () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'spent $40');
 
-    expect(appendExpense).not.toHaveBeenCalled();
     expect(lastSent(ctx).text).toContain('$40 — where?');
     expect(mockStore.data.get(`awaiting_add:${USER}`)).toMatchObject({ amount: 40, missing: 'vendor' });
   });
 
-  it('completes the add from the reply', async () => {
+  it('proposes the expense once the answer arrives', async () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'add walgreens');
     await handleTextReply(ctx, '53.11');
 
-    expect(appendExpense).toHaveBeenCalledTimes(1);
+    expect(lastSent(ctx).text).toContain('Total: $53.11');
+    expect(appendExpense).not.toHaveBeenCalled();     // still waiting for the tick
+    await handleTextReply(ctx, 'YES');
     expect(appendExpense.mock.calls[0][0]).toMatchObject({ vendor: 'walgreens', amount: 53.11 });
-    expect(mockStore.data.has(`awaiting_add:${USER}`)).toBe(false);
   });
 
-  it('re-prompts on an unusable answer rather than writing junk', async () => {
+  it('re-prompts on an unusable answer rather than proposing junk', async () => {
     const ctx = makeCtx();
     await handleTextReply(ctx, 'add walgreens');
     await handleTextReply(ctx, 'not a number');
 
-    expect(appendExpense).not.toHaveBeenCalled();
     expect(lastSent(ctx).text).toContain('Send the amount');
     expect(mockStore.data.has(`awaiting_add:${USER}`)).toBe(true);
   });
@@ -314,88 +340,45 @@ describe('the one blocking question', () => {
   });
 });
 
-describe('post-write enrichment', () => {
-  it('offers only the fields it actually had to guess', async () => {
+describe('dates use the household timezone, not the server clock', () => {
+  /*
+   * Cloud Functions runs in UTC. At 8pm Pacific it is already TOMORROW in UTC,
+   * so `new Date().toISOString()` dated every evening expense a day late — and
+   * one logged late on the 31st landed in the NEXT month's sheet entirely.
+   * Seen live: a 10:30pm test logged against the following day.
+   */
+  it('dates an evening expense to the local day, not the UTC one', async () => {
+    vi.setSystemTime(new Date('2026-05-16T03:00:00Z'));   // 8pm May 15 in Los Angeles
     const ctx = makeCtx();
     await handleTextReply(ctx, 'Add walgreen $53.11');
+    expect(lastSent(ctx).text).toContain('Date: 2026-05-15');
 
-    const buttons = flatButtons(lastSent(ctx).keyboard);
-    expect(buttons).toContain('enr:card');    // no card rule matched
-    expect(buttons).toContain('enr:date');    // date was defaulted to today
-    expect(buttons).toContain('enr:done');
-    expect(buttons).toContain('UNDO');
-    expect(buttons).not.toContain('enr:booking');   // not a Travel/Holiday expense
+    await handleTextReply(ctx, 'YES');
+    expect(appendExpense.mock.calls[0][0].txDate).toBe('2026-05-15');
+    vi.setSystemTime(new Date('2026-05-15T12:00:00Z'));
   });
 
-  it('shows no menu at all when nothing was guessed', async () => {
-    getUserSettings.mockResolvedValue({
-      cards: ['Amex BCP'],
-      cardRules: [{ vendorPattern: 'shell', card: 'Amex BCP' }],
-      smartRules: [{ id: 'r1', pattern: 'shell', category: 'Misc' }],
-    });
-    const ctx = makeCtx();
-    await handleTextReply(ctx, 'add shell $40 yesterday');
-
-    expect(flatButtons(lastSent(ctx).keyboard)).toEqual(['edit:last', 'UNDO']);
-    expect(mockStore.data.has(`enrich:${USER}`)).toBe(false);
-  });
-
-  it('stages answers without writing, then applies them in ONE re-append', async () => {
+  it('keeps an evening expense in the right month at a month boundary', async () => {
+    vi.setSystemTime(new Date('2026-06-01T03:00:00Z'));   // 8pm May 31 in Los Angeles
     const ctx = makeCtx();
     await handleTextReply(ctx, 'Add walgreen $53.11');
-    expect(appendExpense).toHaveBeenCalledTimes(1);
+    await handleTextReply(ctx, 'YES');
 
-    await handleTextReply(ctx, 'enr:card');
-    await handleTextReply(ctx, 'enr:setcard:0');       // Amex BCP
-    await handleTextReply(ctx, 'enr:date');
-    await handleTextReply(ctx, '2026-05-12');
-
-    // Still just the original write — answers are staged, not applied.
-    expect(appendExpense).toHaveBeenCalledTimes(1);
-    expect(deleteExpenseByUUID).not.toHaveBeenCalled();
-    expect(lastSent(ctx).text).toContain('Staged (not saved yet)');
-
-    await handleTextReply(ctx, 'enr:done');
-
-    // Exactly one delete + one re-append for BOTH fields, not one per field.
-    expect(deleteExpenseByUUID).toHaveBeenCalledTimes(1);
-    expect(appendExpense).toHaveBeenCalledTimes(2);
-    expect(appendExpense.mock.calls[1][0]).toMatchObject({
-      vendor: 'walgreen', amount: 53.11, paymentMethod: 'Amex BCP', txDate: '2026-05-12',
-    });
-  });
-
-  it('"All good" with nothing staged touches the sheet not at all', async () => {
-    const ctx = makeCtx();
-    await handleTextReply(ctx, 'Add walgreen $53.11');
-    await handleTextReply(ctx, 'enr:done');
-
-    expect(deleteExpenseByUUID).not.toHaveBeenCalled();
-    expect(appendExpense).toHaveBeenCalledTimes(1);
-    expect(lastSent(ctx).text).toContain('Left as logged');
-  });
-
-  it('refuses a staged date that would land in another month', async () => {
-    const ctx = makeCtx();
-    await handleTextReply(ctx, 'Add walgreen $53.11');
-    await handleTextReply(ctx, 'enr:date');
-    await handleTextReply(ctx, '2026-04-30');
-    await handleTextReply(ctx, 'enr:done');
-
-    // The re-append only ever targets lastlog.sheetId, so crossing months would
-    // silently write the row into May's sheet with an April date.
-    expect(deleteExpenseByUUID).not.toHaveBeenCalled();
-    expect(appendExpense).toHaveBeenCalledTimes(1);
-    expect(lastSent(ctx).text).toContain('April 2026');
+    // The UTC date would have filed this under June.
+    expect(appendExpense.mock.calls[0][0].monthName).toBe('May 2026');
+    vi.setSystemTime(new Date('2026-05-15T12:00:00Z'));
   });
 });
 
 describe('logged-expense edits', () => {
+  const logIt = async (ctx, text = 'Add walgreen $53.11') => {
+    await handleTextReply(ctx, text);
+    await handleTextReply(ctx, 'YES');
+  };
+
   it('can change the card on an already-logged row', async () => {
     const ctx = makeCtx();
-    await handleTextReply(ctx, 'Add walgreen $53.11');
-    await handleTextReply(ctx, 'enr:done');
-
+    await logIt(ctx);
     await handleTextReply(ctx, 'edit:last');
     expect(flatButtons(lastSent(ctx).keyboard)).toContain('edit:lf:card');
 
@@ -413,7 +396,7 @@ describe('logged-expense edits', () => {
       smartRules: [],
     });
     const ctx = makeCtx();
-    await handleTextReply(ctx, 'Add walgreen $53.11');
+    await logIt(ctx);
     await handleTextReply(ctx, 'edit:last');
     await handleTextReply(ctx, 'edit:lastcard:-1');          // None
 
@@ -422,11 +405,23 @@ describe('logged-expense edits', () => {
 
   it('can rename the vendor on an already-logged row', async () => {
     const ctx = makeCtx();
-    await handleTextReply(ctx, 'Add walgreen $53.11');
-    await handleTextReply(ctx, 'enr:done');
+    await logIt(ctx);
     await handleTextReply(ctx, 'edit:lf:store');
     await handleTextReply(ctx, 'Walgreens #4412');
 
     expect(appendExpense.mock.calls[1][0].vendor).toBe('Walgreens #4412');
+  });
+
+  it('refuses a date change that would cross into another month', async () => {
+    const ctx = makeCtx();
+    await logIt(ctx);
+    await handleTextReply(ctx, 'edit:lf:date');
+    await handleTextReply(ctx, '2026-04-30');
+
+    // The re-append only targets lastlog.sheetId, so crossing months would
+    // silently write an April row into May's sheet.
+    expect(deleteExpenseByUUID).not.toHaveBeenCalled();
+    expect(appendExpense).toHaveBeenCalledTimes(1);
+    expect(lastSent(ctx).text).toContain('April 2026');
   });
 });

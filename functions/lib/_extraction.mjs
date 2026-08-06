@@ -24,8 +24,24 @@ const CATEGORIES = [
 const SYSTEM_PROMPT = `You are a transaction parser for a personal budget tracker. Extract structured data from images (receipt photos, wallet app screenshots like Apple Pay/Google Pay/Samsung Pay, bank app screenshots, SMS notification screenshots) and return ONLY valid JSON — no markdown, no explanation, no preamble.`;
 
 /** Today in YYYY-MM-DD. Isolated so tests can freeze it. */
+/**
+ * The household's timezone.
+ *
+ * Cloud Functions runs in UTC, so `new Date().toISOString()` is the UTC date —
+ * which after ~5pm Pacific is already TOMORROW. Every evening expense was being
+ * dated a day late, and one logged late on the 31st landed in the NEXT month's
+ * sheet entirely.
+ *
+ * Mirrors the timezone _error-log.mjs already uses for digest timestamps.
+ */
+export const HOUSEHOLD_TZ = 'America/Los_Angeles';
+
+/** Today where the user actually is, as YYYY-MM-DD. */
 export function todayISO(now = new Date()) {
-  return now.toISOString().slice(0, 10);
+  // en-CA formats as YYYY-MM-DD, which is exactly the shape we store.
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: HOUSEHOLD_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(now);
 }
 
 /**
