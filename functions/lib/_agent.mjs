@@ -10,13 +10,18 @@
  * can fall back to a deterministic reply — the bot never hard-depends on AI.
  */
 
+/* Model names are constants, not env overrides. Cloud Functions only receives
+ * variables that are declared (the `secrets:` list on each function), and no
+ * function declares a model name — so a `process.env.BOT_AGENT_MODEL ?? default`
+ * read could never be anything but the default in production while looking, to
+ * anyone reading it, like a live switch. Changing a model is a code change. */
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ANTHROPIC_URL     = 'https://api.anthropic.com/v1/messages';
-const AGENT_MODEL       = process.env.BOT_AGENT_MODEL || 'claude-haiku-4-5';
+const AGENT_MODEL       = 'claude-haiku-4-5';
 const MAX_ITERS         = 4;   // hard cap on tool round-trips (webhook is 120s)
 
 const GROQ_URL         = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_AGENT_MODEL = process.env.BOT_AGENT_GROQ_MODEL || 'llama-3.3-70b-versatile';
+const GROQ_AGENT_MODEL = 'llama-3.3-70b-versatile';
 
 async function callClaude({ system, tools, messages }) {
   const res = await fetch(ANTHROPIC_URL, {

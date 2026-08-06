@@ -392,9 +392,12 @@ async function callClaudeText(model, text) {
 
    Groq has no documented PDF support, so the PDF path skips it entirely. */
 
+// Constants, not env overrides — nothing binds a model name into the functions
+// runtime, so an env read here would always resolve to the default while
+// implying otherwise. Same reasoning as the model constants in _agent.mjs.
 const GROQ_URL          = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_TEXT_MODEL   = process.env.GROQ_EXTRACT_MODEL || 'llama-3.3-70b-versatile';
-const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL  || 'qwen/qwen3.6-27b';
+const GROQ_TEXT_MODEL   = 'llama-3.3-70b-versatile';
+const GROQ_VISION_MODEL = 'qwen/qwen3.6-27b';
 
 async function callGroq(messages, model) {
   const apiKey = process.env.GROQ_API_KEY;
