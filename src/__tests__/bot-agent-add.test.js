@@ -66,7 +66,7 @@ vi.mock('../../functions/lib/_extraction.mjs', async (importOriginal) => {
 const mockFetch = vi.fn();
 globalThis.fetch = mockFetch;
 
-const { handleTextReply, looksLikeExpenseCommand, parseExpenseCommand } =
+const { handleTextReply, looksLikeExpenseCommand, parseExpenseCommand, normalizeVendor } =
   await import('../../functions/lib/_bot-core.mjs');
 
 const USER = '123456789';
@@ -191,9 +191,9 @@ describe('confirm-first add', () => {
 
     expect(appendExpense).toHaveBeenCalledTimes(1);
     expect(appendExpense.mock.calls[0][0]).toMatchObject({
-      vendor: 'walgreen', amount: 53.11, txDate: '2026-05-15', sheetId: 'sheet-123',
+      vendor: 'Walgreen', amount: 53.11, txDate: '2026-05-15', sheetId: 'sheet-123',
     });
-    expect(mockStore.data.get(`lastlog:${USER}`)).toMatchObject({ vendor: 'walgreen', amount: 53.11 });
+    expect(mockStore.data.get(`lastlog:${USER}`)).toMatchObject({ vendor: 'Walgreen', amount: 53.11 });
   });
 
   it('writes nothing if the user cancels', async () => {
@@ -318,7 +318,7 @@ describe('the one blocking question', () => {
     expect(lastSent(ctx).text).toContain('Total: $53.11');
     expect(appendExpense).not.toHaveBeenCalled();     // still waiting for the tick
     await handleTextReply(ctx, 'YES');
-    expect(appendExpense.mock.calls[0][0]).toMatchObject({ vendor: 'walgreens', amount: 53.11 });
+    expect(appendExpense.mock.calls[0][0]).toMatchObject({ vendor: 'Walgreens', amount: 53.11 });
   });
 
   it('re-prompts on an unusable answer rather than proposing junk', async () => {
@@ -367,6 +367,49 @@ describe('dates use the household timezone, not the server clock', () => {
     // The UTC date would have filed this under June.
     expect(appendExpense.mock.calls[0][0].monthName).toBe('May 2026');
     vi.setSystemTime(new Date('2026-05-15T12:00:00Z'));
+  });
+});
+
+describe('vendor casing', () => {
+  /*
+   * "walgreens 1.23" and "Walgreens 1.23" were writing two differently-cased
+   * rows for one shop, which reads as two vendors in the Cards and Split views.
+   */
+  it('capitalises a vendor typed in all lowercase', () => {
+    expect(normalizeVendor('walgreens')).toBe('Walgreens');
+    expect(normalizeVendor('trader joes')).toBe('Trader Joes');
+  });
+
+  it('leaves a deliberate capitalisation alone', () => {
+    // Naive title-casing would produce Ikea, Mcdonald's and 7-eleven.
+    expect(normalizeVendor('IKEA')).toBe('IKEA');
+    expect(normalizeVendor("McDonald's")).toBe("McDonald's");
+    expect(normalizeVendor('7-Eleven')).toBe('7-Eleven');
+  });
+
+  it('adopts the spelling already used in the sheet', () => {
+    const recent = [{ vendor: 'WALGREENS', amount: 5, txDate: '2026-05-01', category: 'Health' }];
+    expect(normalizeVendor('walgreens', recent)).toBe('WALGREENS');
+    expect(normalizeVendor('Walgreens', recent)).toBe('WALGREENS');
+  });
+
+  it('will not rewrite a typed name into a longer receipt name', () => {
+    // Fuzzy matching would call these the same vendor; adopting the receipt's
+    // store-specific name is a different claim than the user made.
+    const recent = [{ vendor: 'WALGREENS #4412', amount: 5, txDate: '2026-05-01', category: 'Health' }];
+    expect(normalizeVendor('walgreens', recent)).toBe('Walgreens');
+  });
+
+  it('writes one consistent spelling however it is typed', async () => {
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'add WALGREENS 1.23');
+    await handleTextReply(ctx, 'YES');
+    await handleTextReply(ctx, 'add walgreens 2.34');
+    await handleTextReply(ctx, 'YES');
+
+    // The second add adopts the first's spelling rather than inventing a
+    // second vendor — but only because getRecentExpenses reports it.
+    expect(appendExpense.mock.calls[0][0].vendor).toBe('WALGREENS');
   });
 });
 

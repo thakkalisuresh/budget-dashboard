@@ -132,7 +132,7 @@ describe('multi-expense: the clean path', () => {
     await handleTextReply(ctx, 'walgreens 53.11 and shell 40');
 
     expect(appendExpense).not.toHaveBeenCalled();
-    expect(queued().map(q => q.extraction.store_name)).toEqual(['walgreens', 'shell']);
+    expect(queued().map(q => q.extraction.store_name)).toEqual(['Walgreens', 'Shell']);
     expect(queued()[0].batchTotal).toBe(2);
     expect(lastSent(ctx).text).toContain('1/2');
   });
@@ -143,7 +143,7 @@ describe('multi-expense: the clean path', () => {
     await confirmAll(ctx);
 
     expect(appendExpense).toHaveBeenCalledTimes(2);
-    expect(appendExpense.mock.calls.map(c => c[0].vendor)).toEqual(['walgreens', 'shell']);
+    expect(appendExpense.mock.calls.map(c => c[0].vendor)).toEqual(['Walgreens', 'Shell']);
   });
 
   it('gives each row its own line in the sheet (writes are sequential)', async () => {
@@ -165,7 +165,7 @@ describe('multi-expense: the clean path', () => {
     await confirmAll(ctx);
 
     expect(appendExpense).toHaveBeenCalledTimes(1);
-    expect(appendExpense.mock.calls[0][0].vendor).toBe('shell');
+    expect(appendExpense.mock.calls[0][0].vendor).toBe('Shell');
   });
 });
 
@@ -186,9 +186,9 @@ describe('multi-expense: ambiguity blocks only what it touches', () => {
 
     expect(appendExpense).toHaveBeenCalledTimes(3);
     const vendors = appendExpense.mock.calls.map(c => c[0].vendor);
-    expect(vendors).toContain('shell');
-    expect(vendors).toContain('walgreens');
-    expect(vendors).toContain('chipotle');
+    expect(vendors).toContain('Shell');
+    expect(vendors).toContain('Walgreens');
+    expect(vendors).toContain('Chipotle');
   });
 
   it('can skip a held item without losing the rest', async () => {
@@ -198,7 +198,7 @@ describe('multi-expense: ambiguity blocks only what it touches', () => {
     await confirmAll(ctx);
 
     expect(appendExpense).toHaveBeenCalledTimes(1);
-    expect(appendExpense.mock.calls[0][0].vendor).toBe('walgreens');
+    expect(appendExpense.mock.calls[0][0].vendor).toBe('Walgreens');
   });
 });
 
@@ -221,7 +221,7 @@ describe('multi-expense: D2, one amount and several vendors', () => {
     await confirmAll(ctx);
 
     expect(appendExpense).toHaveBeenCalledTimes(1);
-    expect(appendExpense.mock.calls[0][0]).toMatchObject({ vendor: 'shell', amount: 93 });
+    expect(appendExpense.mock.calls[0][0]).toMatchObject({ vendor: 'Shell', amount: 93 });
   });
 
   it('"split evenly" divides it and the parts re-sum exactly', async () => {
@@ -324,7 +324,7 @@ describe('§9.1 — learning from corrections', () => {
     await handleTextReply(ctx, 'YES');
     await handleTextReply(ctx, 'edit:lastcat:10');
 
-    expect(allText(ctx)).toContain('Always put walgreens in Health?');
+    expect(allText(ctx)).toContain('Always put Walgreens in Health?');
   });
 
   it('does not offer when the corrections disagree with each other', async () => {
@@ -350,7 +350,7 @@ describe('§9.1 — learning from corrections', () => {
     await handleTextReply(ctx, 'edit:lastcat:10');
     await handleTextReply(ctx, 'lrn:yes');
 
-    expect(addSmartRule).toHaveBeenCalledWith('walgreens', 'Health');
+    expect(addSmartRule).toHaveBeenCalledWith('Walgreens', 'Health');
     expect(lastSent(ctx).text).toContain('from now on');
   });
 
