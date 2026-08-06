@@ -370,6 +370,35 @@ describe('dates use the household timezone, not the server clock', () => {
   });
 });
 
+describe('duplicate warning text', () => {
+  it('shows a real date, not the sheet serial', async () => {
+    // Seen live: "already logged: Costco $4.44 on 46240". Sheet dates come back
+    // as serial numbers under UNFORMATTED_VALUE, and the warning printed the
+    // raw value. 46157 is 2026-05-15, which is this suite's clock — the rows
+    // must be within the duplicate window or the warning never fires at all.
+    getRecentExpenses.mockResolvedValue([
+      { vendor: 'Costco', amount: 4.44, txDate: 46157, category: 'Grocery' },
+    ]);
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'add costco 4.44');
+
+    expect(lastSent(ctx).text).toContain('Possible duplicate');
+    expect(lastSent(ctx).text).toContain('on 2026-05-15');
+    expect(lastSent(ctx).text).not.toContain('46157');
+  });
+
+  it('omits the date rather than printing something unreadable', async () => {
+    getRecentExpenses.mockResolvedValue([
+      { vendor: 'Costco', amount: 4.44, txDate: '', category: 'Grocery' },
+    ]);
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'add costco 4.44');
+
+    expect(lastSent(ctx).text).toContain('Possible duplicate');
+    expect(lastSent(ctx).text).not.toContain(' on ');
+  });
+});
+
 describe('confirmation wording', () => {
   it('does not call a typed expense a receipt', async () => {
     // The YES handler is shared with the receipt-photo flow, so "add walgreens

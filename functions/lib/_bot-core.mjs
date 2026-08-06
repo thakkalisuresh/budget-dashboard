@@ -24,7 +24,7 @@ import { looksLikeQuery, answerQuery } from './_query.mjs';
 import { buildRewardsLine, getEffectiveRates } from './_card-rewards.mjs';
 import { resolveCardName } from './_card-resolver.mjs';
 import { resolveCategory, applySmartRules } from './_categorize.mjs';
-import { findDuplicates, fuzzyNamesMatch } from './_duplicate-match.mjs';
+import { findDuplicates, fuzzyNamesMatch, parseRowDate } from './_duplicate-match.mjs';
 import {
   kbYesCancel, kbYesSkip, kbConfirmDelete, kbSplitCategory, kbCategoryConfirm, kbLogAnywayCancel,
   kbConfirmReceipt, kbLogAnywayReceipt, kbBatchReceipt, kbEditMenu, kbCategoryPicker, kbCardPicker,
@@ -1483,7 +1483,12 @@ async function findExistingDuplicates(monthName, data) {
 function buildDuplicateWarning(dups) {
   const lines = [`⚠️ Possible duplicate — already logged:`];
   for (const d of dups.slice(0, 3)) {
-    const when = d.date ? ` on ${String(d.date).slice(0, 10)}` : '';
+    // Dates arrive from the sheet as SERIAL NUMBERS (UNFORMATTED_VALUE), so
+    // printing the raw value showed users "on 46240". parseRowDate understands
+    // both serials and ISO strings; anything it cannot read is left off rather
+    // than shown as a number.
+    const ms = parseRowDate(d.date);
+    const when = ms ? ` on ${new Date(ms).toISOString().slice(0, 10)}` : '';
     lines.push(`• ${d.vendor} · $${Number(d.amount).toFixed(2)}${when} (${d.category || 'Misc'})`);
   }
   if (dups.length > 3) lines.push(`• …and ${dups.length - 3} more`);
