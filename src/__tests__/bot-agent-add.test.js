@@ -370,6 +370,26 @@ describe('dates use the household timezone, not the server clock', () => {
   });
 });
 
+describe('confirmation wording', () => {
+  it('does not call a typed expense a receipt', async () => {
+    // The YES handler is shared with the receipt-photo flow, so "add walgreens
+    // 1.11" was confirmed with "Receipt logged!" when no receipt existed.
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'add walgreens 1.11');
+    await handleTextReply(ctx, 'YES');
+
+    expect(lastSent(ctx).text).toContain('Logged!');
+    expect(lastSent(ctx).text).not.toContain('Receipt logged!');
+  });
+
+  it('still offers ATTACH, since a photo can be added afterwards', async () => {
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'add walgreens 1.11');
+    await handleTextReply(ctx, 'YES');
+    expect(lastSent(ctx).text).toContain('ATTACH');
+  });
+});
+
 describe('vendor casing', () => {
   /*
    * "walgreens 1.23" and "Walgreens 1.23" were writing two differently-cased

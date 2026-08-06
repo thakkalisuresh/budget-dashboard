@@ -486,8 +486,12 @@ export async function handleTextReply(ctx, text) {
     try { _rateSettings = await getUserSettings(); } catch { /* use defaults */ }
     const rewardsLine = paymentMethod ? buildRewardsLine(paymentMethod, category, amount, vendor, getEffectiveRates(_rateSettings)) : '';
 
+    // The confirm handler is shared with the receipt-photo flow, so a typed
+    // "add walgreens 1.11" was being confirmed with "Receipt logged!" when no
+    // receipt existed. ATTACH stays offered either way — a photo can still be
+    // added to a typed expense afterwards.
     const summary = [
-      'Receipt logged!',
+      pending.source === 'text' ? 'Logged!' : 'Receipt logged!',
       '',
       `Store/Vendor: ${vendor}`,
       `Date: ${txDate || 'Today'}`,
@@ -2477,6 +2481,7 @@ async function addExpenseFromText(ctx, input) {
     year: proposal.year,
     month: proposal.month,
     status: 'awaiting_confirmation',
+    source: 'text',        // no receipt involved — see the summary wording below
   });
 
   const lines = [
@@ -2540,6 +2545,7 @@ async function writeMultiItem(ctx, state, item) {
     },
     year: row.year, month: row.month,
     status: 'awaiting_confirmation',
+    source: 'text',
     batchIndex: index + 1,
     batchTotal: 0,                 // patched once the batch size is known
   });

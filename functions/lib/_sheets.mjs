@@ -224,6 +224,12 @@ export async function getTotals(sheetId) {
   return { categories, salary, leftFromSalary };
 }
 
+/**
+ * History action written when an expense row is removed. Named once so the
+ * writer (deleteExpenseByUUID) and the reader (getRecentExpenses) cannot drift.
+ */
+export const DELETED_ACTION = 'Deleted';
+
 export async function getRecentExpenses(sheetId, limit = 10) {
   const range = encodeURIComponent("'History'!A:J");
   const data = await sheetsRequest(sheetId, `/values/${range}?valueRenderOption=UNFORMATTED_VALUE`);
@@ -252,8 +258,11 @@ export async function getRecentExpenses(sheetId, limit = 10) {
       };
     })
     // A real expense entry always carries a uuid + amount; admin actions
-    // (budget/category changes, renames, deletes) never write a uuid.
-    .filter(e => e.amount && e.uuid)
+    // (budget/category changes, renames) never write a uuid. Delete markers DO
+    // carry one and are kept here on purpose — they are what removes the
+    // expense below, and a marker for a row we could not re-read first may
+    // have no amount.
+    .filter(e => e.uuid && (e.amount || e.action === DELETED_ACTION))
     .reverse();
 
   // The History log is append-only, so an edited expense appears as a later
@@ -262,7 +271,9 @@ export async function getRecentExpenses(sheetId, limit = 10) {
   const deduped = [];
   for (const e of mapped) {
     if (seen.has(e.uuid)) continue;
-    seen.add(e.uuid);
+    seen.add(e.uuid);   // claim the uuid BEFORE the delete check, so an older
+                        // entry for it cannot resurrect a deleted expense
+    if (e.action === DELETED_ACTION) continue;
     deduped.push(e);
   }
   return deduped.slice(0, limit);
@@ -308,6 +319,16 @@ export async function deleteExpenseByUUID({ category, uuid, sheetId }) {
   const sheet = meta.sheets.find(s => s.properties.title === sheetTab);
   if (!sheet) throw new Error(`Sheet tab not found: ${sheetTab}`);
 
+  // Read the row before it goes, so the History marker can carry what was
+  // removed rather than just an id.
+  let removed = [];
+  try {
+    const range = encodeURIComponent(`'${sheetTab}'!A${rowIndex + 1}:H${rowIndex + 1}`);
+    removed = (await sheetsRequest(sheetId, `/values/${range}?valueRenderOption=UNFORMATTED_VALUE`)).values?.[0] || [];
+  } catch (e) {
+    console.warn('deleteExpenseByUUID: could not read row before delete', e.message);
+  }
+
   await sheetsRequest(sheetId, ':batchUpdate', {
     method: 'POST',
     body: JSON.stringify({
@@ -322,6 +343,21 @@ export async function deleteExpenseByUUID({ category, uuid, sheetId }) {
         },
       }],
     }),
+  });
+
+  // History is append-only and deletes previously left no trace carrying the
+  // uuid, so getRecentExpenses kept returning the original row forever — the
+  // expense was gone from its tab but still visible to duplicate detection,
+  // vendor-history and card inference. This marker is the newest entry for the
+  // uuid, which is what getRecentExpenses keys on to drop it.
+  await appendHistory(sheetId, {
+    action: DELETED_ACTION,
+    category: sheetTab,
+    vendor: removed[3] || '',
+    amount: removed[4] ?? 0,
+    uuid,
+    txDate: removed[2] || '',
+    details: 'Expense deleted',
   });
 }
 
