@@ -381,46 +381,103 @@ async function callClaudeText(model, text) {
   return parseJSON(responseText);
 }
 
+/* ── Groq ──────────────────────────────────────────────────────────────────
+   Groq is the cheap, fast first choice for TEXT. For IMAGES it stays a
+   fallback, on measurement rather than taste: an eval over the receipts already
+   in Drive (scripts/eval-vision.mjs) found its reading accurate — 9/9 exact on
+   vendor and amount — but only 10 of 17 requests completed at all, 8 of those 10
+   needed rate-limit backoff, and the mean latency was 36s against Gemini's 16s.
+   Inside a 120s webhook that also uploads to Drive and writes to Sheets, that is
+   a throughput problem, not an accuracy one.
+
+   Groq has no documented PDF support, so the PDF path skips it entirely. */
+
+const GROQ_URL          = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_TEXT_MODEL   = process.env.GROQ_EXTRACT_MODEL || 'llama-3.3-70b-versatile';
+const GROQ_VISION_MODEL = process.env.GROQ_VISION_MODEL  || 'qwen/qwen3.6-27b';
+
+async function callGroq(messages, model) {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) throw new Error('GROQ_API_KEY not configured');
+
+  const res = await fetch(GROQ_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model, temperature: 0,
+      response_format: { type: 'json_object' },
+      messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages],
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(`Groq API (${model}): ${err?.error?.message || `HTTP ${res.status}`}`);
+  }
+  const data = await res.json();
+  return parseJSON(data.choices?.[0]?.message?.content || '');
+}
+
+const callGroqVision = (base64, mediaType, userPrompt) => callGroq([{
+  role: 'user',
+  content: [
+    { type: 'text', text: userPrompt ?? buildUserPrompt() },
+    { type: 'image_url', image_url: { url: `data:${mediaType};base64,${base64}` } },
+  ],
+}], GROQ_VISION_MODEL);
+
+const callGroqText = (text) => callGroq(
+  [{ role: 'user', content: buildTextPrompt(text) }], GROQ_TEXT_MODEL
+);
+
 /* ── public extraction with full fallback chain ── */
 
-export async function extractReceipt(base64, mediaType) {
+/**
+ * Walks a provider chain and returns the first usable answer.
+ *
+ * Each step is `{ label, run, retries }`. Keeping the walk in one place means
+ * the ORDER of providers is data, not control flow duplicated three times — the
+ * whole point of the Groq-first reshuffle was that the order had to change in
+ * three functions at once.
+ */
+async function runChain(flow, steps) {
   let lastError;
-
-  // 1. Gemini primary: gemini-2.0-flash with retries
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const raw = await callGemini(PRIMARY_MODEL, base64, mediaType);
-      return { ok: true, data: sanitizeExtraction(raw), model: PRIMARY_MODEL };
-    } catch (e) {
-      lastError = e;
-      console.warn(`extractReceipt: ${PRIMARY_MODEL} attempt ${attempt + 1} failed:`, e.message);
+  for (const step of steps) {
+    const attempts = (step.retries ?? 0) + 1;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return { ok: true, raw: await step.run(), model: step.label };
+      } catch (e) {
+        lastError = e;
+        console.warn(`${flow}: ${step.label} attempt ${i + 1} failed:`, e.message);
+      }
     }
   }
-
-  // 2. Gemini fallbacks: gemini-1.5-pro, gemini-2.5-pro (one try each)
-  for (const model of GEMINI_MODELS.slice(1)) {
-    try {
-      const raw = await callGemini(model, base64, mediaType);
-      return { ok: true, data: sanitizeExtraction(raw), model };
-    } catch (e) {
-      lastError = e;
-      console.warn(`extractReceipt: ${model} failed:`, e.message);
-    }
-  }
-
-  // 3. Claude fallbacks: sonnet, haiku (one try each)
-  for (const model of CLAUDE_MODELS) {
-    try {
-      const raw = await callClaude(model, base64, mediaType);
-      return { ok: true, data: sanitizeExtraction(raw), model };
-    } catch (e) {
-      lastError = e;
-      console.warn(`extractReceipt: ${model} failed:`, e.message);
-    }
-  }
-
-  console.error('EXTR-005 — All extraction models exhausted (extractReceipt):', lastError?.message);
+  console.error(`EXTR-005 — All extraction models exhausted (${flow}):`, lastError?.message);
   return { ok: false, error: 'illegible', message: lastError?.message };
+}
+
+const isPdf = (mediaType) => mediaType === 'application/pdf';
+
+/** Image/PDF chain: Gemini leads, Groq covers, Claude is the last straw. */
+function visionSteps(base64, mediaType, userPrompt) {
+  const steps = [
+    { label: PRIMARY_MODEL, retries: MAX_RETRIES, run: () => callGemini(PRIMARY_MODEL, base64, mediaType, userPrompt) },
+    ...GEMINI_MODELS.slice(1).map(model => ({ label: model, run: () => callGemini(model, base64, mediaType, userPrompt) })),
+  ];
+  // Groq documents image input only — sending it a PDF would burn a step to
+  // reach the same Claude fallback more slowly.
+  if (!isPdf(mediaType)) {
+    steps.push({ label: GROQ_VISION_MODEL, run: () => callGroqVision(base64, mediaType, userPrompt) });
+  }
+  steps.push(...CLAUDE_MODELS.map(model => ({ label: model, run: () => callClaude(model, base64, mediaType, userPrompt) })));
+  return steps;
+}
+
+export async function extractReceipt(base64, mediaType) {
+  const res = await runChain('extractReceipt', visionSteps(base64, mediaType));
+  return res.ok
+    ? { ok: true, data: sanitizeExtraction(res.raw), model: res.model }
+    : res;
 }
 
 /* ── Batch extraction (one image → multiple transactions) ── */
@@ -460,83 +517,25 @@ function parseBatchJSON(raw) {
 
 export async function extractReceiptBatch(base64, mediaType) {
   const prompt = buildBatchUserPrompt();
-  let lastError;
-
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const raw = await callGemini(PRIMARY_MODEL, base64, mediaType, prompt);
-      const transactions = parseBatchJSON(raw).map(sanitizeExtraction).filter(t => t.total_amount != null);
-      return { ok: true, transactions, model: PRIMARY_MODEL };
-    } catch (e) {
-      lastError = e;
-      console.warn(`extractReceiptBatch: ${PRIMARY_MODEL} attempt ${attempt + 1} failed:`, e.message);
-    }
-  }
-
-  for (const model of GEMINI_MODELS.slice(1)) {
-    try {
-      const raw = await callGemini(model, base64, mediaType, prompt);
-      const transactions = parseBatchJSON(raw).map(sanitizeExtraction).filter(t => t.total_amount != null);
-      return { ok: true, transactions, model };
-    } catch (e) {
-      lastError = e;
-      console.warn(`extractReceiptBatch: ${model} failed:`, e.message);
-    }
-  }
-
-  for (const model of CLAUDE_MODELS) {
-    try {
-      const raw = await callClaude(model, base64, mediaType, prompt);
-      const transactions = parseBatchJSON(raw).map(sanitizeExtraction).filter(t => t.total_amount != null);
-      return { ok: true, transactions, model };
-    } catch (e) {
-      lastError = e;
-      console.warn(`extractReceiptBatch: ${model} failed:`, e.message);
-    }
-  }
-
-  console.error('EXTR-005 — All extraction models exhausted (batch):', lastError?.message);
-  return { ok: false, error: 'illegible', message: lastError?.message };
+  const res = await runChain('extractReceiptBatch', visionSteps(base64, mediaType, prompt));
+  if (!res.ok) return res;
+  const transactions = parseBatchJSON(res.raw).map(sanitizeExtraction).filter(t => t.total_amount != null);
+  return { ok: true, transactions, model: res.model };
 }
 
 export async function extractTransactionText(text) {
-  let lastError;
-
-  // 1. Gemini primary: gemini-2.0-flash with retries
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const raw = await callGeminiText(PRIMARY_MODEL, text);
-      return { ok: true, data: sanitizeExtraction(raw), model: PRIMARY_MODEL };
-    } catch (e) {
-      lastError = e;
-      console.warn(`extractTransactionText: ${PRIMARY_MODEL} attempt ${attempt + 1} failed:`, e.message);
-    }
-  }
-
-  // 2. Gemini fallbacks: gemini-1.5-pro, gemini-2.5-pro (one try each)
-  for (const model of GEMINI_MODELS.slice(1)) {
-    try {
-      const raw = await callGeminiText(model, text);
-      return { ok: true, data: sanitizeExtraction(raw), model };
-    } catch (e) {
-      lastError = e;
-      console.warn(`extractTransactionText: ${model} failed:`, e.message);
-    }
-  }
-
-  // 3. Claude fallbacks: sonnet, haiku (one try each)
-  for (const model of CLAUDE_MODELS) {
-    try {
-      const raw = await callClaudeText(model, text);
-      return { ok: true, data: sanitizeExtraction(raw), model };
-    } catch (e) {
-      lastError = e;
-      console.warn(`extractTransactionText: ${model} failed:`, e.message);
-    }
-  }
-
-  console.error('EXTR-005 — All extraction models exhausted (text):', lastError?.message);
-  return { ok: false, error: 'illegible', message: lastError?.message };
+  // Text has no throughput objection — the rate-limit and latency problems that
+  // keep Groq second for images do not apply to a short SMS string — so here it
+  // leads and the heavier providers are the fallback.
+  const res = await runChain('extractTransactionText', [
+    { label: GROQ_TEXT_MODEL, retries: 1, run: () => callGroqText(text) },
+    { label: PRIMARY_MODEL, retries: MAX_RETRIES, run: () => callGeminiText(PRIMARY_MODEL, text) },
+    ...GEMINI_MODELS.slice(1).map(model => ({ label: model, run: () => callGeminiText(model, text) })),
+    ...CLAUDE_MODELS.map(model => ({ label: model, run: () => callClaudeText(model, text) })),
+  ]);
+  return res.ok
+    ? { ok: true, data: sanitizeExtraction(res.raw), model: res.model }
+    : res;
 }
 
 export { CATEGORIES };

@@ -15,6 +15,9 @@ const ANTHROPIC_URL     = 'https://api.anthropic.com/v1/messages';
 const AGENT_MODEL       = process.env.BOT_AGENT_MODEL || 'claude-haiku-4-5';
 const MAX_ITERS         = 4;   // hard cap on tool round-trips (webhook is 120s)
 
+const GROQ_URL         = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_AGENT_MODEL = process.env.BOT_AGENT_GROQ_MODEL || 'llama-3.3-70b-versatile';
+
 async function callClaude({ system, tools, messages }) {
   const res = await fetch(ANTHROPIC_URL, {
     method: 'POST',
@@ -47,6 +50,96 @@ function textFrom(content) {
     .trim();
 }
 
+/* ── Groq ──────────────────────────────────────────────────────────────────
+   Groq leads and Claude is the last straw. Groq speaks the OpenAI schema, so the
+   caller's Anthropic-shaped tools are translated here rather than at every call
+   site: `input_schema` becomes `parameters`, `tool_use` blocks become
+   `tool_calls`, and tool results become `role: 'tool'` messages.
+
+   The loop is duplicated rather than abstracted behind a common interface: the
+   two APIs differ in how they carry an assistant turn back (Anthropic echoes the
+   content blocks verbatim, OpenAI echoes a message with tool_calls), and a
+   shared adapter hiding that was harder to follow than two explicit loops. */
+
+const toGroqTools = (tools) => (tools || []).map(t => ({
+  type: 'function',
+  function: { name: t.name, description: t.description, parameters: t.input_schema },
+}));
+
+async function callGroq({ system, tools, messages }) {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) throw new Error('GROQ_API_KEY not configured');
+
+  const res = await fetch(GROQ_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: GROQ_AGENT_MODEL,
+      max_tokens: 1024,
+      messages: [{ role: 'system', content: system }, ...messages],
+      ...(tools?.length ? { tools: toGroqTools(tools), tool_choice: 'auto' } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(`Groq agent: ${err?.error?.message || `HTTP ${res.status}`}`);
+  }
+  return res.json();
+}
+
+async function runGroqLoop({ system, tools, execute, seed }) {
+  const messages = [...seed];
+  let acted = false;
+  let ranAnyTool = false;
+
+  /* Tools here have side effects — log_expense writes a row to the sheet. If
+   * Groq dies AFTER one has run, retrying the whole turn on Claude would run it
+   * a second time and duplicate the expense. Tagging the error lets the caller
+   * tell "Groq never got started" (safe to fail over) from "Groq already did
+   * something" (must surface). */
+  const tag = (e) => {
+    if (ranAnyTool) e.actedBeforeFailure = true;
+    throw e;
+  };
+
+  try {
+    for (let iter = 0; iter < MAX_ITERS; iter++) {
+      const data = await callGroq({ system, tools, messages });
+      const choice = data?.choices?.[0];
+      if (!choice) throw new Error('Groq agent returned no choices');
+
+      const calls = choice.message?.tool_calls;
+      if (!calls?.length) {
+        return { text: (choice.message?.content || '').trim(), acted };
+      }
+
+      messages.push(choice.message);
+      for (const call of calls) {
+        let result;
+        try {
+          // Arguments arrive as a JSON *string*; a malformed one is the model's
+          // mistake to recover from, not a reason to abandon the turn.
+          let input;
+          try { input = JSON.parse(call.function?.arguments || '{}'); }
+          catch { throw new Error('arguments were not valid JSON'); }
+          ranAnyTool = true;
+          const out = await execute(call.function?.name, input);
+          if (out && out.userNotified) acted = true;
+          result = typeof out === 'string' ? out : (out?.result ?? 'done');
+        } catch (e) {
+          result = `Error: ${e.message}`;
+        }
+        messages.push({ role: 'tool', tool_call_id: call.id, content: String(result) });
+      }
+    }
+
+    const final = await callGroq({ system, tools: [], messages });
+    return { text: (final?.choices?.[0]?.message?.content || '').trim(), acted };
+  } catch (e) {
+    return tag(e);
+  }
+}
+
 /**
  * Runs the agentic loop. Returns { text, acted } where `text` is the model's
  * final assistant text and `acted` is true if any tool reported that it already
@@ -54,18 +147,34 @@ function textFrom(content) {
  * Throws on any API/response failure.
  */
 export async function runToolLoop({ userText, system, tools, execute, history = [] }) {
-  if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not configured');
-
   // Prior turns let a follow-up resolve what it refers to: "add walgreens 53"
   // then "actually that was on the amex" is meaningless without them. Only plain
   // text turns are carried — replaying old tool_use blocks would invite the model
   // to re-run actions that already happened.
-  const messages = [
+  const seed = [
     ...history
       .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
       .map(m => ({ role: m.role, content: m.content })),
     { role: 'user', content: userText },
   ];
+
+  // Groq first; Claude is the last straw.
+  //
+  // Only fall through when Groq could not answer AT ALL. Once a tool has run,
+  // the sheet has already been written and retrying on Claude would re-execute
+  // it — so a mid-loop failure after `acted` must surface, not fail over.
+  if (process.env.GROQ_API_KEY) {
+    try {
+      return await runGroqLoop({ system, tools, execute, seed });
+    } catch (e) {
+      if (e.actedBeforeFailure) throw e;
+      console.warn('agent: Groq failed, falling back to Claude —', e.message);
+    }
+  }
+
+  if (!ANTHROPIC_API_KEY) throw new Error('No agent provider configured (GROQ_API_KEY / ANTHROPIC_API_KEY)');
+
+  const messages = [...seed];
   let acted = false;
 
   for (let iter = 0; iter < MAX_ITERS; iter++) {
