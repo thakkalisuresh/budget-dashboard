@@ -2251,6 +2251,38 @@ async function askForMissingField(ctx, field, known) {
  * the amount-sanity gate and pre-filled answers all read this instead of issuing
  * a query each. One read, three features.
  */
+/** Same string ignoring case and punctuation — "walgreens" ≡ "Walgreens". */
+const sameName = (a, b) => {
+  const clean = s => String(s || '').toLowerCase().trim().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ');
+  return Boolean(clean(a)) && clean(a) === clean(b);
+};
+
+/**
+ * Settle on one spelling for a vendor.
+ *
+ * "walgreens 1.23" and "Walgreens 1.23" were producing two differently-cased
+ * rows for one shop, which reads as two vendors in the Cards and Split views.
+ *
+ * Preference order:
+ *   1. However this vendor is ALREADY written in the sheet. That is the user's
+ *      own choice and keeps new rows consistent with old ones. Only an exact
+ *      name match counts — fuzzy matching would rewrite a typed "walgreens"
+ *      into a receipt's "WALGREENS #4412", which is a different claim.
+ *   2. Title Case, but ONLY when the input is entirely lowercase, i.e. the user
+ *      expressed no preference. Anything with a capital already in it is left
+ *      exactly as typed, so IKEA, McDonald's and 7-Eleven survive.
+ */
+export function normalizeVendor(vendor, recent = []) {
+  const raw = String(vendor || '').trim();
+  if (!raw) return raw;
+
+  const known = (recent || []).find(r => sameName(r.vendor, raw));
+  if (known?.vendor) return String(known.vendor).trim();
+
+  if (raw !== raw.toLowerCase()) return raw;   // user gave a casing signal
+  return raw.replace(/\b[a-z]/g, c => c.toUpperCase());
+}
+
 export function vendorHistory(recent, vendor) {
   if (!vendor || !recent?.length) return null;
   const matches = recent.filter(r => fuzzyNamesMatch(r.vendor, vendor));
@@ -2295,7 +2327,8 @@ async function loadMonthContext(monthName) {
  * point already uses.
  */
 async function prepareExpense(ctx, input) {
-  const { vendor, amount, category = null, card = null, date = null, explicitDate = false } = input;
+  let { vendor } = input;
+  const { amount, category = null, card = null, date = null, explicitDate = false } = input;
 
   let settings = {};
   try { settings = await getUserSettings(); } catch { /* defaults are fine */ }
@@ -2316,6 +2349,11 @@ async function prepareExpense(ctx, input) {
     await reportError('SHT-002', e, { flow: 'text-add' });
     return { ok: false, error: `Could not find sheet for ${monthName}. Add it from the dashboard first. [SHT-002]` };
   }
+
+  // Settle the spelling before anything downstream keys on it — the category
+  // resolver, the duplicate matcher and the learned-rule counter all use the
+  // vendor string, and they should all see the same one.
+  vendor = normalizeVendor(vendor, recent);
 
   const history = vendorHistory(recent, vendor);
 
