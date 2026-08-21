@@ -766,7 +766,12 @@ function Dashboard({ auth }) {
 
         {/* Budget rules */}
         {activeTab === 'budget' && settings.visibility.budgetRules !== false && (!loading || lastUpdated) && (
-          <BudgetRules data={rulesData} loading={rulesLoading} currencySymbol={currencySymbol} />
+          <BudgetRules
+            data={rulesData}
+            loading={rulesLoading}
+            currencySymbol={currencySymbol}
+            remainingIncome={salaryReceived - totalActual}
+          />
         )}
 
       </div>

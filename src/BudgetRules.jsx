@@ -25,7 +25,7 @@ const CATS = [
   },
 ];
 
-export function BudgetRules({ data, loading, currencySymbol = '$' }) {
+export function BudgetRules({ data, loading, currencySymbol = '$', remainingIncome = null }) {
   if (loading) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -57,6 +57,23 @@ export function BudgetRules({ data, loading, currencySymbol = '$' }) {
 
           const barColor = isSavings ? (isUnder ? cat.barUnder : cat.bar) : cat.bar;
           const isGood = isSavings ? isOver : isUnder;
+
+          // d.diff measures a bucket against its own target in isolation, so an
+          // underspent bucket can advertise headroom the other two have already
+          // spent. Cap it at the income that actually remains. Positive headroom
+          // only — an overspent bucket keeps reporting its full overspend, even in
+          // a month where remainingIncome has itself gone negative.
+          const capped = Number.isFinite(remainingIncome) && d.diff > 0 && d.diff > remainingIncome;
+          const shownDiff = capped ? Math.max(remainingIncome, 0) : d.diff;
+
+          // Savings is inverted: beating the target is the good outcome there.
+          const diffLabel = isSavings
+            ? (isOver ? 'Invested beyond target' : 'Left to invest')
+            : (isOver ? 'Over budget' : 'Left to use');
+
+          // Only a genuine overspend is a negative number; everything else is an
+          // amount still available, even when it's flagged red (under-invested).
+          const diffSign = isOver && !isSavings ? '-' : '+';
 
           return (
             <div
@@ -133,12 +150,12 @@ export function BudgetRules({ data, loading, currencySymbol = '$' }) {
                   </span>
                 </div>
                 <div className="flex justify-between text-xs items-center">
-                  <span className="font-black" style={{ color: 'var(--color-text)' }}>How much is left to use</span>
+                  <span className="font-black" style={{ color: 'var(--color-text)' }}>{diffLabel}</span>
                   <span
                     className="font-black tabular-nums"
-                    style={{ color: d.diff < 0 ? 'var(--color-danger)' : 'var(--color-success)' }}
+                    style={{ color: isGood ? 'var(--color-success)' : 'var(--color-danger)' }}
                   >
-                    {d.diff < 0 ? '-' : '+'}{currencySymbol}{Math.abs(d.diff).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    {diffSign}{currencySymbol}{Math.abs(shownDiff).toLocaleString(undefined, { maximumFractionDigits: 2 })}
                   </span>
                 </div>
                 <div className="flex justify-between text-xs items-center pt-1">

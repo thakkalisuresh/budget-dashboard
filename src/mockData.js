@@ -95,3 +95,15 @@ export const MOCK_HISTORY_ROWS = [
   ['June', '2026', '2026-06-19', 'Duane Reade',  18.20, 'Chase Debit Card - Sabarish', 'tx_019'],
   ['June', '2026', '2026-06-20', 'Thai Garden',  72.00, 'Chase Sapphire Reserve', 'tx_020'],
 ];
+
+// 50/30/20 buckets. Deliberately arranged so the Budget Rules card shows all
+// three footer states at once: Needs under target but clamped by remaining
+// income, Wants overspent, Savings invested past target.
+export const MOCK_503020 = {
+  needs:   { items: [{ name: 'Rent', amount: 700 }, { name: 'Grocery', amount: 300 }],
+             total: 1000, pct: 0.1333, target: 3750, diff: 2750 },
+  wants:   { items: [{ name: 'Eating Out', amount: 1800 }, { name: 'Travel', amount: 1000 }],
+             total: 2800, pct: 0.3733, target: 2250, diff: -550 },
+  savings: { items: [{ name: 'Investment', amount: 2000 }],
+             total: 2000, pct: 0.2667, target: 1500, diff: -500 },
+};
