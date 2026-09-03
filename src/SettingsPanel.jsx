@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, RotateCcw, Search, Trash2, Pencil, Check, RefreshCw, Plus, Zap, Keyboard, CreditCard, ChevronDown, ChevronRight } from 'lucide-react';
 import { DEFAULT_SETTINGS } from './useSettings.js';
+import { TITLE_BAR_DEFAULT } from './useTheme.js';
 import { CARD_REWARDS, getEffectiveRates } from './cardRewards.js';
 import { DEFAULT_CARD_OWNERS, DEFAULT_PEOPLE } from './cardOwners.js';
 import { CURRENCIES } from './currency.js';
@@ -772,6 +773,36 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
                 <p className="text-xs mt-2" style={{ color: 'var(--color-text-muted)' }}>
                   {COLOR_SCHEMES.find(c => c.value === settings.colorScheme)?.label || 'Indigo'} selected
                 </p>
+              </div>
+
+              {/* Title bar color (PWA / desktop window chrome) */}
+              <div className="rounded-2xl px-4 py-4" style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-8)' }}>
+                <p className="text-sm font-bold mb-1" style={{ color: 'var(--color-text)' }}>Title bar color</p>
+                <p className="text-xs mb-3" style={{ color: 'var(--color-text-muted)' }}>
+                  Colors the installed-app window bar (Mac / desktop). Reinstall the app if it doesn't update.
+                </p>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="color"
+                    aria-label="Title bar color"
+                    value={settings.titleBarColor || TITLE_BAR_DEFAULT}
+                    onChange={e => updateSettings(prev => ({ ...prev, titleBarColor: e.target.value }))}
+                    className="w-10 h-10 rounded-lg cursor-pointer bg-transparent p-0 border-0"
+                    style={{ border: '1px solid var(--sur-12)' }}
+                  />
+                  <span className="text-xs font-mono" style={{ color: 'var(--color-text-muted)' }}>
+                    {(settings.titleBarColor || TITLE_BAR_DEFAULT).toUpperCase()}
+                  </span>
+                  {settings.titleBarColor && (
+                    <button
+                      onClick={() => updateSettings(prev => ({ ...prev, titleBarColor: null }))}
+                      className="ml-auto text-xs font-bold px-2.5 py-1 rounded-lg transition-colors"
+                      style={{ background: 'var(--sur-8)', color: 'var(--color-text-muted)' }}
+                    >
+                      Match app (dark)
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Font size */}
