@@ -607,7 +607,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
             </button>
           </div>
         ) : (
-          <div className="flex items-center gap-2 px-4 py-2.5" style={{ borderBottom: expanded ? '1px solid var(--sur-6)' : 'none' }}>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-4 py-2.5" style={{ borderBottom: expanded ? '1px solid var(--sur-6)' : 'none' }}>
             <button onClick={() => setOpenVendor(expanded ? null : g.key)} className="flex items-center gap-2 flex-1 min-w-0 text-left">
               {expanded ? <ChevronDown className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
                         : <ChevronRight className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />}
@@ -617,9 +617,10 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                 <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>{g.members.length} transactions</span>
               </div>
             </button>
-            <span className="text-sm font-black tabular-nums ml-2 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
+            <span className="text-sm font-black tabular-nums ml-auto flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
               {currencySymbol}{total.toFixed(2)}
             </span>
+            <div className="flex items-center gap-1 flex-shrink-0 w-full justify-end">
             {onToggleRecurring && (
               <button onClick={() => toggleRecurring(g.vendor, g.members[g.members.length - 1]?.amounts?.[0] ?? 0, g.members[g.members.length - 1]?.date)} disabled={saving}
                 title={isRec ? `Stop importing ${g.vendor} into new months` : `Import ${g.vendor} into every new month`}
@@ -653,6 +654,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
               className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Delete entire vendor" style={{ color: 'var(--color-text-muted)' }}>
               <Trash2 className="w-3.5 h-3.5" />
             </button>
+            </div>
           </div>
         )}
         {expanded && deletingGroup !== g.key && editingGroup?.key !== g.key &&
@@ -797,7 +799,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                   </label>
                 </div>
               ) : (
-                <div className="flex items-center gap-2 px-4 py-2.5" style={{ borderBottom: '1px solid var(--sur-6)' }}>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-4 py-2.5" style={{ borderBottom: '1px solid var(--sur-6)' }}>
                   <VendorLogo
                     name={row.description} size={22}
                     onEditDomain={() => setEditingDomain({ vendorName: row.description, draft: resolveVendorDomain(row.description) || '' })}
@@ -811,7 +813,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                           const nm = nonMonthlyVendors.includes(row.description.toLowerCase());
                           setEditingVendor({ rowIndex: row.rowIndex, value: row.description, date: row.date || todayIso(), isNonMonthly: nm, wasNonMonthly: nm });
                         }}
-                        className="text-[10px] cursor-pointer"
+                        className="text-[10px] cursor-pointer block truncate"
                         style={{ color: row.date ? 'var(--color-text-muted)' : 'var(--color-accent-text)', fontWeight: row.date ? undefined : 'bold' }}>
                         {row.date ? formatTxDate(row.date) : '— tap to add date'}
                       </span>
@@ -873,9 +875,10 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                       </span>
                     )}
                   </div>
-                  <span className="text-sm font-black tabular-nums ml-2 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
+                  <span className="text-sm font-black tabular-nums ml-auto flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
                     {currencySymbol}{row.amounts.reduce((a, b) => a + b, 0).toFixed(2)}
                   </span>
+                  <div className="flex items-center gap-1 flex-shrink-0 w-full justify-end">
                   <button
                     onClick={() => {
                       const isNm = nonMonthlyVendors.includes(row.description.toLowerCase());
@@ -932,6 +935,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                     style={{ color: 'var(--color-text-muted)' }}>
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
+                  </div>
                 </div>
               )}
 

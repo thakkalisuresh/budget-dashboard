@@ -247,6 +247,15 @@ Upload bank statement PDFs instead of CSV only. Two options discussed:
 ---
 
 ## ✅ Recently Completed
+
+**Bug-fix batch (2026-09-03, shipped to production)**
+- Detail panel — long account/card names no longer wrap into an oval that covered the amount/heading (pills truncate to one line).
+- Logger "no new month" (SHT-002) — Telegram/wallet month resolution now uses local time (`APP_TZ`), not server UTC, so end-of-month charges land in the right month sheet.
+- Costco/Amazon split — finalize no longer fails at month boundaries, and an abandoned split (1h TTL) can no longer wedge the bot.
+- PWA title bar — dropped the forced orange `theme-color`; now a settings-driven color synced to `<meta theme-color>`.
+- Ingestion readiness — hardened + documented the raw-text path (`docs/wallet-ingestion.md`) for the iOS 27 notification trigger and Android SMS logging into the shared household budget.
+- Security — bumped `pdfjs-dist` 5.x → 6.3.289 to clear GHSA-hq66-cqwq-w95j (the CI `npm audit` gate).
+
 - UUID per transaction (lazy, forward-only, amount encoded in ID)
 - Smart Rules (Settings UI + auto-fill in Add Expense, Reconcile, Receipt Scan)
 - Bank Reconciliation (all 4 phases: upload, dedup, review, import)
