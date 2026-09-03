@@ -4,6 +4,7 @@
  * Files in lib/ are shared modules, not standalone deployed functions.
  */
 import { getAccessToken, copyFile, shareWithEmails } from './_drive.mjs';
+import { currentMonthName } from './_time.mjs';
 
 const SHEETS_API    = 'https://sheets.googleapis.com/v4/spreadsheets';
 const TEMPLATE_ID   = process.env.VITE_TEMPLATE_SHEET_ID;
@@ -79,7 +80,7 @@ async function sheetsRequest(sheetId, path, options = {}) {
 export async function getCurrentMonthSheetId(monthName) {
   if (!TEMPLATE_ID) throw new Error('VITE_TEMPLATE_SHEET_ID not configured');
 
-  const target = monthName || new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const target = monthName || currentMonthName();
   const cacheKey = target.trim().toLowerCase();
 
   const cached = _monthSheetCache.get(cacheKey);

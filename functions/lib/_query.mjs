@@ -8,6 +8,7 @@
  */
 
 import { getCurrentMonthSheetId, getTotals, getRecentExpenses } from './_sheets.mjs';
+import { currentMonthName } from './_time.mjs';
 import { CATEGORIES } from './_extraction.mjs';
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
@@ -36,7 +37,7 @@ export function looksLikeQuery(text) {
 }
 
 export async function answerQuery(text) {
-  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const monthName = currentMonthName();
   let sheetId;
   try {
     sheetId = await getCurrentMonthSheetId(monthName);

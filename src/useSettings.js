@@ -74,6 +74,7 @@ export const DEFAULT_SETTINGS = {
   pushHour:                20,  // preferred local hour for daily push (18-22)
   reconciledFingerprints:  [],  // ["vendor_amount", ...] — tracks imported reconciliation tx
   colorScheme:             'default',
+  titleBarColor:           null,   // PWA/browser chrome <meta theme-color>; null = match app dark bg
   hasSeenOnboarding:       false,
   keyboardShortcuts: {
     addExpense:   'alt+n',

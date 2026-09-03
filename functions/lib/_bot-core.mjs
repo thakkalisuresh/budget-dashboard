@@ -34,10 +34,14 @@ import {
   looksLikeMultiExpense, parseMultiExpense, classifyMulti, distributeGap, MAX_ITEMS,
 } from './_multi-expense.mjs';
 import { categorizeItems, matchesSplitVendor } from './_item-categorizer.mjs';
+import { currentMonthName, currentMonthYear, monthYearFromDateStr, localToday, resolveMonth } from './_time.mjs';
 import { runToolLoop } from './_agent.mjs';
 
 const DAILY_LIMIT    = 50;
 const UNDO_WINDOW_MS = 10 * 60 * 1000;
+// A split left untouched this long is treated as abandoned, so a half-finished
+// receipt (e.g. a Costco split the user walked away from) can't wedge the bot.
+const SPLIT_TTL_MS   = 60 * 60 * 1000;
 
 /** Staged post-write enrichment for a typed add (see addExpenseFromText). */
 const ENRICH_KEY = (userId) => `enrich:${userId}`;
@@ -77,7 +81,7 @@ const sheetUrl = (sheetId) => sheetId ? `https://docs.google.com/spreadsheets/d/
 /* ── Rate limiting ── */
 
 async function getRateCount(store, userId) {
-  const key = `rate:${userId}:${new Date().toISOString().slice(0, 10)}`;
+  const key = `rate:${userId}:${localToday()}`;
   try {
     const val = await store.get(key, { type: 'json' });
     return val?.count || 0;
@@ -346,15 +350,13 @@ export async function handleTextReply(ctx, text) {
   // ── YES ──
   if (normalized === 'YES') {
     // A completed split takes priority over any pending receipt confirm.
-    const { blobs: splitBlobs } = await store.list({ prefix: `split_confirm:${userId}:` });
-    if (splitBlobs && splitBlobs.length > 0) {
-      const splitState = await store.get(splitBlobs[0].key, { type: 'json' });
-      if (splitState) {
-        if (splitState.pendingItems && splitState.pendingItems.length > 0) {
-          return ctx.send('Pick a category for each remaining item first.');
-        }
-        return await finalizeSplit(ctx, splitBlobs[0].key, splitState);
+    const active = await getActiveSplit(store, userId);
+    if (active) {
+      const splitState = active.state;
+      if (splitState.pendingItems && splitState.pendingItems.length > 0) {
+        return ctx.send('Pick a category for each remaining item first.');
       }
+      return await finalizeSplit(ctx, active.key, splitState);
     }
 
     // R5: the salary/budget pending keys are independent — probe both at once.
@@ -700,7 +702,6 @@ export async function handleTextReply(ctx, text) {
     }
 
     const matchedCat = CATEGORIES.find(c => c.toLowerCase() === category.trim().toLowerCase()) || 'Misc';
-    const now = new Date();
 
     // Resolve card from rules (no vision data on manual entries)
     let cardName = '';
@@ -735,8 +736,7 @@ export async function handleTextReply(ctx, text) {
         reward_category: matchedCat,
         payment_method: cardName,
       },
-      year: now.getFullYear(),
-      month: now.toLocaleString('en-US', { month: 'long' }),
+      ...currentMonthYear(),
       status: 'awaiting_confirmation',
     });
 
@@ -753,10 +753,7 @@ export async function handleTextReply(ctx, text) {
       const data = result.data;
       const conversionInfo = await maybeConvertCurrency(data);
       const now = new Date();
-      const year  = data.purchase_date ? new Date(data.purchase_date).getFullYear() : now.getFullYear();
-      const month = data.purchase_date
-        ? new Date(data.purchase_date).toLocaleString('en-US', { month: 'long' })
-        : now.toLocaleString('en-US', { month: 'long' });
+      const { month: month, year: year } = resolveMonth(data.purchase_date);
       const receiptId = crypto.randomUUID();
 
       if (data.is_transfer) {
@@ -824,7 +821,7 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
 
   // R4: single atomic check-and-increment (replaces the old read → read →
   // read+write sequence and its race).
-  const rateKey = `rate:${userId}:${new Date().toISOString().slice(0, 10)}`;
+  const rateKey = `rate:${userId}:${localToday()}`;
   const rate = await store.incrementIfBelow(rateKey, DAILY_LIMIT);
   if (!rate.allowed) {
     return ctx.send("You've reached 50 receipts today. Try again tomorrow. [BOT-006]");
@@ -856,10 +853,7 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
   // Single transaction — identical to original flow, no batch metadata stored.
   if (transactions.length === 1) {
     const data = transactions[0];
-    const year  = data.purchase_date ? new Date(data.purchase_date).getFullYear() : now.getFullYear();
-    const month = data.purchase_date
-      ? new Date(data.purchase_date).toLocaleString('en-US', { month: 'long' })
-      : now.toLocaleString('en-US', { month: 'long' });
+    const { month: month, year: year } = resolveMonth(data.purchase_date);
 
     // Drive is the one consistently expensive call left on this path —
     // maybeConvertCurrency short-circuits for USD and getUserSettings is cached
@@ -981,10 +975,7 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
   // writes than the one round-trip it would save. Overlap it with the settings
   // fetch instead and await both together.
   const first = transactions[0];
-  const firstYear  = first.purchase_date ? new Date(first.purchase_date).getFullYear() : now.getFullYear();
-  const firstMonth = first.purchase_date
-    ? new Date(first.purchase_date).toLocaleString('en-US', { month: 'long' })
-    : now.toLocaleString('en-US', { month: 'long' });
+  const { month: firstMonth, year: firstYear } = resolveMonth(first.purchase_date);
 
   const [driveResult, settings] = await Promise.all([
     uploadReceiptImage({
@@ -1001,10 +992,7 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
   for (let i = 0; i < transactions.length; i++) {
     const data = transactions[i];
     const itemId = `${baseReceiptId}_${String(i).padStart(3, '0')}`;
-    const year  = data.purchase_date ? new Date(data.purchase_date).getFullYear() : now.getFullYear();
-    const month = data.purchase_date
-      ? new Date(data.purchase_date).toLocaleString('en-US', { month: 'long' })
-      : now.toLocaleString('en-US', { month: 'long' });
+    const { month: month, year: year } = resolveMonth(data.purchase_date);
 
     data.payment_method = resolveCard(data.payment_method, data.store_name, data.reward_category, settings);
 
@@ -1087,6 +1075,30 @@ export async function handleAttachMedia(ctx, base64, mediaType, attachState) {
  * ones, and ask the user category-by-category for the rest. State lives in
  * `split_confirm:<userId>:<id>`.
  */
+/**
+ * Return the freshest still-live split_confirm state for a user, deleting any
+ * that have aged past SPLIT_TTL_MS along the way. This stops a half-finished
+ * split from hijacking every later message, and keeps the newest split
+ * authoritative when more than one somehow exists. Returns { key, state } or null.
+ */
+export async function getActiveSplit(store, userId) {
+  const { blobs } = await store.list({ prefix: `split_confirm:${userId}:` });
+  if (!blobs || blobs.length === 0) return null;
+  let best = null;
+  for (const b of blobs) {
+    const state = await store.get(b.key, { type: 'json' }).catch(() => null);
+    const age = state?.receivedAt ? Date.now() - new Date(state.receivedAt).getTime() : Infinity;
+    if (!state || age > SPLIT_TTL_MS) {
+      await store.delete(b.key).catch(() => {});
+      continue;
+    }
+    if (!best || new Date(state.receivedAt) > new Date(best.state.receivedAt)) {
+      best = { key: b.key, state };
+    }
+  }
+  return best;
+}
+
 async function handleSplitFlow(ctx, { data, year, month, conversionInfo, baseReceiptId, driveResult, pendingKey }) {
   const { store, userId } = ctx;
 
@@ -1208,7 +1220,7 @@ async function handleAuditFix(ctx, text) {
   if (!m) return;
 
   const [, uuid, newCategory] = m;
-  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const monthName = currentMonthName();
 
   let sheetId;
   try {
@@ -1265,13 +1277,12 @@ async function handleSplitCategoryPick(ctx, text) {
   const idx = parseInt(m[1], 10);
   const category = m[2];
 
-  const { blobs } = await store.list({ prefix: `split_confirm:${userId}:` });
-  if (!blobs || blobs.length === 0) {
+  const active = await getActiveSplit(store, userId);
+  if (!active) {
     return ctx.send('No active split. Send a receipt to start one.');
   }
-  const key = blobs[0].key;
-  const state = await store.get(key, { type: 'json' });
-  if (!state) return ctx.send('No active split.');
+  const key = active.key;
+  const state = active.state;
 
   if (!CATEGORIES.includes(category)) {
     return ctx.send(`Unknown category. Choose from:\n${CATEGORIES.join(', ')}`);
@@ -1561,7 +1572,7 @@ async function handleSetSalary(ctx, amountStr) {
     return ctx.send("Invalid amount. Use: SET SALARY 5500");
   }
 
-  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const monthName = currentMonthName();
   let sheetId;
   try {
     sheetId = await getCurrentMonthSheetId(monthName);
@@ -1602,7 +1613,7 @@ async function handleSetBudget(ctx, categoryInput, amountStr) {
     return ctx.send("Invalid amount. Use: SET BUDGET Grocery 400");
   }
 
-  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const monthName = currentMonthName();
   let sheetId;
   try {
     sheetId = await getCurrentMonthSheetId(monthName);
@@ -1656,7 +1667,7 @@ async function handleAddCategory(ctx, nameInput, budgetStr, type) {
     return ctx.send("Category name is invalid or too long (max 80 chars).");
   }
 
-  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const monthName = currentMonthName();
   let sheetId;
   try {
     sheetId = await getCurrentMonthSheetId(monthName);
@@ -1753,7 +1764,7 @@ export function shortDate(expense) {
 
 async function handleDelete(ctx, target) {
   const { store, userId } = ctx;
-  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const monthName = currentMonthName();
   let sheetId;
   try {
     sheetId = await getCurrentMonthSheetId(monthName);
@@ -2967,8 +2978,9 @@ async function applyExtractionField(pending, field, value) {
     const res = await validateFieldValue('date', value);
     if (!res.ok) return res;
     ex.purchase_date = res.value;
-    pending.year = new Date(value).getFullYear();
-    pending.month = new Date(value).toLocaleString('en-US', { month: 'long' });
+    const _my = monthYearFromDateStr(res.value) || currentMonthYear();
+    pending.year = _my.year;
+    pending.month = _my.month;
   } else if (field === 'card') {
     const res = await validateFieldValue('card', value);
     if (!res.ok) return res;
@@ -3311,7 +3323,7 @@ async function editLoggedExpense(ctx, changes) {
 
 async function runBotAgent(ctx, text) {
   const { store, userId } = ctx;
-  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const monthName = currentMonthName();
 
   const tools = [
     { name: 'get_month_overview', description: "Get this month's salary, total spent, and per-category budget/spent/remaining.", input_schema: { type: 'object', properties: {} } },

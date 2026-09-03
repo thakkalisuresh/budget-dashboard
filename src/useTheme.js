@@ -1,5 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 
+// Fallback browser/PWA chrome colour — the app's dark background. Used when the
+// user hasn't picked a title-bar colour. Kept in sync with index.html + the PWA
+// manifest so first paint and the installed window agree.
+export const TITLE_BAR_DEFAULT = '#0d0d0d';
+
 /**
  * Manages dark/light mode, font size, and accent color CSS injection.
  * Extracts ~70 lines of state + effects from the Dashboard component.
@@ -23,6 +28,21 @@ export function useTheme(settings, updateSettings) {
     const sizes = { sm: '14px', base: '16px', lg: '18px' };
     document.documentElement.style.fontSize = sizes[settings.fontSize] || '16px';
   }, [settings.fontSize]);
+
+  // Browser / PWA chrome colour — keeps <meta name="theme-color"> in sync with a
+  // user-picked colour so the installed-app title bar (macOS / Chrome desktop PWA)
+  // matches the app instead of a hardcoded value. Defaults to the app's dark
+  // background when nothing is picked.
+  useEffect(() => {
+    const color = settings.titleBarColor || TITLE_BAR_DEFAULT;
+    let meta = document.querySelector('meta[name="theme-color"]');
+    if (!meta) {
+      meta = document.createElement('meta');
+      meta.setAttribute('name', 'theme-color');
+      document.head.appendChild(meta);
+    }
+    meta.setAttribute('content', color);
+  }, [settings.titleBarColor]);
 
   // Accent color — injects a <style> block that overrides every indigo-* class.
   // Also sets --accent-hue for the redesign/v2 OKLCH token system.

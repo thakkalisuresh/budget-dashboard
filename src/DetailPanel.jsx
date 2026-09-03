@@ -413,7 +413,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
   const renderCardCell = (row) => {
     if (!row._v2 || cards.length === 0) {
       return row.paymentMethod ? (
-        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full inline-block max-w-[160px] truncate align-middle"
           style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
           💳 {row.paymentMethod}
         </span>
@@ -448,7 +448,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
     return (
       <div className="flex items-center gap-1">
         {row.paymentMethod ? (
-          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full inline-block max-w-[160px] truncate align-middle"
             style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
             💳 {row.paymentMethod}
           </span>
@@ -845,7 +845,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                       ) : (
                         <div className="flex items-center gap-1 mt-0.5">
                           {row.paymentMethod ? (
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full inline-block max-w-[160px] truncate align-middle"
                               style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
                               💳 {row.paymentMethod}
                             </span>
@@ -861,7 +861,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                       )
                     )}
                     {!row._v2 && row.paymentMethod && (
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full inline-block max-w-[160px] truncate align-middle"
                         style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent-text)', border: '1px solid var(--color-accent-border)' }}>
                         💳 {row.paymentMethod}
                       </span>
