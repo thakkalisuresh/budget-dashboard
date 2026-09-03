@@ -70,7 +70,11 @@ export const walletWebhook = onRequest(
 
     let { merchant, card, email } = req.body || {};
     if (email) setActor(email);
-    trail('charge received');
+    // Optional origin tag so we can tell where a charge came from — an iOS
+    // Wallet shortcut, an iOS 27 notification automation, an Android SMS reader,
+    // etc. Purely diagnostic; the sheet write channel stays 'wallet'.
+    const source = typeof req.body?.source === 'string' ? req.body.source.trim().slice(0, 40) : null;
+    trail(source ? `charge received (${source})` : 'charge received');
     let amountRaw = req.body?.amount;
     let txDate = req.body?.date || null;
 
@@ -314,7 +318,7 @@ export const walletWebhook = onRequest(
       }
       // WAL-002 is the single most important error in the system: the charge
       // arrived and is now lost unless it's re-entered by hand.
-      await reportError('WAL-002', e, { vendor, amount, category, monthName });
+      await reportError('WAL-002', e, { vendor, amount, category, monthName, source });
       res.status(500).json({ ok: false, code: 'WAL-002', error: 'Failed to write transaction' });
       return;
     }
