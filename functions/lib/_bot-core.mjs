@@ -31,6 +31,7 @@ import {
   kbLoggedActions, kbEditLoggedMenu,
 } from './_telegram.mjs';
 import { categorizeItems, matchesSplitVendor } from './_item-categorizer.mjs';
+import { currentMonthName, currentMonthYear, monthYearFromDateStr, localToday, resolveMonth } from './_time.mjs';
 import { runToolLoop } from './_agent.mjs';
 
 const DAILY_LIMIT    = 50;
@@ -71,7 +72,7 @@ const sheetUrl = (sheetId) => sheetId ? `https://docs.google.com/spreadsheets/d/
 /* ── Rate limiting ── */
 
 async function getRateCount(store, userId) {
-  const key = `rate:${userId}:${new Date().toISOString().slice(0, 10)}`;
+  const key = `rate:${userId}:${localToday()}`;
   try {
     const val = await store.get(key, { type: 'json' });
     return val?.count || 0;
@@ -631,7 +632,6 @@ export async function handleTextReply(ctx, text) {
     }
 
     const matchedCat = CATEGORIES.find(c => c.toLowerCase() === category.trim().toLowerCase()) || 'Misc';
-    const now = new Date();
 
     // Resolve card from rules (no vision data on manual entries)
     let cardName = '';
@@ -658,7 +658,7 @@ export async function handleTextReply(ctx, text) {
       ...pendingData,
       extraction: {
         store_name: vendor.trim(),
-        purchase_date: now.toISOString().slice(0, 10),
+        purchase_date: localToday(),
         total_amount: amount,
         tax_amount: null,
         currency: 'USD',
@@ -666,8 +666,7 @@ export async function handleTextReply(ctx, text) {
         reward_category: matchedCat,
         payment_method: cardName,
       },
-      year: now.getFullYear(),
-      month: now.toLocaleString('en-US', { month: 'long' }),
+      ...currentMonthYear(),
       status: 'awaiting_confirmation',
     });
 
@@ -684,10 +683,7 @@ export async function handleTextReply(ctx, text) {
       const data = result.data;
       const conversionInfo = await maybeConvertCurrency(data);
       const now = new Date();
-      const year  = data.purchase_date ? new Date(data.purchase_date).getFullYear() : now.getFullYear();
-      const month = data.purchase_date
-        ? new Date(data.purchase_date).toLocaleString('en-US', { month: 'long' })
-        : now.toLocaleString('en-US', { month: 'long' });
+      const { month: month, year: year } = resolveMonth(data.purchase_date);
       const receiptId = crypto.randomUUID();
 
       if (data.is_transfer) {
@@ -755,7 +751,7 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
 
   // R4: single atomic check-and-increment (replaces the old read → read →
   // read+write sequence and its race).
-  const rateKey = `rate:${userId}:${new Date().toISOString().slice(0, 10)}`;
+  const rateKey = `rate:${userId}:${localToday()}`;
   const rate = await store.incrementIfBelow(rateKey, DAILY_LIMIT);
   if (!rate.allowed) {
     return ctx.send("You've reached 50 receipts today. Try again tomorrow. [BOT-006]");
@@ -787,10 +783,7 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
   // Single transaction — identical to original flow, no batch metadata stored.
   if (transactions.length === 1) {
     const data = transactions[0];
-    const year  = data.purchase_date ? new Date(data.purchase_date).getFullYear() : now.getFullYear();
-    const month = data.purchase_date
-      ? new Date(data.purchase_date).toLocaleString('en-US', { month: 'long' })
-      : now.toLocaleString('en-US', { month: 'long' });
+    const { month: month, year: year } = resolveMonth(data.purchase_date);
 
     // Drive is the one consistently expensive call left on this path —
     // maybeConvertCurrency short-circuits for USD and getUserSettings is cached
@@ -912,10 +905,7 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
   // writes than the one round-trip it would save. Overlap it with the settings
   // fetch instead and await both together.
   const first = transactions[0];
-  const firstYear  = first.purchase_date ? new Date(first.purchase_date).getFullYear() : now.getFullYear();
-  const firstMonth = first.purchase_date
-    ? new Date(first.purchase_date).toLocaleString('en-US', { month: 'long' })
-    : now.toLocaleString('en-US', { month: 'long' });
+  const { month: firstMonth, year: firstYear } = resolveMonth(first.purchase_date);
 
   const [driveResult, settings] = await Promise.all([
     uploadReceiptImage({
@@ -932,10 +922,7 @@ export async function handleMediaMessage(ctx, base64, mediaType) {
   for (let i = 0; i < transactions.length; i++) {
     const data = transactions[i];
     const itemId = `${baseReceiptId}_${String(i).padStart(3, '0')}`;
-    const year  = data.purchase_date ? new Date(data.purchase_date).getFullYear() : now.getFullYear();
-    const month = data.purchase_date
-      ? new Date(data.purchase_date).toLocaleString('en-US', { month: 'long' })
-      : now.toLocaleString('en-US', { month: 'long' });
+    const { month: month, year: year } = resolveMonth(data.purchase_date);
 
     data.payment_method = resolveCard(data.payment_method, data.store_name, data.reward_category, settings);
 
@@ -1139,7 +1126,7 @@ async function handleAuditFix(ctx, text) {
   if (!m) return;
 
   const [, uuid, newCategory] = m;
-  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const monthName = currentMonthName();
 
   let sheetId;
   try {
@@ -1492,7 +1479,7 @@ async function handleSetSalary(ctx, amountStr) {
     return ctx.send("Invalid amount. Use: SET SALARY 5500");
   }
 
-  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const monthName = currentMonthName();
   let sheetId;
   try {
     sheetId = await getCurrentMonthSheetId(monthName);
@@ -1533,7 +1520,7 @@ async function handleSetBudget(ctx, categoryInput, amountStr) {
     return ctx.send("Invalid amount. Use: SET BUDGET Grocery 400");
   }
 
-  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const monthName = currentMonthName();
   let sheetId;
   try {
     sheetId = await getCurrentMonthSheetId(monthName);
@@ -1587,7 +1574,7 @@ async function handleAddCategory(ctx, nameInput, budgetStr, type) {
     return ctx.send("Category name is invalid or too long (max 80 chars).");
   }
 
-  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const monthName = currentMonthName();
   let sheetId;
   try {
     sheetId = await getCurrentMonthSheetId(monthName);
@@ -1684,7 +1671,7 @@ export function shortDate(expense) {
 
 async function handleDelete(ctx, target) {
   const { store, userId } = ctx;
-  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const monthName = currentMonthName();
   let sheetId;
   try {
     sheetId = await getCurrentMonthSheetId(monthName);
@@ -2077,8 +2064,9 @@ async function applyExtractionField(pending, field, value) {
   } else if (field === 'date') {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return { ok: false, error: "Date must be YYYY-MM-DD (e.g., 'date: 2026-05-20')" };
     ex.purchase_date = value;
-    pending.year = new Date(value).getFullYear();
-    pending.month = new Date(value).toLocaleString('en-US', { month: 'long' });
+    const _my = monthYearFromDateStr(value) || currentMonthYear();
+    pending.year = _my.year;
+    pending.month = _my.month;
   } else if (field === 'card') {
     let settings = {};
     try { settings = await getUserSettings(); } catch { /* none */ }
@@ -2277,7 +2265,7 @@ async function editLoggedExpense(ctx, changes) {
 
 async function runBotAgent(ctx, text) {
   const { store, userId } = ctx;
-  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const monthName = currentMonthName();
 
   const tools = [
     { name: 'get_month_overview', description: "Get this month's salary, total spent, and per-category budget/spent/remaining.", input_schema: { type: 'object', properties: {} } },
@@ -2308,14 +2296,13 @@ async function runBotAgent(ctx, text) {
       const category = CATEGORIES.find(c => c.toLowerCase() === String(input.category || '').toLowerCase()) || 'Misc';
       const amount = parseFloat(input.amount);
       if (isNaN(amount) || amount <= 0) return 'Invalid amount.';
-      const now = new Date();
       let cardName = '';
       if (input.card) { try { const s = await getUserSettings(); cardName = resolveCardName(input.card, s.cards || []) || ''; } catch { /* none */ } }
       const receiptId = crypto.randomUUID();
       await store.setJSON(`confirm:${userId}:${receiptId}`, {
         id: receiptId, phone: userId,
-        extraction: { store_name: String(input.vendor || 'Unknown'), purchase_date: now.toISOString().slice(0, 10), total_amount: amount, tax_amount: null, currency: 'USD', items: [], reward_category: category, payment_method: cardName },
-        year: now.getFullYear(), month: now.toLocaleString('en-US', { month: 'long' }), status: 'awaiting_confirmation',
+        extraction: { store_name: String(input.vendor || 'Unknown'), purchase_date: localToday(), total_amount: amount, tax_amount: null, currency: 'USD', items: [], reward_category: category, payment_method: cardName },
+        ...currentMonthYear(), status: 'awaiting_confirmation',
       });
       const lines = ['Got it:', `Store: ${input.vendor}`, `Category: ${category}`, `Total: $${amount}`];
       if (cardName) lines.push(`Card: ${cardName}`);

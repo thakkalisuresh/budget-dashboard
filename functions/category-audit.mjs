@@ -18,6 +18,7 @@
  * identical to "working" until you notice the digest never arrives.
  */
 import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { currentMonthName } from './lib/_time.mjs';
 import {
   getCurrentMonthSheetId, getRecentExpenses, getUserSettings,
 } from './lib/_sheets.mjs';
@@ -60,7 +61,7 @@ export async function runCategoryAudit({ email }) {
     return { checked: 0, flagged: 0, reason: 'no_chat_id' };
   }
 
-  const monthName = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const monthName = currentMonthName();
   let sheetId;
   try {
     sheetId = await getCurrentMonthSheetId(monthName);
