@@ -36,6 +36,9 @@ import { runToolLoop } from './_agent.mjs';
 
 const DAILY_LIMIT    = 50;
 const UNDO_WINDOW_MS = 10 * 60 * 1000;
+// A split left untouched this long is treated as abandoned, so a half-finished
+// receipt (e.g. a Costco split the user walked away from) can't wedge the bot.
+const SPLIT_TTL_MS   = 60 * 60 * 1000;
 const DASHBOARD_URL  = process.env.SITE_URL || 'https://fundient-dashboard.web.app';
 
 /* ── Card resolution (server-side mirror of src/smartRules + resolveCardName) ──
@@ -306,15 +309,13 @@ export async function handleTextReply(ctx, text) {
   // ── YES ──
   if (normalized === 'YES') {
     // A completed split takes priority over any pending receipt confirm.
-    const { blobs: splitBlobs } = await store.list({ prefix: `split_confirm:${userId}:` });
-    if (splitBlobs && splitBlobs.length > 0) {
-      const splitState = await store.get(splitBlobs[0].key, { type: 'json' });
-      if (splitState) {
-        if (splitState.pendingItems && splitState.pendingItems.length > 0) {
-          return ctx.send('Pick a category for each remaining item first.');
-        }
-        return await finalizeSplit(ctx, splitBlobs[0].key, splitState);
+    const active = await getActiveSplit(store, userId);
+    if (active) {
+      const splitState = active.state;
+      if (splitState.pendingItems && splitState.pendingItems.length > 0) {
+        return ctx.send('Pick a category for each remaining item first.');
       }
+      return await finalizeSplit(ctx, active.key, splitState);
     }
 
     // R5: the salary/budget pending keys are independent — probe both at once.
@@ -1005,6 +1006,30 @@ export async function handleAttachMedia(ctx, base64, mediaType, attachState) {
  * ones, and ask the user category-by-category for the rest. State lives in
  * `split_confirm:<userId>:<id>`.
  */
+/**
+ * Return the freshest still-live split_confirm state for a user, deleting any
+ * that have aged past SPLIT_TTL_MS along the way. This stops a half-finished
+ * split from hijacking every later message, and keeps the newest split
+ * authoritative when more than one somehow exists. Returns { key, state } or null.
+ */
+export async function getActiveSplit(store, userId) {
+  const { blobs } = await store.list({ prefix: `split_confirm:${userId}:` });
+  if (!blobs || blobs.length === 0) return null;
+  let best = null;
+  for (const b of blobs) {
+    const state = await store.get(b.key, { type: 'json' }).catch(() => null);
+    const age = state?.receivedAt ? Date.now() - new Date(state.receivedAt).getTime() : Infinity;
+    if (!state || age > SPLIT_TTL_MS) {
+      await store.delete(b.key).catch(() => {});
+      continue;
+    }
+    if (!best || new Date(state.receivedAt) > new Date(best.state.receivedAt)) {
+      best = { key: b.key, state };
+    }
+  }
+  return best;
+}
+
 async function handleSplitFlow(ctx, { data, year, month, conversionInfo, baseReceiptId, driveResult, pendingKey }) {
   const { store, userId } = ctx;
 
@@ -1183,13 +1208,12 @@ async function handleSplitCategoryPick(ctx, text) {
   const idx = parseInt(m[1], 10);
   const category = m[2];
 
-  const { blobs } = await store.list({ prefix: `split_confirm:${userId}:` });
-  if (!blobs || blobs.length === 0) {
+  const active = await getActiveSplit(store, userId);
+  if (!active) {
     return ctx.send('No active split. Send a receipt to start one.');
   }
-  const key = blobs[0].key;
-  const state = await store.get(key, { type: 'json' });
-  if (!state) return ctx.send('No active split.');
+  const key = active.key;
+  const state = active.state;
 
   if (!CATEGORIES.includes(category)) {
     return ctx.send(`Unknown category. Choose from:\n${CATEGORIES.join(', ')}`);
