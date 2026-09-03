@@ -9,6 +9,9 @@
  * must go through here so it's computed in the app's local zone instead.
  *
  * APP_TZ is an IANA zone (e.g. "America/Los_Angeles"), overridable via env.
+ * Kept in step with HOUSEHOLD_TZ in _extraction.mjs (todayISO) — both anchor
+ * the backend to the household's local day/month. Defined as a standalone
+ * literal (not imported) so tests that mock _extraction don't drag this in.
  */
 
 export const APP_TZ = process.env.APP_TZ || 'America/Los_Angeles';
