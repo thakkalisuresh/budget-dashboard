@@ -5,6 +5,7 @@
  * Categorizes via Claude AI, writes to Google Sheets, and confirms via push.
  */
 import { onRequest } from 'firebase-functions/v2/https';
+import { currentMonthName, currentMonthYear, monthNameFromDateStr, monthYearFromDateStr, localToday } from './lib/_time.mjs';
 import webpush from 'web-push';
 import crypto from 'node:crypto';
 import { extractTransactionText, CATEGORIES } from './lib/_extraction.mjs';
@@ -69,7 +70,11 @@ export const walletWebhook = onRequest(
 
     let { merchant, card, email } = req.body || {};
     if (email) setActor(email);
-    trail('charge received');
+    // Optional origin tag so we can tell where a charge came from — an iOS
+    // Wallet shortcut, an iOS 27 notification automation, an Android SMS reader,
+    // etc. Purely diagnostic; the sheet write channel stays 'wallet'.
+    const source = typeof req.body?.source === 'string' ? req.body.source.trim().slice(0, 40) : null;
+    trail(source ? `charge received (${source})` : 'charge received');
     let amountRaw = req.body?.amount;
     let txDate = req.body?.date || null;
 
@@ -98,7 +103,7 @@ export const walletWebhook = onRequest(
       }
     }
 
-    if (!txDate) txDate = new Date().toISOString().slice(0, 10);
+    if (!txDate) txDate = localToday();
     // Amount may arrive with a currency symbol/grouping (e.g. "$1,234.56" from the iOS
     // Transaction trigger). Strip everything except digits, dot and minus before parsing.
     const amount = parseFloat(String(amountRaw ?? '').replace(/[^\d.-]/g, ''));
@@ -115,10 +120,7 @@ export const walletWebhook = onRequest(
       res.status(400).json({ ok: false, code: 'WAL-001', error: 'Missing or invalid email' });
       return;
     }
-    const monthName = new Date(txDate + 'T00:00:00').toLocaleString('en-US', {
-      month: 'long',
-      year: 'numeric',
-    });
+    const monthName = monthNameFromDateStr(txDate) || currentMonthName();
 
     // sheetId is optional: if the automation doesn't send one, resolve the
     // current month's sheet from the transaction date. This makes the Shortcut
@@ -241,14 +243,14 @@ export const walletWebhook = onRequest(
       if (chatId) {
         try {
           const store = createBotStore(getDb());
-          const dt = new Date(txDate + 'T00:00:00');
+          const _my = monthYearFromDateStr(txDate) || currentMonthYear();
           const id = crypto.randomUUID();
           await store.setJSON(`split_pending:${chatId}:${id}`, {
             id,
             vendor, amount, category,
             txDate,
-            year: dt.getFullYear(),
-            month: dt.toLocaleString('en-US', { month: 'long' }),
+            year: _my.year,
+            month: _my.month,
             paymentMethod: card ?? '',
             createdAt: new Date().toISOString(),
           });
@@ -316,7 +318,7 @@ export const walletWebhook = onRequest(
       }
       // WAL-002 is the single most important error in the system: the charge
       // arrived and is now lost unless it's re-entered by hand.
-      await reportError('WAL-002', e, { vendor, amount, category, monthName });
+      await reportError('WAL-002', e, { vendor, amount, category, monthName, source });
       res.status(500).json({ ok: false, code: 'WAL-002', error: 'Failed to write transaction' });
       return;
     }

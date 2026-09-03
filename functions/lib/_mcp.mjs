@@ -14,6 +14,7 @@ import {
   getCurrentMonthSheetId, getTotals, getRecentExpenses,
   appendExpense, deleteExpenseByUUID,
 } from './_sheets.mjs';
+import { currentMonthName, currentMonthYear, monthNameFromDateStr, localToday } from './_time.mjs';
 import { CATEGORIES } from './_extraction.mjs';
 
 export const SERVER_INFO     = { name: 'fundient-mcp', version: '1.0.0' };
@@ -32,9 +33,9 @@ function monthLabel(month) {
 }
 
 function resolveMonthName(month, year) {
-  const now  = new Date();
-  const name = monthLabel(month) || now.toLocaleString('en-US', { month: 'long' });
-  const yr   = year || now.getFullYear();
+  const cur  = currentMonthYear();
+  const name = monthLabel(month) || cur.month;
+  const yr   = year || cur.year;
   return `${name} ${yr}`;
 }
 
@@ -104,9 +105,8 @@ async function toolAddTransaction({ vendor, amount, category, date } = {}) {
   if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     throw new ToolError('date must be in YYYY-MM-DD format');
   }
-  const txDate    = date || new Date().toISOString().slice(0, 10);
-  const d         = new Date(txDate + 'T00:00:00');
-  const monthName = `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  const txDate    = date || localToday();
+  const monthName = monthNameFromDateStr(txDate) || currentMonthName();
   const sheetId   = await getCurrentMonthSheetId(monthName);
   const { uuid }  = await appendExpense({ category, vendor: String(vendor).trim(), amount: amt, txDate, sheetId, monthName });
   return { ok: true, uuid, vendor: String(vendor).trim(), amount: amt, category, date: txDate, month: monthName };

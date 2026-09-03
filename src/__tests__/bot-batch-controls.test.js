@@ -63,7 +63,9 @@ function makeCtx() {
     store: mockStore,
     userId: USER,
     sent,
-    send: (text, keyboard) => { sent.push({ text, keyboard }); return Promise.resolve({ ok: true }); },
+    // Production ctx.send returns undefined — mirror it, or bugs where a return
+    // value is used as a "handled" flag stay invisible under test.
+    send: (text, keyboard) => { sent.push({ text, keyboard }); return Promise.resolve(undefined); },
   };
 }
 

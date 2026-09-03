@@ -3,7 +3,7 @@
 > **Generated file — do not edit by hand.**
 > Source of truth: `functions/lib/_error-codes.mjs`. Regenerate with `npm run errdoc`.
 
-58 codes across 13 domains.
+61 codes across 13 domains.
 
 Codes appear wherever the failure surfaces: in the bot's reply, on the
 dashboard crash screen, in the wallet webhook response body, in Cloud Logging,
@@ -69,6 +69,9 @@ and in the daily Telegram digest.
 | [`BOT-005`](#bot-005) | fatal | Split could not be logged |
 | [`BOT-006`](#bot-006) | fatal | Daily receipt limit reached |
 | [`BOT-007`](#bot-007) | fatal | Parked charge could not be logged |
+| [`BOT-009`](#bot-009) | fatal | Batch undo removed only some rows |
+| [`BOT-010`](#bot-010) | degraded | Learned category rule could not be saved |
+| [`BOT-011`](#bot-011) | degraded | Recent-expense lookup failed |
 | [`BOT-008`](#bot-008) | fatal | Category move left a duplicate |
 | [`WAL-001`](#wal-001) | fatal | Wallet request rejected as invalid |
 | [`WAL-002`](#wal-002) | fatal | Wallet transaction write failed |
@@ -476,6 +479,30 @@ and in the daily Telegram digest.
 **Why it happens.** A wallet charge held for category confirmation failed to write when the user tapped.
 
 **What to do.** The pending record is kept deliberately so tapping again retries. Do not clear it.
+
+### BOT-009
+
+**Batch undo removed only some rows** · `fatal`
+
+**Why it happens.** Undo all N on a multi-expense message failed partway, so some rows are gone and others remain. The reply reports the real count, but the survivors are still counted in the budget.
+
+**What to do.** Delete the leftovers from the dashboard. The uuids are in the log line next to this code.
+
+### BOT-010
+
+**Learned category rule could not be saved** · `degraded`
+
+**Why it happens.** The user accepted "always file this vendor here" but the smart rule could not be written to UserSettings.
+
+**What to do.** Add the rule by hand in Settings → Smart Rules. Nothing else is affected — the expense itself was already logged and corrected.
+
+### BOT-011
+
+**Recent-expense lookup failed** · `degraded`
+
+**Why it happens.** The one read that backs duplicate detection, card inference and the amount-sanity check returned nothing. The expense is still written, but silently without those checks.
+
+**What to do.** Usually a transient Sheets read failure. Repeated occurrences mean duplicates are going undetected — check SHT-001 alongside.
 
 ### BOT-008
 
