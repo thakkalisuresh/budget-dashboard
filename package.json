@@ -20,7 +20,7 @@
     "d3-shape": "^3.2.0",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.9.0",
-    "pdfjs-dist": "^5.7.284",
+    "pdfjs-dist": "^6.3.289",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-grid-layout": "^2.2.3",
