@@ -1,5 +1,11 @@
 # Changelog
 
+## [2026-09-03] — Security: bump pdfjs-dist to 6.x
+
+### Dependencies
+
+- **`pdfjs-dist` 5.7.284 → 6.3.289** — resolves the high-severity advisory GHSA-hq66-cqwq-w95j ("arbitrary JavaScript execution upon opening a malicious PDF"), which affected the whole `>=5.6.83 <6.2.108` range and was failing the CI `npm audit` gate. The advisory has no in-5.x fix, so the upgrade is a major version bump. The only integration point is `src/pdfParsers.js` (statement PDF text extraction); its API surface (`getDocument`, `getTextContent`, item `transform`/`str`, `PasswordException`, and the bundled `build/pdf.worker.min.mjs` worker path) is unchanged across the bump — build and the full test suite pass.
+
 ## [2026-06-23] — Split spending by person + Chase Freedom Rise
 
 ### New feature: Split by person
