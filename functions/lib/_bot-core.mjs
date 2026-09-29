@@ -310,6 +310,11 @@ export async function handleTextReply(ctx, text) {
     return await handleCategoryPick(ctx, text);
   }
 
+  // ── DUPLOG callback ("Log it anyway" on a wallet charge the duplicate guard skipped) ──
+  if (text.startsWith('DUPLOG:')) {
+    return await handleDuplicateLog(ctx, text);
+  }
+
   // ── AUDITFIX callback (user accepted a weekly-audit recategorization) ──
   if (text.startsWith('AUDITFIX:')) {
     return await handleAuditFix(ctx, text);
@@ -1201,6 +1206,73 @@ async function handleCategoryPick(ctx, text) {
     // Leave the pending blob in place so the charge isn't lost — the user can
     // tap again once whatever broke is back.
     return ctx.send(`Couldn't log that: ${e.message}. Tap a category again to retry. [BOT-007]`);
+  }
+}
+
+// A tap-claim held this long without settling is an abandoned attempt.
+const DUPLOG_TAKEOVER_MS = 30 * 1000;
+
+/**
+ * Handle a `DUPLOG:<id>` tap: the user says a charge the wallet duplicate guard
+ * skipped was really a separate purchase, so write it now.
+ *
+ * Appends directly (channel 'wallet') — it must NOT go back through the guard,
+ * which would skip it again. The blob is the only record of the charge, so it
+ * is deleted only after the write lands; a per-id tap-claim keeps two rapid taps
+ * from both writing, and is released on failure so the user can tap again.
+ */
+async function handleDuplicateLog(ctx, text) {
+  const { store, userId } = ctx;
+  const m = text.match(/^DUPLOG:([^:]+)$/);
+  if (!m) return; // malformed — ignore
+
+  const key = `dup_skipped:${userId}:${m[1]}`;
+  const pending = await store.get(key, { type: 'json' }).catch(() => null);
+  if (!pending) {
+    return ctx.send('That charge is no longer waiting — it may have been logged already.');
+  }
+  if (pending.expiresAt && new Date(pending.expiresAt) <= new Date()) {
+    await store.delete(key).catch(() => {});
+    return ctx.send("That charge is too old to log from here — please add it by hand.");
+  }
+
+  const claimKey = `wdup-log:${m[1]}`;
+  let claim;
+  try {
+    claim = await store.claimWindow(claimKey, { windowMs: 60 * 1000, takeoverMs: DUPLOG_TAKEOVER_MS, vendor: pending.vendor });
+  } catch (e) {
+    await reportError('WAL-005', e, { step: 'duplog-claim', userId });
+    claim = { claimed: true, token: null }; // fail open: the blob delete still guards a sequential retap
+  }
+  if (!claim.claimed) {
+    return ctx.send('That charge is already being logged.');
+  }
+
+  try {
+    const { uuid } = await appendExpense({
+      category: pending.category,
+      vendor: pending.vendor,
+      amount: pending.amount,
+      txDate: pending.txDate,
+      sheetId: pending.sheetId,
+      monthName: pending.monthName,
+      paymentMethod: pending.paymentMethod || '',
+      channel: 'wallet',
+    });
+    await store.delete(key);
+    if (claim.token) await store.settleClaim(claimKey, claim.token).catch(() => {});
+    await store.setJSON(`lastlog:${userId}`, {
+      uuid, category: pending.category, vendor: pending.vendor, amount: pending.amount,
+      sheetId: pending.sheetId, monthName: pending.monthName,
+      loggedAt: new Date().toISOString(),
+    });
+    console.log(`bot-core: DUPLOG logged ${pending.vendor} $${pending.amount} as ${pending.category} for ${userId}`);
+    return ctx.send(`Logged ${pending.vendor} · $${Number(pending.amount).toFixed(2)} as ${pending.category}.`);
+  } catch (e) {
+    if (claim.token) await store.releaseClaim(claimKey, claim.token).catch(() => {});
+    await reportError('BOT-007', e, { userId, vendor: pending?.vendor, flow: 'duplog' });
+    // Blob stays: it is the only record of the charge, so tapping again retries.
+    return ctx.send(`Couldn't log that: ${e.message}. Tap "Log it anyway" again to retry. [BOT-007]`);
   }
 }
 

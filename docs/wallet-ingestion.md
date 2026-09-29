@@ -38,6 +38,7 @@ from the parsed text, so the two can be combined.
 ### Responses
 
 - `200 { ok: true, ... }` — logged (may include `pendingCategory`, `split`, `skipped`, or a duplicate note).
+- `200 { ok: true, skipped: true, reason: 'duplicate_recent' }` — the same email posted the same amount (exact cents) within the last 2 minutes, e.g. a Wallet notification plus the issuer app for one tap. The first request wins; the second is not logged, and the household primary gets a Telegram note with a "➕ Log it anyway" button (kept 24h) in case it was a separate purchase. If the guard itself is unavailable it fails open and the charge is logged (`WAL-005`).
 - `400 WAL-001` — missing/invalid merchant, amount or email.
 - `401 AUTH-002` — bad or missing secret.
 - `422 SHT-002 month_not_found` — no month sheet for the resolved month. Create the month in the dashboard first.

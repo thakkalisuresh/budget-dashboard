@@ -24,6 +24,10 @@ export const msgNeedsCategory = ({ amount, vendor, monthName }) =>
 export const msgSplitParked = ({ amount, vendor }) =>
   `🧾 ${usd(amount)} at ${vendor} — upload the receipt on Telegram to split it, or SKIP to log as one.`;
 
+export const msgDuplicateSkipped = ({ amount, vendor }) =>
+  `⏭ ${usd(amount)} at ${vendor} looks like a duplicate of a charge just logged — skipped. ` +
+  `Tap "Log it anyway" on Telegram if it was separate.`;
+
 export const msgUnreadable = (field) => ({
   amount: "⚠️ Couldn't read the amount from that notification — nothing was logged.",
   merchant: "⚠️ Couldn't read the store name from that notification — nothing was logged.",
@@ -47,3 +51,10 @@ export const tgCategoryPrompt = ({ vendor, amount, card, monthName, suggested })
   `🤔 Categorize this charge\n` +
   `${vendor} · ${usd(amount)}${card ? ` · ${card}` : ''} · ${shortMonth(monthName)}\n` +
   `Best guess: ${suggested}. Tap the right one:`;
+
+/** Telegram text for the "skipped a likely duplicate" note (button: Log it anyway). */
+export const tgDuplicateNote = ({ vendor, amount, card, monthName, priorVendor, ageSec }) =>
+  `⏭ Skipped a likely duplicate\n` +
+  `${vendor} · ${usd(amount)}${card ? ` · ${card}` : ''} · ${shortMonth(monthName)}\n` +
+  `${priorVendor ? `Looks like ${priorVendor} from ${ageSec}s ago. ` : ''}` +
+  `Same amount arrived from the same phone within 2 minutes. If it was a separate purchase, tap:`;
