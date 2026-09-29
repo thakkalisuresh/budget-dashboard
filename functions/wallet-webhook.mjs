@@ -1,8 +1,8 @@
 /**
- * Cloud Function — wallet webhook for iOS Shortcuts / Android MacroDroid.
+ * Cloud Function — wallet webhook for iOS Shortcuts / Android Automate (LlamaLab).
  * Receives transaction data from mobile automations triggered by bank
  * push notifications after wallet payments (Apple/Google/Samsung Wallet).
- * Categorizes via Claude AI, writes to Google Sheets, and confirms via push.
+ * Categorizes (smart rules → Groq → extractor), writes to Google Sheets, and confirms via push.
  */
 import { onRequest } from 'firebase-functions/v2/https';
 import { currentMonthName, currentMonthYear, monthNameFromDateStr, monthYearFromDateStr, localToday } from './lib/_time.mjs';

@@ -148,9 +148,10 @@ export const errorDigest = onSchedule(
     region: 'us-central1',
     // Every secret any of the three duties reads must be bound here, or its
     // process.env value is undefined at runtime and it silently does nothing.
-    // ALLOWED_EMAILS: fallback household account. Sheets/Drive secrets: the
-    // parked-charge nudge reads the owner's custom categories.
-    secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP, ALLOWED_EMAILS, ...SHEETS_DRIVE_SECRETS],
+    // SHEETS_DRIVE_SECRETS already includes ALLOWED_EMAILS (the fallback
+    // household account) and serves the parked-charge nudge's category read.
+    // Listing ALLOWED_EMAILS again fails the deploy: duplicate secret env var.
+    secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP, ...SHEETS_DRIVE_SECRETS],
     timeoutSeconds: 120,
   },
   async () => {

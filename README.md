@@ -47,7 +47,7 @@ spreadsheet, with an offline-capable PWA on top.
 - ✅ **Bank reconciliation** — import CSV/PDF statements and match against recorded expenses
 - ✅ **Card rewards engine** — MCC-based rewards per card, best-card-per-category recommendations, and a Cards analytics tab
 - ✅ **AI chat** — ask questions about your budget in plain language
-- ✅ **Mobile wallet capture** — iOS Shortcuts / Android MacroDroid forward payment notifications to a webhook that auto-categorizes and writes to the sheet
+- ✅ **Mobile wallet capture** — iOS Shortcuts / Android Automate forward payment notifications to a webhook that auto-categorizes and writes to the sheet
 - ✅ **Offline PWA** — biometric unlock (Face ID / fingerprint) restores a cached dashboard with no internet; expenses queued offline sync on reconnect
 - ✅ **Push notifications** — daily/weekly digests and over-budget alerts
 - ✅ **Multi-user** — owner + viewer roles, shared access to the same sheet
