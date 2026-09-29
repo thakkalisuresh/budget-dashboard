@@ -19,11 +19,56 @@
 import { GROQ_URL, GROQ_TEXT_MODEL, groqParams, groqContent, reportGroqFailure } from './_groq.mjs';
 
 /**
- * Below this, the answer goes to the user instead of straight to the sheet.
- * Deliberately not 0.5: the cost of a wrong silent write is a mis-budgeted
- * month, while the cost of an unnecessary question is one tap.
+ * The confidence scale the model is asked to use. The prompt is generated from
+ * this list, so the words the model sees and the threshold below stay together.
+ *
+ * Measured live (scripts/calibrate-confidence.mjs, 92 vendors x 5 runs): the
+ * model does not produce a continuous confidence, it snaps to a few anchors
+ * (0.2, 0.5, 0.7, 0.8, 0.9, 1.0). On this household's vendors 0.9 and above was
+ * right about 95% of the time; 0.8 and below was not.
  */
-export const CONFIDENCE_THRESHOLD = 0.75;
+export const CONFIDENCE_RUBRIC = [
+  [1.0, 'a household-name merchant with one obvious category'],
+  [0.7, 'probably this category, but a second one is plausible'],
+  [0.5, 'could be several categories'],
+  [0.2, 'essentially a guess'],
+];
+
+/**
+ * Below this, the answer goes to the user instead of straight to the sheet:
+ * silent at 0.9 and up, asks at 0.8 and below. The one place to move it (0.95
+ * would ask on almost every first-time vendor and leak nothing measured).
+ * A wrong silent write is a mis-budgeted month; an unnecessary question is one
+ * tap, and the answer lands in history so it is only asked once.
+ */
+export const CONFIDENCE_THRESHOLD = 0.85;
+
+/**
+ * Vendors the model scores 0.8-0.9 while being wrong for a household's own
+ * filing, because the right category depends on what was bought or who was paid:
+ * warehouse and big-box stores, marketplaces, person-to-person payments and
+ * app-store or platform billing. Always asked about on first sight; the answer
+ * then lands in history. Word-anchored so "Targeted Marketing" or "Applebees"
+ * never match.
+ */
+export const ALWAYS_ASK_VENDORS = [
+  /\bcostco\b/i, /\btarget\b/i, /\bwalmart\b/i, /\b(?:amazon|amzn)\b/i,
+  /\bzelle\b/i, /\bvenmo\b/i, /\bpaypal\b/i, /\bapple\.com\b/i, /^google\s*\*/i,
+];
+
+export function isAlwaysAsk(vendor) {
+  return !!vendor && ALWAYS_ASK_VENDORS.some(re => re.test(vendor));
+}
+
+/**
+ * The weekly audit flags rows the model disagrees with, and only when it is at
+ * the top anchor: at any lower anchor the model was measured wrong about as often
+ * as right on this household's categories, so a flag there is noise.
+ */
+export const AUDIT_CONFIDENCE = 1.0;
+
+/** How much of a vendor's prior filings must agree before history settles it. */
+const HISTORY_AGREEMENT = 0.75;
 
 /**
  * MIRROR of applySmartRules in src/smartRules.js — keep the two in step.
@@ -40,7 +85,7 @@ export function applySmartRules(vendor, rules) {
   return matches[0].category;
 }
 
-function buildPrompt(vendor, amount, categories) {
+export function buildPrompt(vendor, amount, categories) {
   return [
     `Vendor: ${vendor}`,
     amount != null ? `Amount: $${amount}` : null,
@@ -50,9 +95,10 @@ function buildPrompt(vendor, amount, categories) {
     'Reply with ONLY a JSON object, no markdown and no explanation:',
     '{"category": "<one of the listed categories>", "confidence": <0 to 1>}',
     '',
-    'Set confidence below 0.75 when the vendor name is ambiguous, unfamiliar,',
-    'or could plausibly belong to more than one category.',
-  ].filter(Boolean).join('\n');
+    'Report confidence as how sure you are that this single category is the right one for this vendor:',
+    ...CONFIDENCE_RUBRIC.map(([score, meaning]) => `${score.toFixed(1)} = ${meaning};`),
+    'Judge the vendor name, not how confident you feel.',
+  ].filter(v => v !== null).join('\n');
 }
 
 /**
@@ -113,21 +159,74 @@ export async function categorizeWithGroq(vendor, amount, categories, { fetchImpl
   }
 }
 
+/** Lowercased word list with store numbers and punctuation dropped. */
+function vendorTokens(name) {
+  return String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ')
+    .filter(t => t && !/^\d+$/.test(t));
+}
+
+/**
+ * Same vendor, tolerant of store numbers, a longer legal name, and the
+ * truncation card feeds apply ("DAILY GROCERY BEER AND WI"). Deliberately
+ * stricter than fuzzyNamesMatch: sharing one word ("Market", "Amazon") is not
+ * the same vendor, and a false match here would file a charge silently.
+ */
+function sameVendor(a, b) {
+  const ta = vendorTokens(a);
+  const tb = vendorTokens(b);
+  return startsWith(ta, tb) || startsWith(tb, ta);
+}
+
+/** `short` is a leading run of `long`'s words, its last word possibly cut off. */
+function startsWith(short, long) {
+  if (!short.length || short.length > long.length) return false;
+  const last = short.length - 1;
+  return short.every((tok, i) =>
+    tok === long[i] || (i === last && short.length > 1 && tok.length >= 2 && long[i].startsWith(tok)));
+}
+
+/**
+ * What the user themselves have filed this vendor under, from recent sheet rows
+ * ({ vendor, category }). Returns null with no usable prior filing, otherwise
+ * { category, count, agree }: the most frequent category, and whether at least
+ * HISTORY_AGREEMENT of the rows share it. A vendor that is split across
+ * categories (a warehouse store) reports agree: false and the caller asks.
+ */
+export function categoryFromHistory(vendor, rows, categories) {
+  if (!vendor || !rows?.length) return null;
+  const counts = new Map();
+  let total = 0;
+  for (const r of rows) {
+    if (!categories.includes(r?.category) || !sameVendor(r.vendor, vendor)) continue;
+    counts.set(r.category, (counts.get(r.category) || 0) + 1);
+    total++;
+  }
+  if (!total) return null;
+  const [category, top] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+  return { category, count: total, agree: top / total >= HISTORY_AGREEMENT };
+}
+
 /**
  * Decide the category for one expense.
  *
  * Returns { category, source, confidence, needsConfirm }:
  *   source 'rule'       — a smart rule matched; authoritative, never confirmed.
- *   source 'llm'        — Groq answered. needsConfirm is true below the
- *                         confidence threshold, meaning the caller should ask
- *                         before writing rather than guess silently.
+ *   source 'history'    — the user has filed this vendor before, consistently.
+ *                         Their own decision beats a guess; never confirmed.
+ *   source 'llm'        — Groq answered. needsConfirm is true below
+ *                         CONFIDENCE_THRESHOLD, when the answer is Misc, for a vendor on
+ *                         ALWAYS_ASK_VENDORS, or when the vendor's history is split, meaning the caller
+ *                         should ask before writing rather than guess silently.
  *   source 'extraction' — no rule, no usable LLM answer. Current behaviour.
  *
- * Pass `extractedCategory` as null/undefined when the extractor produced no
- * category; only a real one can corroborate Groq.
+ * `history` is recent sheet rows ({ vendor, category }); omit it to skip that layer.
  *
- * `enabled: false` short-circuits straight to the extractor so the whole
- * feature can be switched off without unpicking the call sites.
+ * The extractor's category no longer lets Groq skip the threshold: both come
+ * from the same model family and their errors correlate (both said Travel for a
+ * car rental filed under Holiday). It only serves as the fallback answer.
+ *
+ * `enabled: false` short-circuits the LLM so the whole feature can be switched
+ * off without unpicking the call sites; rules and history still apply.
  */
 export async function resolveCategory({
   vendor,
@@ -135,6 +234,7 @@ export async function resolveCategory({
   extractedCategory,
   categories,
   settings = {},
+  history,
   enabled = true,
 }) {
   const fallback = extractedCategory || 'Misc';
@@ -142,6 +242,11 @@ export async function resolveCategory({
   const ruleCategory = applySmartRules(vendor, settings.smartRules);
   if (ruleCategory && categories.includes(ruleCategory)) {
     return { category: ruleCategory, source: 'rule', confidence: 1, needsConfirm: false };
+  }
+
+  const prior = categoryFromHistory(vendor, history, categories);
+  if (prior?.agree) {
+    return { category: prior.category, source: 'history', confidence: 1, needsConfirm: false };
   }
 
   if (!enabled) {
@@ -153,19 +258,15 @@ export async function resolveCategory({
     return { category: fallback, source: 'extraction', confidence: 0, needsConfirm: false };
   }
 
-  // Agreeing with the extractor is corroboration, not a coin flip — take it
-  // without asking even if the model hedged on its own confidence. Only a
-  // category the extractor actually produced counts: when extractedCategory is
-  // empty, `fallback` is our own 'Misc' default, and Groq echoing it for an
-  // unfamiliar vendor is not evidence — that case falls to the threshold below.
-  if (extractedCategory && guess.category === extractedCategory) {
-    return { category: guess.category, source: 'llm', confidence: guess.confidence, needsConfirm: false };
-  }
-
   return {
     category: guess.category,
     source: 'llm',
     confidence: guess.confidence,
-    needsConfirm: guess.confidence < CONFIDENCE_THRESHOLD,
+    // Misc is where an unfamiliar vendor lands, so a Misc answer is never proof
+    // of anything, however sure the model sounds.
+    needsConfirm: guess.confidence < CONFIDENCE_THRESHOLD
+      || guess.category === 'Misc'
+      || isAlwaysAsk(vendor)
+      || (prior != null && !prior.agree),
   };
 }

@@ -5,6 +5,7 @@ import {
   localToday,
   monthYearFromDateStr,
   monthNameFromDateStr,
+  previousMonthName,
   resolveMonth,
 } from '../../functions/lib/_time.mjs';
 
@@ -61,5 +62,18 @@ describe('_time helpers — the Aug-31 month-boundary bug', () => {
     vi.setSystemTime(new Date('2027-01-01T05:00:00Z'));
     expect(currentMonthName(PT)).toBe('December 2026');
     expect(currentMonthYear(PT)).toEqual({ month: 'December', year: 2026 });
+  });
+});
+
+describe('previousMonthName', () => {
+  it('steps back one month and across a year boundary', () => {
+    expect(previousMonthName('September 2026')).toBe('August 2026');
+    expect(previousMonthName('January 2027')).toBe('December 2026');
+  });
+
+  it('returns null for anything that is not "Month YYYY"', () => {
+    expect(previousMonthName('')).toBeNull();
+    expect(previousMonthName(undefined)).toBeNull();
+    expect(previousMonthName('Smarch 2026')).toBeNull();
   });
 });

@@ -23,7 +23,7 @@ import {
   getCurrentMonthSheetId, getRecentExpenses, getUserSettings,
 } from './lib/_sheets.mjs';
 import { CATEGORIES } from './lib/_extraction.mjs';
-import { categorizeWithGroq, applySmartRules } from './lib/_categorize.mjs';
+import { categorizeWithGroq, applySmartRules, AUDIT_CONFIDENCE } from './lib/_categorize.mjs';
 import { sendMessage, resolveTelegramChatId } from './lib/_telegram.mjs';
 import {
   GROQ_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP, SHEETS_DRIVE_SECRETS,
@@ -32,13 +32,6 @@ import {
 /** How many recent expenses to pull, and how many of those to actually check. */
 const SAMPLE_POOL = 40;
 const SAMPLE_SIZE = 15;
-
-/**
- * Only flag a disagreement the model is sure about. The add path can afford to
- * ask on a hunch because the user is already mid-transaction; a weekly digest
- * that cries wolf just gets ignored, so the bar here is deliberately higher.
- */
-const AUDIT_THRESHOLD = 0.85;
 
 /** Fisher-Yates over a copy — random coverage, so repeat runs check different rows. */
 function sample(items, n) {
@@ -88,7 +81,7 @@ export async function runCategoryAudit({ email }) {
     const guess = await categorizeWithGroq(expense.vendor, expense.amount, categories);
     if (!guess) continue;
     if (guess.category === expense.category) continue;
-    if (guess.confidence < AUDIT_THRESHOLD) continue;
+    if (guess.confidence < AUDIT_CONFIDENCE) continue;
 
     flagged.push({ ...expense, suggested: guess.category, confidence: guess.confidence });
   }

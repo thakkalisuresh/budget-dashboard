@@ -69,8 +69,8 @@ describe('runCategoryAudit', () => {
       expense('Shell', 'Travel', 40, 'tx_2'),
     ]);
     groqAnswers({
-      Chipotle: { category: 'Eating Out', confidence: 0.95 },  // disagrees, confident
-      Shell:    { category: 'Travel',     confidence: 0.99 },  // agrees with what's logged
+      Chipotle: { category: 'Eating Out', confidence: 1 },     // disagrees, at the top anchor
+      Shell:    { category: 'Travel',     confidence: 1 },  // agrees with what's logged
     });
 
     const out = await runCategoryAudit({ email: 'me@example.com' });
@@ -86,7 +86,7 @@ describe('runCategoryAudit', () => {
 
   it('stays quiet when nothing is suspicious', async () => {
     recentMock.mockResolvedValue([expense('Chipotle', 'Eating Out', 24.5, 'tx_1')]);
-    groqAnswers({ _: { category: 'Eating Out', confidence: 0.99 } });
+    groqAnswers({ _: { category: 'Eating Out', confidence: 1 } });
 
     const out = await runCategoryAudit({ email: 'me@example.com' });
     expect(out.flagged).toBe(0);
@@ -104,10 +104,20 @@ describe('runCategoryAudit', () => {
     expect(sendMock).not.toHaveBeenCalled();
   });
 
+  it('ignores a disagreement below the top anchor, even a confident-looking 0.95', async () => {
+    // Below 1.0 the model was measured wrong about as often as right on this
+    // household's own categories, so a flag there is noise.
+    recentMock.mockResolvedValue([expense('Chipotle', 'Misc', 24.5, 'tx_1')]);
+    groqAnswers({ _: { category: 'Eating Out', confidence: 0.95 } });
+
+    const out = await runCategoryAudit({ email: 'me@example.com' });
+    expect(out.flagged).toBe(0);
+  });
+
   it('never second-guesses a vendor the user wrote a smart rule for', async () => {
     settingsMock.mockResolvedValue({ smartRules: [{ pattern: 'chipotle', category: 'Misc' }] });
     recentMock.mockResolvedValue([expense('Chipotle', 'Misc', 24.5, 'tx_1')]);
-    groqAnswers({ _: { category: 'Eating Out', confidence: 0.99 } });
+    groqAnswers({ _: { category: 'Eating Out', confidence: 1 } });
 
     const out = await runCategoryAudit({ email: 'me@example.com' });
     expect(out.flagged).toBe(0);
@@ -140,7 +150,7 @@ describe('runCategoryAudit', () => {
       { vendor: '', category: 'Misc', amount: 5, uuid: 'tx_1' },
       { vendor: 'Thing', category: 'Misc', amount: 5, uuid: '' },
     ]);
-    groqAnswers({ _: { category: 'Eating Out', confidence: 0.99 } });
+    groqAnswers({ _: { category: 'Eating Out', confidence: 1 } });
 
     const out = await runCategoryAudit({ email: 'me@example.com' });
     expect(out.checked).toBe(0);
@@ -153,7 +163,7 @@ describe('runCategoryAudit', () => {
     recentMock.mockResolvedValue(
       Array.from({ length: 40 }, (_, i) => expense(`V${i}`, 'Misc', 10, `tx_${i}`))
     );
-    groqAnswers({ _: { category: 'Misc', confidence: 0.99 } });
+    groqAnswers({ _: { category: 'Misc', confidence: 1 } });
 
     const out = await runCategoryAudit({ email: 'me@example.com' });
     expect(out.checked).toBe(15);

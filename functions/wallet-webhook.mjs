@@ -5,7 +5,7 @@
  * Categorizes (smart rules → Groq → extractor), writes to Google Sheets, and confirms via push.
  */
 import { onRequest } from 'firebase-functions/v2/https';
-import { currentMonthName, currentMonthYear, monthNameFromDateStr, monthYearFromDateStr, localToday } from './lib/_time.mjs';
+import { currentMonthName, currentMonthYear, monthNameFromDateStr, monthYearFromDateStr, previousMonthName, localToday } from './lib/_time.mjs';
 import webpush from 'web-push';
 import crypto from 'node:crypto';
 import { extractTransactionText, CATEGORIES } from './lib/_extraction.mjs';
@@ -54,6 +54,32 @@ const DUP_WINDOW_MS = 2 * 60 * 1000;
 // A claim that never settled is an abandoned attempt after the function timeout.
 const DUP_TAKEOVER_MS = 30 * 1000;
 const DUP_BLOB_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Upper bound on reading sheet history for category lookups; the webhook has 30 s. */
+const HISTORY_READ_MS = 6000;
+
+async function withTimeout(promise, ms) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Last month's recent rows, or [] when there is no such sheet or the read fails. */
+async function getPreviousMonthRows(monthName) {
+  try {
+    const prev = previousMonthName(monthName);
+    if (!prev) return [];
+    return (await getRecentExpenses(await getCurrentMonthSheetId(prev), 100)) || [];
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Park the skipped charge, then tell the household primary's chat with a
@@ -282,12 +308,31 @@ export const walletWebhook = onRequest(
     // about over Telegram rather than guessed at.
     const allCategories = [...CATEGORIES, ...(userSettings.customCategories || [])];
     trail(`resolved card ${card || 'none'}`);
+
+    // The user's own past filings of this vendor settle its category before any
+    // LLM guess. This month's rows (also reused by the duplicate check below)
+    // plus last month's, so history does not vanish on the 1st. Every failure
+    // here fails OPEN to the LLM path, and a slow sheet cannot eat the 30 s budget.
+    let recentRows = null;
+    let history = [];
+    try {
+      const [current, previous] = await withTimeout(Promise.all([
+        getRecentExpenses(sheetId, 100).catch(e => { console.warn('wallet-webhook: history read failed', e.message); return null; }),
+        getPreviousMonthRows(monthName),
+      ]), HISTORY_READ_MS);
+      recentRows = current;
+      history = [...(current || []), ...previous];
+    } catch (e) {
+      console.warn('wallet-webhook: vendor history unavailable (non-fatal)', e.message);
+    }
+
     const decision = await resolveCategory({
       vendor,
       amount,
       extractedCategory,
       categories: allCategories,
       settings: userSettings,
+      history,
       enabled: userSettings.llmCategorize !== false,
     });
     if (decision.category !== category) {
@@ -451,7 +496,7 @@ export const walletWebhook = onRequest(
     // gets resolved. Wrapped separately so a failed check can't stop the write.
     let dupNotice = null;
     try {
-      const recent = await getRecentExpenses(sheetId, 100);
+      const recent = recentRows ?? await getRecentExpenses(sheetId, 100);
       const dups = findDuplicates(
         recent.map(e => ({ vendor: e.vendor, amount: e.amount, date: e.txDate || e.timestamp, category: e.category })),
         { vendor, amount, date: txDate }
