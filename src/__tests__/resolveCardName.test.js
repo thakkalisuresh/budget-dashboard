@@ -82,6 +82,57 @@ describe('resolveCardName — alias layer', () => {
   });
 });
 
+describe('resolveCardName — ambiguity', () => {
+  const HOUSEHOLD = [
+    'Chase Sapphire Reserve',
+    'American Express Blue Cash Preferred',
+    'Capital One Quicksilver',
+    'Chase Freedom Unlimited',
+    'Chase Freedom Rise',
+    'Bilt Blue Card',
+    'Chase Debit Card - Anu',
+    'Chase Debit Card - Sabarish',
+  ];
+  const both = (raw, cards) => {
+    const a = resolveCardName(raw, cards);
+    expect(backendResolve(raw, cards), `mirror drift on "${raw}"`).toBe(a);
+    return a;
+  };
+
+  it('never guesses between two cards that both contain the text (order must not matter)', () => {
+    // Bare "Chase Debit" fits both people's debit cards: first-wins used to
+    // attribute it to whoever was listed first.
+    expect(both('Chase Debit', HOUSEHOLD)).toBe('');
+    expect(both('Chase Debit', [...HOUSEHOLD].reverse())).toBe('');
+    expect(both('Chase Debit Card', HOUSEHOLD)).toBe('');
+    expect(both('Chase Freedom', HOUSEHOLD)).toBe('');
+  });
+
+  it('still resolves when exactly one card contains the text', () => {
+    expect(both('American Express', HOUSEHOLD)).toBe('American Express Blue Cash Preferred');
+    expect(both('Sapphire Reserve', HOUSEHOLD)).toBe('Chase Sapphire Reserve');
+    expect(both('Chase Debit', ['Chase Debit Card - Anu', 'Bilt Blue Card'])).toBe('Chase Debit Card - Anu');
+  });
+
+  it('exact normalized match always wins over longer names', () => {
+    expect(both('Chase Debit Card - Sabarish', HOUSEHOLD)).toBe('Chase Debit Card - Sabarish');
+    expect(both('chase freedom rise', HOUSEHOLD)).toBe('Chase Freedom Rise');
+  });
+
+  it('when the text contains several held card names, the longest unique one wins', () => {
+    const cards = ['Chase Freedom', 'Chase Freedom Unlimited'];
+    expect(both('Chase Freedom Unlimited Visa', cards)).toBe('Chase Freedom Unlimited');
+    // same length -> ambiguous -> ''
+    expect(both('Alpha Rewards Card Bravo Rewards Card', ['Alpha Rewards Card', 'Bravo Rewards Card'])).toBe('');
+  });
+
+  it('aliases still resolve through the same rules; unheld cards stay empty', () => {
+    expect(both('Quicksilver Credit Card', HOUSEHOLD)).toBe('Capital One Quicksilver');
+    expect(both('CSR', HOUSEHOLD)).toBe('Chase Sapphire Reserve');
+    expect(both('Discover It', HOUSEHOLD)).toBe('');
+  });
+});
+
 describe('card resolver — backend/frontend mirror parity', () => {
   // src/receiptHelpers.js and functions/lib/_card-resolver.mjs are duplicated
   // deliberately (the frontend bundle can't import from functions/). This test

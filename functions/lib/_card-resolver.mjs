@@ -63,9 +63,24 @@ export function resolveCardName(raw, cards = []) {
   // Substring either direction (Vision may return "Sapphire Reserve" for
   // "Chase Sapphire Reserve"). Guard with a min length so short names like
   // "Cash" don't match "...activecash".
+  //
+  // Never first-wins: two held cards that both fit ("Chase Debit" for
+  // "Chase Debit Card - A" and "- B") must not be settled by list order.
+  //   * text CONTAINS held card names: the longest unique one wins.
+  //   * held names CONTAIN the text: only when exactly one does.
+  // Anything ambiguous returns '' and the caller keeps the raw string.
+  const contained = [];
+  const containing = [];
   for (const c of cards) {
     const nc = normCard(c);
-    if (nc.length >= 5 && r.length >= 5 && (nc.includes(r) || r.includes(nc))) return c;
+    if (nc.length < 5 || r.length < 5) continue;
+    if (r.includes(nc)) contained.push({ c, n: nc.length });
+    else if (nc.includes(r)) containing.push(c);
   }
-  return '';
+  if (contained.length) {
+    const max = Math.max(...contained.map(x => x.n));
+    const top = contained.filter(x => x.n === max);
+    return top.length === 1 ? top[0].c : '';
+  }
+  return containing.length === 1 ? containing[0] : '';
 }
