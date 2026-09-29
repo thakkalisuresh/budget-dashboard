@@ -10,6 +10,7 @@
  *   node scripts/wallet-roundtrip.mjs --raw "<pasted notification text>" [--raw-as-primary]
  *       runs ONLY that text through the live webhook against the TEST sheet (same rails);
  *       --raw-as-primary posts as the household primary so their card list resolves cards.
+ *       --card "<notification title>" also sends it as the explicit `card` field, like the phone does.
  *
  * Env (all read from the process environment; nothing is printed except the
  * last 4 chars of the sheet id):
@@ -42,7 +43,7 @@ if (errors.length && !listOnly) {
 let cases;
 try {
   cases = opt('--raw', null) !== null
-    ? [buildRawCase(cfg, opt('--raw', ''), { useSettings: flag('--raw-as-primary') })]
+    ? [buildRawCase(cfg, opt('--raw', ''), { useSettings: flag('--raw-as-primary'), card: opt('--card', '') })]
     : buildCases(cfg);
 } catch (e) {
   console.error(e.message);

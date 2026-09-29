@@ -249,10 +249,11 @@ export function buildCases(cfg, { today = new Date().toISOString().slice(0, 10) 
  * One case that posts a pasted REAL notification/SMS text (--raw). Same rails as
  * every other case: sheetId is always the TEST copy, the email is the test email
  * (or, with useSettings, the household primary so that person's card list resolves
- * the card; the row still goes to the TEST copy). The expectation is descriptive:
+ * the card; the row still goes to the TEST copy). `card` mimics the phone sending
+ * the notification Title as an explicit card field next to `text`. The expectation is descriptive:
  * any well-formed answer passes, the point is to eyeball vendor/category/message.
  */
-export function buildRawCase(cfg, text, { useSettings = false, today = new Date().toISOString().slice(0, 10) } = {}) {
+export function buildRawCase(cfg, text, { useSettings = false, card = '', today = new Date().toISOString().slice(0, 10) } = {}) {
   const clean = String(text ?? '').trim();
   if (!clean) throw new Error('--raw needs the notification text');
   if (useSettings && !cfg.settingsEmail) throw new Error('--raw-as-primary needs PRIMARY_EMAIL and SETTINGS_EMAIL');
@@ -264,6 +265,7 @@ export function buildRawCase(cfg, text, { useSettings = false, today = new Date(
       source: SOURCE_TAG,
       date: today,
       text: clean,
+      ...(String(card || '').trim() ? { card: String(card).trim() } : {}),
     },
     expect: (res) => {
       if (res.status !== 200 || !res.json?.ok) return fail(`expected 200 ok, got ${res.status} ${res.json?.code || ''}`);

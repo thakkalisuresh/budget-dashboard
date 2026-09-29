@@ -24,13 +24,18 @@ already uses (copy the header from it). The server also accepts
 `Authorization: Bearer <secret>`; either works, pick one per automation.
 
 ```json
-{ "text": "<the notification text>", "email": "<phone owner's email>", "source": "<tag>" }
+{ "text": "<title + subtitle + body>", "card": "<the notification Title>", "email": "<phone owner's email>", "source": "<tag>" }
 ```
+
+Send the notification **Title as `card`** as well as inside `text`. The parser does
+not reliably pick a card name out of the first line (a real Capital One test came back
+with no card); an explicit `card` wins over the parsed one and is then matched to your
+Fundient card list.
 
 Send the **whole notification** as `text` (title, subtitle and body joined by
 newlines): the merchant is sometimes in the subtitle, the card name in the title.
-Do not send `amount`, `merchant` or `card` from these automations; the server
-parses them (structured fields would win over the parsed ones).
+Do not send `amount` or `merchant` from these automations; the server parses them
+(structured fields would win over the parsed ones).
 
 ### `source` tags
 
@@ -111,7 +116,7 @@ goes to the copy, and it refreshes the primary's heartbeat, which is fine):
 
 ```bash
 export PRIMARY_EMAIL='<primary email>' SETTINGS_EMAIL='<primary email>'
-node scripts/wallet-roundtrip.mjs --raw-as-primary --raw "<pasted Chase notification>"
+node scripts/wallet-roundtrip.mjs --raw-as-primary --card "<the notification Title>" --raw "<pasted Chase notification>"
 ```
 
 It prints the status, vendor, category, amount and the exact `message` the phone
@@ -140,7 +145,7 @@ from the same app are grouped. Step 1 below includes a locked-phone test.
    work unattended: note that in your report). Turn **Notify When Run** off.
 4. Add the actions:
    1. **Text**: three lines, the variable pills from the *Notification* variable: `Title`, `Subtitle`, `Body` (one per line). An empty subtitle is harmless.
-   2. **Get Contents of URL**: URL as above; Method **POST**; Headers: `X-API-Key` = `<secret>` (same as the old Shortcut), `Content-Type` = `application/json`; Request Body **JSON** with fields: `text` (the Text from step 1), `email`, `source`, and, **in test mode**, `sheetId`.
+   2. **Get Contents of URL**: URL as above; Method **POST**; Headers: `X-API-Key` = `<secret>` (same as the old Shortcut), `Content-Type` = `application/json`; Request Body **JSON** with fields: `text` (the Text from step 1), `card` (the *Title* pill), `email`, `source`, and, **in test mode**, `sheetId`.
    3. **Get Dictionary Value**: key `message` from the *Contents of URL*.
    4. **Show Notification** with that value. (Title e.g. "Fundient".)
 5. Test mode body: `email` = `<test email>`, `sheetId` = `<test sheet id>`.
