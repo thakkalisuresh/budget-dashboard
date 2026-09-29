@@ -160,6 +160,13 @@ describe('--raw (pasted real text)', () => {
     expect(() => buildRawCase(cfgOf(), TEXT, { useSettings: true })).toThrow(/PRIMARY_EMAIL/);
   });
 
+  it('--card adds an explicit trimmed card field; without it no card key is sent', () => {
+    expect(buildRawCase(cfg, TEXT, { card: '  Quicksilver Credit Card ' }).body.card).toBe('Quicksilver Credit Card');
+    expect('card' in buildRawCase(cfg, TEXT).body).toBe(false);
+    expect('card' in buildRawCase(cfg, TEXT, { card: '  ' }).body).toBe(false);
+    expect(checkRails([buildRawCase(cfg, TEXT, { card: 'X' })], cfg)).toEqual([]);
+  });
+
   it('rejects empty text', () => {
     expect(() => buildRawCase(cfg, '   ')).toThrow(/needs the notification text/);
   });
