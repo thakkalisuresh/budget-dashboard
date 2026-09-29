@@ -481,6 +481,45 @@ describe('wallet-webhook — LLM category correction', () => {
     expect(appendMock.mock.calls[0][0].category).toBe('Travel');
   });
 
+  it('asks when extraction fails and Groq only agrees with the Misc default at low confidence', async () => {
+    extractMock.mockResolvedValue({ ok: false });
+    groqSays('Misc', 0.3);
+    const res = await call(req({ body: validBody }));
+
+    expect(res.status).toBe(200);
+    expect(res.json).toMatchObject({ ok: true, pendingCategory: true });
+    expect(appendMock).not.toHaveBeenCalled();
+    expect(telegramSend).toHaveBeenCalledOnce();
+  });
+
+  it('asks when extraction succeeds but omits reward_category', async () => {
+    extractMock.mockResolvedValue({ ok: true, data: { store_name: 'Chipotle' } });
+    groqSays('Misc', 0.3);
+    const res = await call(req({ body: validBody }));
+
+    expect(res.json).toMatchObject({ ok: true, pendingCategory: true });
+    expect(appendMock).not.toHaveBeenCalled();
+  });
+
+  it('writes without asking when extraction fails but Groq is confident', async () => {
+    extractMock.mockResolvedValue({ ok: false });
+    groqSays('Eating Out', 0.9);
+    await call(req({ body: validBody }));
+
+    expect(appendMock).toHaveBeenCalledOnce();
+    expect(appendMock.mock.calls[0][0].category).toBe('Eating Out');
+    expect(telegramSend).not.toHaveBeenCalled();
+  });
+
+  it('a really extracted Misc that Groq agrees with is still written silently', async () => {
+    // beforeEach extractor says reward_category: 'Misc'.
+    groqSays('Misc', 0.3);
+    await call(req({ body: validBody }));
+
+    expect(appendMock).toHaveBeenCalledOnce();
+    expect(telegramSend).not.toHaveBeenCalled();
+  });
+
   it('a smart rule wins outright and never calls the LLM', async () => {
     getSettingsMock.mockResolvedValue({ smartRules: [{ pattern: 'chipotle', category: 'Eating Out' }] });
     const res = await call(req({ body: validBody }));

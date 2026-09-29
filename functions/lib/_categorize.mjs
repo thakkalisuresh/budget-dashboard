@@ -120,6 +120,9 @@ export async function categorizeWithGroq(vendor, amount, categories, { fetchImpl
  *                         before writing rather than guess silently.
  *   source 'extraction' — no rule, no usable LLM answer. Current behaviour.
  *
+ * Pass `extractedCategory` as null/undefined when the extractor produced no
+ * category; only a real one can corroborate Groq.
+ *
  * `enabled: false` short-circuits straight to the extractor so the whole
  * feature can be switched off without unpicking the call sites.
  */
@@ -148,8 +151,11 @@ export async function resolveCategory({
   }
 
   // Agreeing with the extractor is corroboration, not a coin flip — take it
-  // without asking even if the model hedged on its own confidence.
-  if (guess.category === fallback) {
+  // without asking even if the model hedged on its own confidence. Only a
+  // category the extractor actually produced counts: when extractedCategory is
+  // empty, `fallback` is our own 'Misc' default, and Groq echoing it for an
+  // unfamiliar vendor is not evidence — that case falls to the threshold below.
+  if (extractedCategory && guess.category === extractedCategory) {
     return { category: guess.category, source: 'llm', confidence: guess.confidence, needsConfirm: false };
   }
 

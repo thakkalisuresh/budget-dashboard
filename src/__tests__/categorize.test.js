@@ -151,6 +151,35 @@ describe('resolveCategory', () => {
     expect(out).toMatchObject({ category: 'Grocery', needsConfirm: false });
   });
 
+  it('treats agreement on a defaulted fallback as no corroboration: low confidence asks', async () => {
+    // extractedCategory null = extraction produced nothing, so 'Misc' here is
+    // our own default and Groq "agreeing" with it proves nothing.
+    mockFetch.mockResolvedValue(groqReply(`{"category":"Misc","confidence":${CONFIDENCE_THRESHOLD - 0.1}}`));
+    const out = await resolveCategory({
+      vendor: 'Unfamiliar Vendor LLC', amount: 20, extractedCategory: null,
+      categories: CATEGORIES, settings,
+    });
+    expect(out).toMatchObject({ category: 'Misc', source: 'llm', needsConfirm: true });
+  });
+
+  it('writes a defaulted fallback without asking once Groq is confident', async () => {
+    mockFetch.mockResolvedValue(groqReply(`{"category":"Misc","confidence":${CONFIDENCE_THRESHOLD}}`));
+    const out = await resolveCategory({
+      vendor: 'Unfamiliar Vendor LLC', amount: 20, extractedCategory: undefined,
+      categories: CATEGORIES, settings,
+    });
+    expect(out).toMatchObject({ category: 'Misc', source: 'llm', needsConfirm: false });
+  });
+
+  it('still counts agreement on a really extracted Misc as corroboration', async () => {
+    mockFetch.mockResolvedValue(groqReply('{"category":"Misc","confidence":0.3}'));
+    const out = await resolveCategory({
+      vendor: 'Some Vendor', amount: 20, extractedCategory: 'Misc',
+      categories: CATEGORIES, settings,
+    });
+    expect(out).toMatchObject({ category: 'Misc', needsConfirm: false });
+  });
+
   it('falls back to the extractor when the LLM is unavailable', async () => {
     mockFetch.mockRejectedValue(new Error('down'));
     const out = await resolveCategory({
