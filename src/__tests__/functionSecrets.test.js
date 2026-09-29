@@ -45,11 +45,11 @@ function declaredSecrets(src) {
 /** Expand a `...GROUP_SECRETS` spread by reading the group's definition. */
 function expandGroups(names) {
   const secretsSrc = readFileSync(resolve(FN_DIR, 'lib/secrets.mjs'), 'utf8');
-  const out = new Set();
+  const out = [];
   for (const n of names) {
     const g = new RegExp(`export const ${n}\\s*=\\s*\\[([\\s\\S]*?)\\]`).exec(secretsSrc);
-    if (g) g[1].split(',').map(s => s.trim()).filter(Boolean).forEach(x => out.add(x));
-    else out.add(n);
+    if (g) g[1].split(',').map(s => s.trim()).filter(Boolean).forEach(x => out.push(x));
+    else out.push(n);
   }
   return out;
 }
@@ -71,13 +71,27 @@ describe('Cloud Function secret bindings', () => {
       // A handler that reads secrets must declare a secrets array at all.
       expect(declared, `${file} reads ${needed.join(', ')} but declares no secrets`).not.toBeNull();
 
-      const bound = expandGroups(declared);
+      const bound = new Set(expandGroups(declared));
       const missing = needed.filter(v => !bound.has(v));
       expect(
         missing,
         `${file} reads process.env.${missing.join(', ')} but does not bind ${missing.length > 1 ? 'them' : 'it'} — ` +
         `at runtime ${missing.length > 1 ? 'they are' : 'it is'} undefined`
       ).toEqual([]);
+    });
+  }
+
+  // Cloud Run rejects a service revision that binds the same secret twice
+  // ("Duplicate secret environment variable"), so the whole deploy fails.
+  // Spreading SHEETS_DRIVE_SECRETS next to a name it already contains did this
+  // to errorDigest; the PR-time ci job never deploys, so only post-merge saw it.
+  for (const { file, src } of fns) {
+    it(`${file}: no secret is bound twice`, () => {
+      const declared = declaredSecrets(src);
+      if (!declared) return;
+      const all = expandGroups(declared);
+      const dupes = [...new Set(all.filter((n, i) => all.indexOf(n) !== i))];
+      expect(dupes, `${file} binds ${dupes.join(', ')} more than once`).toEqual([]);
     });
   }
 });
