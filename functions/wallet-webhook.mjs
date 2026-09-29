@@ -87,9 +87,25 @@ export const walletWebhook = onRequest(
     const rawText = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
     if (rawText) {
       try {
-        const r = await extractTransactionText(rawText);
+        const r = await extractTransactionText(rawText, { detectNonPurchase: true });
         if (r.ok && r.data) {
           parsed = r.data;
+          // The trigger fires on every bank notification, not just purchases.
+          // Skip declines, statements, deposits, refunds quietly: no row, no
+          // alert (this is not a failure), and it must come before the
+          // merchant/amount checks, which the nulls would trip as WAL-001.
+          if (parsed.is_purchase === false) {
+            const kind = parsed.non_purchase_kind || 'other';
+            console.log(`wallet-webhook: skipped non-purchase notification (${kind})`);
+            res.status(200).json({
+              ok: true,
+              skipped: true,
+              reason: 'not_a_purchase',
+              kind,
+              message: `ℹ️ Not a purchase (${kind}) — nothing was logged.`,
+            });
+            return;
+          }
           if (!merchant && parsed.store_name) merchant = parsed.store_name;
           if ((amountRaw === undefined || amountRaw === null || amountRaw === '') &&
               typeof parsed.total_amount === 'number') {

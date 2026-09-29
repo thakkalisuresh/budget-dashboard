@@ -85,7 +85,21 @@ If the image is completely unreadable, return:
 Respond with ONLY the JSON object. No other text.`;
 }
 
-function buildTextPrompt(text, today = todayISO()) {
+/** Non-purchase categories the parser may report. Anything else becomes 'other'. */
+const NON_PURCHASE_KINDS = ['declined', 'statement', 'deposit', 'payment', 'refund', 'other'];
+
+/** Extra prompt rules for callers that must tell purchases from other notifications. */
+const NON_PURCHASE_RULES = `
+- is_purchase: true ONLY if the text reports money that was just spent at a merchant (an approved purchase or charge). false for anything else: a declined or failed purchase, a statement or bill ready, a payment due/reminder, a deposit or incoming transfer, a payment you made toward your own card/loan/autopay confirmation, a refund or credit, a security alert or one-time code, greetings or random text. When a real purchase is described but hard to read, still answer true.
+- non_purchase_kind: when is_purchase is false, one of ${NON_PURCHASE_KINDS.join(', ')} (declined = declined/failed purchase; statement = statement/bill/payment-due notice; deposit = money received; payment = payment or autopay toward an account; refund = refund/credit/reversal; other = anything else). null when is_purchase is true.`;
+
+function buildTextPrompt(text, today = todayISO(), { detectNonPurchase = false } = {}) {
+  const shape = detectNonPurchase
+    ? '{"store_name":"...","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":null,"currency":"USD","items":[],"reward_category":"...","is_transfer":false,"payment_method":null,"is_purchase":true,"non_purchase_kind":null}'
+    : '{"store_name":"...","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":null,"currency":"USD","items":[],"reward_category":"...","is_transfer":false,"payment_method":null}';
+  const empty = detectNonPurchase
+    ? '{"store_name":null,"purchase_date":null,"total_amount":null,"tax_amount":null,"currency":"USD","items":[],"reward_category":null,"is_transfer":false,"payment_method":null,"is_purchase":false,"non_purchase_kind":"other"}'
+    : '{"store_name":null,"purchase_date":null,"total_amount":null,"tax_amount":null,"currency":"USD","items":[],"reward_category":null,"is_transfer":false,"payment_method":null}';
   return `Extract transaction data from this text (likely a bank SMS, payment notification, or transaction alert):
 
 """
@@ -93,7 +107,7 @@ ${text}
 """
 
 Return EXACTLY this JSON structure:
-{"store_name":"...","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":null,"currency":"USD","items":[],"reward_category":"...","is_transfer":false,"payment_method":null}
+${shape}
 
 Rules:
 - store_name: Merchant/vendor name from the text (for transfers, use the recipient name)
@@ -105,10 +119,10 @@ ${dateRules(today)}
 - items: Always empty []
 - reward_category: MUST be exactly one of: ${CATEGORIES.join(', ')}. Pick closest match based on merchant. Use "Misc" if unclear. For transfers, set to null.
 - is_transfer: true if this is a peer-to-peer payment (Zelle, Venmo, PayPal P2P, bank transfer "to" someone). false for merchant charges.
-- payment_method: The card or account name if the text names it (e.g. "Chase Sapphire Reserve", "Card ending 1234", "Amex Gold"). Extract it exactly as shown. Use null if no card/account is mentioned.
+- payment_method: The card or account name if the text names it (e.g. "Chase Sapphire Reserve", "Card ending 1234", "Amex Gold"). Extract it exactly as shown. Use null if no card/account is mentioned.${detectNonPurchase ? NON_PURCHASE_RULES : ''}
 
 If the text doesn't look like a transaction notification (e.g., random text, greetings), return:
-{"store_name":null,"purchase_date":null,"total_amount":null,"tax_amount":null,"currency":"USD","items":[],"reward_category":null,"is_transfer":false,"payment_method":null}
+${empty}
 
 Respond with ONLY the JSON object. No other text.`;
 }
@@ -301,7 +315,7 @@ async function callGemini(model, base64, mediaType, userPrompt) {
   return parseJSON(text);
 }
 
-async function callGeminiText(model, text) {
+async function callGeminiText(model, text, opts) {
   if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not configured');
 
   const url = `${GEMINI_URL}/${model}:generateContent?key=${GEMINI_API_KEY}`;
@@ -310,7 +324,7 @@ async function callGeminiText(model, text) {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: buildTextPrompt(text) }] }],
+      contents: [{ parts: [{ text: buildTextPrompt(text, undefined, opts) }] }],
       systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
       generationConfig: { responseMimeType: 'application/json' },
     }),
@@ -365,7 +379,7 @@ async function callClaude(model, base64, mediaType, userPrompt) {
   return parseJSON(text);
 }
 
-async function callClaudeText(model, text) {
+async function callClaudeText(model, text, opts) {
   if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not configured');
 
   const res = await fetch(ANTHROPIC_URL, {
@@ -381,7 +395,7 @@ async function callClaudeText(model, text) {
       system: SYSTEM_PROMPT,
       messages: [{
         role: 'user',
-        content: [{ type: 'text', text: buildTextPrompt(text) }],
+        content: [{ type: 'text', text: buildTextPrompt(text, undefined, opts) }],
       }],
     }),
   });
@@ -444,8 +458,8 @@ const callGroqVision = (base64, mediaType, userPrompt) => callGroq([{
   ],
 }], GROQ_VISION_MODEL);
 
-const callGroqText = (text) => callGroq(
-  [{ role: 'user', content: buildTextPrompt(text) }], GROQ_TEXT_MODEL
+const callGroqText = (text, opts) => callGroq(
+  [{ role: 'user', content: buildTextPrompt(text, undefined, opts) }], GROQ_TEXT_MODEL
 );
 
 /* ── public extraction with full fallback chain ── */
@@ -542,19 +556,43 @@ export async function extractReceiptBatch(base64, mediaType) {
   return { ok: true, transactions, model: res.model };
 }
 
-export async function extractTransactionText(text) {
+/**
+ * Pull a transaction out of free text.
+ *
+ * `detectNonPurchase` is opt-in and only the wallet webhook sets it: the phone
+ * trigger fires on every bank notification, so it needs `is_purchase` /
+ * `non_purchase_kind` to skip statements, declines, deposits and refunds. Other
+ * callers (the bot's typed-expense path) neither send the extra rules nor see the
+ * flag, so "coffee 5" can never come back as a non-purchase. When asked, a
+ * missing or unparseable flag means purchase — never drop a real charge because
+ * the model left a field out.
+ */
+export async function extractTransactionText(text, { detectNonPurchase = false } = {}) {
+  const opts = { detectNonPurchase };
   // Text has no throughput objection — the rate-limit and latency problems that
   // keep Groq second for images do not apply to a short SMS string — so here it
   // leads and the heavier providers are the fallback.
   const res = await runChain('extractTransactionText', [
-    { label: GROQ_TEXT_MODEL, retries: 1, run: () => callGroqText(text) },
-    { label: PRIMARY_MODEL, retries: MAX_RETRIES, run: () => callGeminiText(PRIMARY_MODEL, text) },
-    ...GEMINI_MODELS.slice(1).map(model => ({ label: model, run: () => callGeminiText(model, text) })),
-    ...CLAUDE_MODELS.map(model => ({ label: model, run: () => callClaudeText(model, text) })),
+    { label: GROQ_TEXT_MODEL, retries: 1, run: () => callGroqText(text, opts) },
+    { label: PRIMARY_MODEL, retries: MAX_RETRIES, run: () => callGeminiText(PRIMARY_MODEL, text, opts) },
+    ...GEMINI_MODELS.slice(1).map(model => ({ label: model, run: () => callGeminiText(model, text, opts) })),
+    ...CLAUDE_MODELS.map(model => ({ label: model, run: () => callClaudeText(model, text, opts) })),
   ]);
-  return res.ok
-    ? { ok: true, data: sanitizeExtraction(res.raw), model: res.model }
-    : res;
+  if (!res.ok) return res;
+  const data = sanitizeExtraction(res.raw);
+  if (data && typeof data === 'object') {
+    if (detectNonPurchase) {
+      const notPurchase = data.is_purchase === false || data.is_purchase === 'false';
+      data.is_purchase = !notPurchase;
+      data.non_purchase_kind = notPurchase
+        ? (NON_PURCHASE_KINDS.includes(data.non_purchase_kind) ? data.non_purchase_kind : 'other')
+        : null;
+    } else {
+      delete data.is_purchase;
+      delete data.non_purchase_kind;
+    }
+  }
+  return { ok: true, data, model: res.model };
 }
 
 export { CATEGORIES };
