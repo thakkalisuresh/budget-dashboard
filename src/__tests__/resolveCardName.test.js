@@ -68,6 +68,14 @@ describe('resolveCardName — alias layer', () => {
     expect(resolveCardName('BCP', ['Chase Sapphire Reserve'])).toBe('');
   });
 
+  it('resolves the Capital One wallet-notification title to the held card', () => {
+    // The Capital One app notification is titled "Quicksilver Credit Card": no
+    // containment with "Capital One Quicksilver" in either direction.
+    expect(resolveCardName('Quicksilver Credit Card', CARDS)).toBe('Capital One Quicksilver');
+    expect(backendResolve('Quicksilver Credit Card', CARDS)).toBe('Capital One Quicksilver');
+    expect(resolveCardName('Quicksilver Credit Card', ['Chase Sapphire Reserve'])).toBe('');
+  });
+
   it('leaves non-alias input on the original code path', () => {
     expect(resolveCardName('cash', CARDS)).toBe('Cash');
     expect(resolveCardName('totally unknown card', CARDS)).toBe('');

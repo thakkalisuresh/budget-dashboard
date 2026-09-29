@@ -35,6 +35,7 @@ export const CARD_ALIASES = {
   // Capital One Quicksilver
   c1quicksilver: 'Capital One Quicksilver',
   capitalonequicksilver: 'Capital One Quicksilver',
+  quicksilvercreditcard: 'Capital One Quicksilver', // title of the Capital One app notification
   // Bilt
   bilt: 'Bilt Blue Card',
   biltmastercard: 'Bilt Blue Card',

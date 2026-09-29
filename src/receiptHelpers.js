@@ -138,6 +138,7 @@ export const CARD_ALIASES = {
   cfr: 'Chase Freedom Rise',
   c1quicksilver: 'Capital One Quicksilver',
   capitalonequicksilver: 'Capital One Quicksilver',
+  quicksilvercreditcard: 'Capital One Quicksilver',
   bilt: 'Bilt Blue Card',
   biltmastercard: 'Bilt Blue Card',
 };
