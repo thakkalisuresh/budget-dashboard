@@ -105,6 +105,8 @@ accident (only the deliberate `dup_second`).
 (e.g. Groq was confident about an "ambiguous" vendor) or a cosmetic issue; `FAIL` =
 wrong. Paste the whole output when reporting.
 
+Pasting a real notification or SMS text instead of the canned cases: `node scripts/wallet-roundtrip.mjs --raw "<text>" [--raw-as-primary]` (same rails; TEST sheet only). Phone setup and cutover order: `docs/phone-setup.md`.
+
 ## 4. Manual checklist (needs the real Telegram)
 
 Do all of this in the same sitting as the run, so tomorrow's 12h nudge stays quiet.
