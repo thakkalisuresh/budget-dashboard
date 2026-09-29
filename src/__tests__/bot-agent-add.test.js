@@ -266,13 +266,13 @@ describe('confirm-first add', () => {
         json: () => Promise.resolve({ choices: [{ message: { content: '{"category":"Travel","confidence":0.3}' } }] }),
       });
       getRecentExpenses.mockResolvedValue([
-        { vendor: 'Petrol', amount: 40, txDate: '2026-05-01', category: 'Misc' },
-        { vendor: 'Petrol', amount: 35, txDate: '2026-05-08', category: 'Misc' },
+        { vendor: 'Petrol', amount: 40, txDate: '2026-05-01', category: 'Health' },
+        { vendor: 'Petrol', amount: 35, txDate: '2026-05-08', category: 'Health' },
       ]);
       const ctx = makeCtx();
       await handleTextReply(ctx, 'Add petrol $38.00');
 
-      expect(lastSent(ctx).text).toContain('Category: Misc');
+      expect(lastSent(ctx).text).toContain('Category: Health');
       expect(lastSent(ctx).text).not.toContain('a guess');
       expect(mockFetch).not.toHaveBeenCalled();
     } finally {
