@@ -90,9 +90,9 @@ Test-mode cautions:
 Order:
 
 1. **Paste-test each real text** (no phone automation yet) — see *Validate a real notification text*.
-2. **Capital One**, then **Amex** (single-card issuers): build, test mode, locked-phone test, go live.
-3. **Chase** (3 cards): confirm the card-name mapping including the Sapphire Reserve → other person, go live.
-4. **Restrict the old Shortcut to Bilt only** in the same sitting as the go-live of Amex/Chase/Capital One, otherwise every charge posts twice (the guard skips the second and Telegram gets a "⏭ skipped duplicate" note each time).
+2. **Capital One**: build the notification automation (app = Capital One) in test mode, locked-phone test, go live. Then take Capital One (and Apple Cash) out of the old Wallet Logger's card list.
+3. **Amex**: a Wallet-notification automation (app = **Wallet**, Title filter "American Express"). Wallet also notifies for **online** Amex purchases, which the old Wallet-transaction trigger (taps) misses. Test mode, then go live, then take Amex out of the old Logger's list. Until then Amex stays in the old Logger so nothing goes unlogged; the duplicate guard skips any overlap while testing.
+4. **Chase: no automation.** The Chase app sends no notifications to the iPhone, so there is nothing to forward. Chase stays in the old Wallet Logger (Wallet-transaction trigger, taps only). Chase online / card-not-present purchases are a known gap.
 5. **Android**: fix the wallet flow header, add the Chase-SMS flow, battery settings.
 6. Watch for a few days: the 08:00 Pacific job sends parked-charge nudges and, if a phone has been silent 4+ days, a 📵 alert.
 
@@ -157,10 +157,10 @@ Rollback: switch the automation off (or delete it). Delete any wrongly logged ro
 ### B. Per issuer
 
 - **Capital One** (`source: ios-notif-capone`). The app's notification names the card in-body and the merchant can be ugly (`REAL-DEBRID*…`); the server normalizes it. App: Capital One.
-- **Amex** (`source: ios-notif-amex`). Amex usually arrives via **Wallet** titled "American Express" with the merchant and amount in the body; if the Amex app also sends purchase notifications, pick one source only, or the same charge posts twice (the 2-minute guard skips the second and Telegram gets a note). Ask which one fires.
-- **Chase** (`source: ios-notif-chase`). Three cards share the notification; the **notification prints the card name**, so the server maps it (`resolveCardName`). Before go-live, run `--raw-as-primary` with a real text from each card you can capture (Debit, Freedom Rise, Sapphire Reserve) and confirm the card resolves. The Sapphire Reserve belongs to the other person, so the row should attribute to them through the card-owner setting even though it posts from the primary's phone.
+- **Amex** (`source: ios-notif-amex`). Amex has no purchase notifications of its own; the notification comes from **Wallet** (for taps and for online purchases). Trigger: app = Wallet, Add Filter → Title contains "American Express" (check the real title first; the Wallet pieces may be Title = issuer, Subtitle = merchant, Body = amount, which is why the Text action joins all three). Capture a real Wallet Amex notification (tap and, ideally, online) and check it with `--raw --card` before building.
+- **Chase**: no automation. The Chase app sends no notifications on the iPhone, so nothing can be forwarded. The old Wallet Logger keeps covering Chase card taps.
 
-### C. Old "Wallet Logger" Shortcut: restrict to Bilt only
+### C. Old "Wallet Logger" Shortcut: final card list
 
 What it is (from its editor): trigger **Wallet transaction**, "When **Bilt Blue Card and 6
 more** is tapped" (7 cards selected), Categories: Any, Merchants: Any, Automation on,
@@ -169,14 +169,17 @@ card name), then **Get contents of** the hosting-domain `/api/wallet` URL, POST,
 `X-API-Key`, JSON body `amount`, `merchant`, `email`, `card` (no `sheetId`, no `source`),
 then **Show notification** with the raw *Contents of URL*.
 
-Once the Capital One / Amex / Chase notification automations work:
+The final list is **Bilt Blue Card + the three Chase cards** (Sapphire Reserve, Freedom Rise, Chase Debit). Bilt has no notifications at all and Chase sends none to this phone, so the Wallet-transaction trigger is the only thing that sees them. Capital One and Amex move to their notification automations (which also catch online purchases) and Apple Cash is dropped.
 
-1. Shortcuts → Automation → Wallet Logger → tap the "Bilt Blue Card and 6 more" pill and **deselect the other six cards**, leaving only *Bilt Blue Card*. (The seventh card in the list is Apple Cash, added by default; it goes away with this step. Structured posts skip the server's non-purchase check, so an Apple Cash transfer would otherwise look like a purchase.)
-2. Optional but recommended: before **Show notification** add **Get Dictionary Value** (key `message`, from *Contents of URL*) and show that instead of the raw JSON. Structured posts keep working.
-3. The `card` value is the Wallet card name ("Bilt Blue Card" presumably). Confirm the exact text by running the Shortcut once and check it maps to the Fundient card name.
-4. One real Bilt purchase: it should land once, on Bilt Blue.
+Edit the trigger's card list **one issuer at a time, only after that issuer's new automation is proven live and you confirm**:
 
-Do not change the other actions. Rollback: reselect the six cards (all cards again; the 2-minute duplicate guard covers the overlap, at the cost of a "skipped duplicate" Telegram note per charge).
+1. After Capital One goes live: open Shortcuts → Wallet Logger → tap the "... and N more" pill and deselect **Capital One Quicksilver** and **Apple Cash** (Apple Cash is added by default; structured posts skip the server's non-purchase check, so a transfer would otherwise look like a purchase).
+2. After Amex goes live: deselect **Amex**.
+3. Optional, safe now: before **Show notification** add **Get Dictionary Value** (key `message`, from *Contents of URL*) and show that instead of the raw JSON. Structured posts keep working.
+4. The `card` value is the Wallet card name. Confirm the exact text for Bilt and each Chase card by running once and checking that it maps to the Fundient card name. Chase has two debit cards saved (one per person): a bare "Chase Debit" is ambiguous and is now kept as the raw string rather than guessed, so use the full Fundient name where possible.
+5. One real purchase per remaining card should land once.
+
+Do not change the other actions. Rollback: reselect the card (the 2-minute duplicate guard covers the overlap, at the cost of a "skipped duplicate" Telegram note per charge).
 
 ## Android (Samsung, Automate by LlamaLab)
 
@@ -243,8 +246,7 @@ so do it in one sitting with both phones to hand. Nothing here contains a secret
 - [ ] Real text captured per source and pasted through `--raw`; parse looks right
 - [ ] Capital One: test mode proven (locked-phone too) → live → old Shortcut still fine
 - [ ] Amex: same
-- [ ] Chase: card mapping verified for each card, Sapphire Reserve attributed to the other person
-- [ ] Old Shortcut restricted to Bilt; one Bilt purchase logged once
+- [ ] Old Shortcut reduced to Bilt + the 3 Chase cards (Capital One, Amex, Apple Cash removed after their automations are live)
 - [ ] Android wallet flow: header set, test mode → live
 - [ ] Android Chase SMS flow: test mode → live
 - [ ] Battery settings done; heartbeat visible in Firestore `wallet_activity`
