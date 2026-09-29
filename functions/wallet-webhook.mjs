@@ -19,11 +19,12 @@ import { resolvePromptChatId } from './lib/_household.mjs';
 import {
   msgWritten, msgWrittenDuplicate, msgNeedsCategory, msgSplitParked, msgUnreadable,
   msgNoSheet, msgWriteFailed, msgVendorDisabled, msgUnauthorized, tgCategoryPrompt,
-  msgDuplicateSkipped, tgDuplicateNote,
+  msgDuplicateSkipped, tgDuplicateNote, msgConvertFailed, tgConvertFailed, fxNote,
 } from './lib/_wallet-messages.mjs';
 import { matchesSplitVendor } from './lib/_item-categorizer.mjs';
 import { resolveCardName } from './lib/_card-resolver.mjs';
 import { sha256Hex } from './lib/http-common.mjs';
+import { convertToUSD } from './lib/_currency.mjs';
 import { reportError } from './lib/_error-log.mjs';
 import { recordActivity } from './lib/_wallet-activity.mjs';
 import { withErrorContext, setActor, trail } from './lib/_error-context.mjs';
@@ -47,6 +48,21 @@ function extractKey(req) {
   const m = /^Bearer\s+(.+)$/i.exec(auth);
   if (m) return m[1].trim();
   return req.get('x-api-key')?.trim() || null;
+}
+
+const CURRENCY_SYMBOLS = { '€': 'EUR', '£': 'GBP', '₹': 'INR' };
+
+/**
+ * The currency a structured `amount` string is written in, or null when it says
+ * nothing (a bare number, "$" and "USD" all mean dollars). "€16.00" → EUR,
+ * "16.00 EUR" / "EUR 16.00" → EUR. Only an upper-case three-letter token counts
+ * as a code, and only next to a digit, so words in a malformed amount are not
+ * mistaken for one.
+ */
+function detectCurrency(amountRaw) {
+  if (typeof amountRaw !== 'string' || !/\d/.test(amountRaw)) return null;
+  for (const [sym, code] of Object.entries(CURRENCY_SYMBOLS)) if (amountRaw.includes(sym)) return code;
+  return /(?<![A-Za-z])([A-Z]{3})(?![A-Za-z])/.exec(amountRaw)?.[1] ?? null;
 }
 
 // Same exact-cents charge from the same email inside this window is one purchase.
@@ -87,7 +103,7 @@ async function getPreviousMonthRows(monthName) {
  * no fall-through-to-write here if the send fails, and an unsent blob just
  * expires, whereas a sent button with no blob would be dead. Never throws.
  */
-async function notifyDuplicateSkipped({ store, email, source, vendor, amount, card, category, txDate, monthName, sheetId, priorVendor, ageSec }) {
+async function notifyDuplicateSkipped({ store, email, source, vendor, amount, card, category, txDate, monthName, sheetId, priorVendor, ageSec, fx }) {
   try {
     const chatId = await resolvePromptChatId(email);
     if (!chatId) return;
@@ -102,7 +118,7 @@ async function notifyDuplicateSkipped({ store, email, source, vendor, amount, ca
     }, { ttlMs: DUP_BLOB_TTL_MS + 60 * 60 * 1000 });
     await sendMessage(
       chatId,
-      tgDuplicateNote({ vendor, amount, card, monthName, priorVendor, ageSec }),
+      tgDuplicateNote({ vendor, amount, card, monthName, priorVendor, ageSec, fx }),
       [[{ text: '➕ Log it anyway', callback_data: `DUPLOG:${id}` }]]
     );
   } catch (e) {
@@ -160,6 +176,7 @@ export const walletWebhook = onRequest(
     // fragile per-bank regex on-device. We parse ONCE and reuse the result below for
     // categorization too, so this costs no extra LLM call.
     let parsed = null;
+    let amountFromParsed = false;
     const rawText = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
     if (rawText) {
       try {
@@ -186,6 +203,7 @@ export const walletWebhook = onRequest(
           if ((amountRaw === undefined || amountRaw === null || amountRaw === '') &&
               typeof parsed.total_amount === 'number') {
             amountRaw = parsed.total_amount;
+            amountFromParsed = true;
           }
           if (!card && parsed.payment_method) card = parsed.payment_method;
           if (!txDate && parsed.purchase_date) txDate = parsed.purchase_date;
@@ -200,7 +218,7 @@ export const walletWebhook = onRequest(
     // Transaction trigger). Strip everything except digits, dot and minus before parsing.
     // Rounded once, here, so the sheet write, message, Telegram text, dedup and
     // push all agree (the old Shortcut sends float noise like 17.579999999999998).
-    const amount = Math.round(parseFloat(String(amountRaw ?? '').replace(/[^\d.-]/g, '')) * 100) / 100;
+    let amount = Math.round(parseFloat(String(amountRaw ?? '').replace(/[^\d.-]/g, '')) * 100) / 100;
 
     // A rejected request is a charge that never got logged, so it belongs in the
     // digest exactly like WAL-002 below. These three sites returned a bare 400
@@ -232,6 +250,43 @@ export const walletWebhook = onRequest(
     if (!email || !email.includes('@')) {
       await reject('email');
       return;
+    }
+
+    // Foreign currency: Wallet shows the transaction's NATIVE amount ("€16.00"),
+    // so convert to USD here, before rounding-dependent steps, categorization and
+    // the duplicate guard, and everything downstream sees dollars. The currency
+    // comes from an explicit body field, else from the text parser (only when the
+    // amount came from it), else from a symbol/code in a structured amount string.
+    const explicitCurrency = typeof req.body?.currency === 'string' ? req.body.currency.trim().toUpperCase() : '';
+    const currency = explicitCurrency
+      || (amountFromParsed ? String(parsed?.currency || '').toUpperCase() : detectCurrency(amountRaw))
+      || 'USD';
+    let fx = null;
+    if (currency !== 'USD') {
+      const original = amount;
+      try {
+        const r = await convertToUSD(original, currency);
+        amount = Math.round(Number(r.amount) * 100) / 100;
+        if (!(amount > 0)) throw new Error(`Converted amount is not usable: ${r.amount}`);
+        fx = { original, currency, rate: r.rate };
+        trail(`converted ${original} ${currency} → ${amount} USD`);
+      } catch (e) {
+        // Never write a guessed number. Nothing is claimed or logged, so a retry
+        // (or the exact USD app notification) can still land later.
+        const failedVendor = (parsed?.store_name || merchant).trim();
+        await reportError('WAL-008', e, { currency, original, vendor: failedVendor, fromRawText: Boolean(rawText), source });
+        try {
+          const chatId = await resolvePromptChatId(email);
+          if (chatId) await sendMessage(chatId, tgConvertFailed({ original, currency, vendor: failedVendor }));
+        } catch (te) {
+          console.warn('wallet-webhook: conversion-failure note failed to send', te.message);
+        }
+        res.status(502).json({
+          ok: false, code: 'WAL-008', error: 'currency_conversion_failed',
+          message: msgConvertFailed({ original, currency }),
+        });
+        return;
+      }
     }
     const monthName = monthNameFromDateStr(txDate) || currentMonthName();
 
@@ -358,10 +413,10 @@ export const walletWebhook = onRequest(
       } else {
         const ageSec = Math.round(r.ageMs / 1000);
         console.log(`wallet-webhook: duplicate_recent ${vendor} $${amount} (${ageSec}s after "${r.vendor}", vendorMatch=${r.vendor.toLowerCase() === vendor.toLowerCase()})`);
-        await notifyDuplicateSkipped({ store: guardStore, email, source, vendor, amount, card, category, txDate, monthName, sheetId, priorVendor: r.vendor, ageSec });
+        await notifyDuplicateSkipped({ store: guardStore, email, source, vendor, amount, card, category, txDate, monthName, sheetId, priorVendor: r.vendor, ageSec, fx });
         res.status(200).json({
           ok: true, skipped: true, reason: 'duplicate_recent', vendor, amount,
-          message: msgDuplicateSkipped({ amount, vendor }),
+          message: msgDuplicateSkipped({ amount, vendor, fx }),
         });
         return;
       }
@@ -399,7 +454,7 @@ export const walletWebhook = onRequest(
           id = crypto.randomUUID().slice(0, 8);
           await sendMessage(
             chatId,
-            tgCategoryPrompt({ vendor, amount, card, monthName, suggested: decision.category }),
+            tgCategoryPrompt({ vendor, amount, card, monthName, suggested: decision.category, fx }),
             kbCategoryConfirm(id, allCategories, decision.category)
           );
           sent = true;
@@ -422,7 +477,7 @@ export const walletWebhook = onRequest(
             await settle();
             res.status(200).json({
               ok: true, pendingCategory: true, vendor, amount,
-              message: msgNeedsCategory({ amount, vendor, monthName }),
+              message: msgNeedsCategory({ amount, vendor, monthName, fx }),
             });
             return;
           } catch (e) {
@@ -449,7 +504,7 @@ export const walletWebhook = onRequest(
           id = crypto.randomUUID();
           await sendMessage(
             chatId,
-            `🧾 ${vendor} charge of $${amount.toFixed(2)} detected.\n\n` +
+            `🧾 ${vendor} charge of $${amount.toFixed(2)}${fxNote(fx)} detected.\n\n` +
             `Upload the receipt photo to split it by category, or tap SKIP to log it as a single ${category} expense.`,
             [[{ text: '⏭ SKIP (log as one expense)', callback_data: 'SKIP' }]]
           );
@@ -473,7 +528,7 @@ export const walletWebhook = onRequest(
             await settle();
             res.status(200).json({
               ok: true, split: true, vendor, amount,
-              message: msgSplitParked({ amount, vendor }),
+              message: msgSplitParked({ amount, vendor, fx }),
             });
             return;
           } catch (e) {
@@ -505,7 +560,7 @@ export const walletWebhook = onRequest(
         const first = dups[0];
         dupNotice =
           `⚠️ Possible duplicate — logged anyway:\n` +
-          `${vendor} · $${amount.toFixed(2)}\n` +
+          `${vendor} · $${amount.toFixed(2)}${fxNote(fx)}\n` +
           `Already have ${first.vendor} · $${Number(first.amount).toFixed(2)}` +
           `${first.date ? ` on ${String(first.date).slice(0, 10)}` : ''} (${first.category || 'Misc'}).\n\n` +
           `Open History → Duplicates in the dashboard to remove one.`;
@@ -591,8 +646,8 @@ export const walletWebhook = onRequest(
     res.status(200).json({
       ok: true, category, vendor, amount,
       message: dupNotice
-        ? msgWrittenDuplicate({ amount, vendor, category, monthName, notified: dupNotified })
-        : msgWritten({ amount, vendor, card, category, monthName }),
+        ? msgWrittenDuplicate({ amount, vendor, category, monthName, notified: dupNotified, fx })
+        : msgWritten({ amount, vendor, card, category, monthName, fx }),
     });
   })
 );

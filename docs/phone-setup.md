@@ -64,6 +64,8 @@ Every response has a `message`; show **only** that. Full table: `wallet-ingestio
 | Could not read amount | ⚠️ | nothing logged |
 | No sheet for the month | ⚠️ | create the month in the dashboard |
 | Bad or missing secret | ❌ | check the `X-API-Key` / Authorization header |
+| Foreign charge, converted | ✅ | `✅ $18.33 at Xt Network Sas (€16.00 converted at 0.873) → Misc…`: an estimate, the bank's rate differs a few percent |
+| Foreign charge, could not convert | ⚠️ | NOT logged: add it by hand (the Capital One app's USD notification is exact) |
 | Save failed | ❌ | the charge was NOT logged: enter it by hand |
 
 ## Cutover order (safe, one automation at a time)
@@ -157,6 +159,7 @@ Rollback: switch the automation off (or delete it). Delete any wrongly logged ro
 ### B. Per issuer
 
 - **Capital One** (`source: ios-notif-capone`). The app's notification names the card in-body and the merchant can be ugly (`REAL-DEBRID*…`); the server normalizes it. App: Capital One.
+  Foreign purchases: the Capital One **app** notification is in USD and exact, while the Wallet notification shows the native currency (€16.00) and is converted at an estimated rate (see `wallet-ingestion.md`, *Foreign currency*). Prefer the app automation for this card.
 - **Amex** (`source: ios-notif-amex`). Amex has no purchase notifications of its own; the notification comes from **Wallet** (for taps and for online purchases). Trigger: app = Wallet, Add Filter → Title contains "American Express" (check the real title first; the Wallet pieces may be Title = issuer, Subtitle = merchant, Body = amount, which is why the Text action joins all three). Capture a real Wallet Amex notification (tap and, ideally, online) and check it with `--raw --card` before building.
 - **Chase**: no automation. The Chase app sends no notifications on the iPhone, so nothing can be forwarded. The old Wallet Logger keeps covering Chase card taps.
 

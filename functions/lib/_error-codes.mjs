@@ -402,6 +402,12 @@ export const ERROR_CODES = {
     cause: 'One of the 08:00 job\'s steps (error digest, parked-charge nudge or wallet heartbeat) threw. The other steps still ran.',
     fix: 'The context names the step. Check the function logs for errorDigest around 08:00 Pacific.',
   },
+  'WAL-008': {
+    title: 'Foreign-currency charge not converted',
+    severity: 'degraded',
+    cause: 'A wallet notification in a non-USD currency (for example €16.00) arrived, but the exchange rate could not be looked up or the currency code is unknown. The charge was NOT logged and no duplicate-guard claim was taken; the phone banner and the household primary\'s Telegram both say so.',
+    fix: 'Add the charge by hand (the card issuer\'s app notification, in USD, is the exact amount). If it repeats for a normal currency, check that open.er-api.com is reachable.',
+  },
 
   /* ── FX: currency ─────────────────────────────────────────────────────── */
   'FX-001': {
