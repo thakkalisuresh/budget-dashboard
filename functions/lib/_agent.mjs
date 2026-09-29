@@ -10,6 +10,8 @@
  * can fall back to a deterministic reply — the bot never hard-depends on AI.
  */
 
+import { GROQ_URL, GROQ_TEXT_MODEL, groqParams, groqContent, reportGroqFailure } from './_groq.mjs';
+
 /* Model names are constants, not env overrides. Cloud Functions only receives
  * variables that are declared (the `secrets:` list on each function), and no
  * function declares a model name — so a `process.env.BOT_AGENT_MODEL ?? default`
@@ -20,8 +22,10 @@ const ANTHROPIC_URL     = 'https://api.anthropic.com/v1/messages';
 const AGENT_MODEL       = 'claude-haiku-4-5';
 const MAX_ITERS         = 4;   // hard cap on tool round-trips (webhook is 120s)
 
-const GROQ_URL         = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_AGENT_MODEL = 'llama-3.3-70b-versatile';
+/* Groq's model id and reasoning params live in _groq.mjs, shared with
+ * categorization and extraction. Reasoning tokens count against max_tokens, so
+ * this is sized well above the answer (or tool call) it has to leave room for. */
+const GROQ_MAX_TOKENS  = 2048;
 
 async function callClaude({ system, tools, messages }) {
   const res = await fetch(ANTHROPIC_URL, {
@@ -79,14 +83,16 @@ async function callGroq({ system, tools, messages }) {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: JSON.stringify({
-      model: GROQ_AGENT_MODEL,
-      max_tokens: 1024,
+      model: GROQ_TEXT_MODEL,
+      ...groqParams(GROQ_TEXT_MODEL),
+      max_tokens: GROQ_MAX_TOKENS,
       messages: [{ role: 'system', content: system }, ...messages],
       ...(tools?.length ? { tools: toGroqTools(tools), tool_choice: 'auto' } : {}),
     }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    await reportGroqFailure(GROQ_TEXT_MODEL, res.status, err?.error);
     throw new Error(`Groq agent: ${err?.error?.message || `HTTP ${res.status}`}`);
   }
   return res.json();
@@ -115,10 +121,17 @@ async function runGroqLoop({ system, tools, execute, seed }) {
 
       const calls = choice.message?.tool_calls;
       if (!calls?.length) {
-        return { text: (choice.message?.content || '').trim(), acted };
+        const text = groqContent(data);
+        // Empty content that ran out of tokens is the reasoning eating the
+        // budget, not an answer. Throwing lets the caller fail over (only if no
+        // tool ran) instead of replying with nothing.
+        if (!text && choice.finish_reason === 'length') throw new Error('Groq agent ran out of tokens before answering');
+        return { text, acted };
       }
 
-      messages.push(choice.message);
+      // The chain of thought is not replayed to the model.
+      const { reasoning, reasoning_content, ...turn } = choice.message;
+      messages.push(turn);
       for (const call of calls) {
         let result;
         try {
@@ -139,7 +152,7 @@ async function runGroqLoop({ system, tools, execute, seed }) {
     }
 
     const final = await callGroq({ system, tools: [], messages });
-    return { text: (final?.choices?.[0]?.message?.content || '').trim(), acted };
+    return { text: groqContent(final), acted };
   } catch (e) {
     return tag(e);
   }

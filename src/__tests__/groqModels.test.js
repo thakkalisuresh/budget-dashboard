@@ -36,9 +36,7 @@ beforeEach(() => {
 
 describe('model constants', () => {
   it('no source file still names the retired model', () => {
-    // _agent.mjs and _query.mjs still name it: they fall back to Claude and are a
-    // separate follow-up (tool-calling behaviour needs its own testing).
-    for (const f of ['_categorize', '_extraction']) {
+    for (const f of ['_categorize', '_extraction', '_agent', '_query']) {
       const src = readFileSync(fileURLToPath(new URL(`../../functions/lib/${f}.mjs`, import.meta.url)), 'utf8');
       expect(src, f).not.toMatch(/llama-3\.3-70b/);
     }
