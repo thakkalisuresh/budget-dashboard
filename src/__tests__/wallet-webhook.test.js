@@ -15,7 +15,8 @@ vi.mock('firebase-admin/firestore', () => ({
 vi.stubEnv('WALLET_WEBHOOK_SECRET', 'test-wallet-secret');
 
 // Shared mock state (hoisted so the vi.mock factories can close over it).
-const { extractMock, appendMock, sheetIdMock, webpushSend, getSettingsMock, telegramSend, splitStore, ctl, recentMock, reportErrorMock } = vi.hoisted(() => ({
+const { activityMock, extractMock, appendMock, sheetIdMock, webpushSend, getSettingsMock, telegramSend, splitStore, ctl, recentMock, reportErrorMock } = vi.hoisted(() => ({
+  activityMock: vi.fn(async () => {}),
   reportErrorMock: vi.fn(async () => {}),
   recentMock: vi.fn(async () => []),
   extractMock: vi.fn(),
@@ -58,6 +59,8 @@ vi.mock('web-push', () => ({ default: { setVapidDetails: vi.fn(), sendNotificati
 // reported. The real reportError writes to Firestore and Telegram-alerts on
 // fatal codes; neither belongs in a unit test.
 vi.mock('../../functions/lib/_error-log.mjs', () => ({ reportError: reportErrorMock }));
+// Heartbeat write is unit-tested in wallet-activity.test.js; here we only check when the webhook calls it.
+vi.mock('../../functions/lib/_wallet-activity.mjs', () => ({ recordActivity: activityMock }));
 // The wallet split path builds a bot store + sends Telegram; stub both so the
 // import chain doesn't pull in firebase-admin and no real network calls fire.
 vi.mock('../../functions/lib/bot-store.mjs', async () => {
@@ -143,6 +146,7 @@ beforeEach(() => {
   telegramSend.mockReset().mockResolvedValue({ ok: true });
   recentMock.mockReset().mockResolvedValue([]);
   reportErrorMock.mockReset().mockResolvedValue(undefined);
+  activityMock.mockReset().mockResolvedValue(undefined);
   splitStore.data.clear();
   fakeDb.docs.clear();
   fakeDb.state.failTransactions = false;
@@ -1148,5 +1152,42 @@ describe('wallet-webhook — duplicate-source guard', () => {
     const res = await call(req({ body }));
     expect(appendMock).toHaveBeenCalledTimes(1);
     expect(res.json.message).toMatch(/Possible duplicate/);
+  });
+});
+
+describe('wallet-webhook — heartbeat (last activity per email)', () => {
+  const EMAIL = 'nair.sabarish97@gmail.com';
+
+  it('records activity with the email and source on a normal charge', async () => {
+    await call(req({ body: { ...validBody, source: 'android' } }));
+    expect(activityMock).toHaveBeenCalledWith(EMAIL, 'android');
+  });
+
+  it('records activity for a non-purchase notification (the phone is alive)', async () => {
+    extractMock.mockResolvedValue({ ok: true, data: { store_name: null, total_amount: null, is_purchase: false, non_purchase_kind: 'statement' } });
+    const res = await call(req({ body: { text: 'Your statement is ready', email: EMAIL } }));
+    expect(res.json.reason).toBe('not_a_purchase');
+    expect(activityMock).toHaveBeenCalledWith(EMAIL, null);
+  });
+
+  it('records activity even when parsing fails and the request is rejected', async () => {
+    extractMock.mockRejectedValue(new Error('parser down'));
+    const res = await call(req({ body: { text: 'garbled ~~~', email: EMAIL } }));
+    expect(res.status).toBe(400);
+    expect(activityMock).toHaveBeenCalledWith(EMAIL, null);
+  });
+
+  it('does not record for unauthenticated requests or an invalid email', async () => {
+    await call(req({ key: 'nope', body: validBody }));
+    await call(req({ body: { ...validBody, email: 'not-an-email' } }));
+    expect(activityMock).not.toHaveBeenCalled();
+  });
+
+  it('fails open: a throwing recorder never changes the response', async () => {
+    activityMock.mockRejectedValue(new Error('firestore down'));
+    const res = await call(req({ body: validBody }));
+    expect(res.status).toBe(200);
+    expect(res.json.ok).toBe(true);
+    expect(appendMock).toHaveBeenCalledTimes(1);
   });
 });

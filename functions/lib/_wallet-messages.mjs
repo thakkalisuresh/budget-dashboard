@@ -58,3 +58,25 @@ export const tgDuplicateNote = ({ vendor, amount, card, monthName, priorVendor, 
   `${vendor} · ${usd(amount)}${card ? ` · ${card}` : ''} · ${shortMonth(monthName)}\n` +
   `${priorVendor ? `Looks like ${priorVendor} from ${ageSec}s ago. ` : ''}` +
   `Same amount arrived from the same phone within 2 minutes. If it was a separate purchase, tap:`;
+
+/** Daily nudge for a parked category charge (buttons: kbCategoryConfirm, same as the original prompt). */
+export const tgCategoryNudge = ({ vendor, amount, card, monthName, txDate, suggested, parkedHours, fromEmail }) =>
+  `⏰ Still waiting on a category\n` +
+  `${vendor} · ${usd(amount)}${card ? ` · ${card}` : ''} · ${shortMonth(monthName)}${/^\d{4}-/.test(txDate || '') ? ` ${txDate.slice(0, 4)}` : ''} · parked ${parkedHours}h\n` +
+  `Best guess: ${suggested}. Tap the right one:` +
+  (fromEmail ? `\nFrom ${fromEmail}` : '');
+
+/**
+ * Daily nudge for parked split-receipt charges in one chat. `items` must be in
+ * the order the SKIP handler picks from (first = the one SKIP acts on).
+ */
+export const tgSplitNudge = (items) => {
+  if (items.length === 1) {
+    const [i] = items;
+    return `⏰ Still waiting on a receipt\n${i.vendor} · ${usd(i.amount)} · parked ${i.parkedHours}h\n` +
+      `Upload the receipt to split it, or tap SKIP to log it as one ${i.category} expense.`;
+  }
+  return `⏰ Still waiting on ${items.length} receipts\n` +
+    items.map(i => `• ${i.vendor} · ${usd(i.amount)} · parked ${i.parkedHours}h`).join('\n') +
+    `\nUpload a receipt to split one, or tap SKIP to log as one expense. SKIP logs the first listed; tap again for the next.`;
+};

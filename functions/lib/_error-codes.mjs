@@ -390,6 +390,18 @@ export const ERROR_CODES = {
     cause: 'The wallet duplicate guard could not read or update its claim in Firestore. The charge was logged anyway (the guard fails open), so a duplicate source for it may also have been logged.',
     fix: 'Usually a transient Firestore blip. Check History → Duplicates for a doubled charge around the reported time.',
   },
+  'WAL-006': {
+    title: 'Wallet heartbeat write failed',
+    severity: 'degraded',
+    cause: 'The webhook could not record that a phone was active in Firestore (wallet_activity). The charge itself was handled normally.',
+    fix: 'Usually a transient Firestore blip. If it repeats, the "no wallet activity" alert may fire for a phone that is actually working.',
+  },
+  'WAL-007': {
+    title: 'Daily digest step failed',
+    severity: 'degraded',
+    cause: 'One of the 08:00 job\'s steps (error digest, parked-charge nudge or wallet heartbeat) threw. The other steps still ran.',
+    fix: 'The context names the step. Check the function logs for errorDigest around 08:00 Pacific.',
+  },
 
   /* ── FX: currency ─────────────────────────────────────────────────────── */
   'FX-001': {

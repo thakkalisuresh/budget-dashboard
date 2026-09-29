@@ -100,3 +100,10 @@ The month a charge is filed under is resolved in `APP_TZ` (IANA zone, default
 `America/Los_Angeles`), or straight from the `date` you send. This is what keeps
 a charge made late on the last day of a month from landing in the next month.
 See `functions/lib/_time.mjs`.
+
+## Daily nudge and heartbeat (08:00 Pacific, inside `errorDigest`)
+
+The `errorDigest` job (the project's scheduler slots are limited, so no new job) also runs, each step independently and even when there are no errors:
+
+- **Parked-charge nudge.** `category_pending:` charges parked 12h+ are re-sent daily to the chat in their key, with the original category keyboard (a tap logs into the charge's original month). `split_pending:` charges get one message per chat with SKIP; the list order matches what SKIP acts on. At most 8 nudges per run, then a "…and N more" line. After 30 days a blob gets one "giving up" line and no more reminders. Nothing is ever auto-logged or deleted.
+- **Heartbeat.** Every authenticated webhook request stamps `wallet_activity/<hash of email>` (`lastSeenAt`, `lastSource`, `count`). A phone silent for 4+ days triggers a Telegram alert to the household primary, repeated every ~3 days until it posts again. Only emails that have posted at least once are tracked.
