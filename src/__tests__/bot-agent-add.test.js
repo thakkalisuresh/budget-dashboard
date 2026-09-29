@@ -230,6 +230,31 @@ describe('confirm-first add', () => {
     expect(lastSent(ctx).text).toMatch(/Category: \w/);
   });
 
+  it('flags an unfamiliar vendor when Groq only agrees with the Misc default at low confidence', async () => {
+    // The typed-add path passes no extracted category, so Misc is a default;
+    // Groq echoing it must not count as corroboration.
+    vi.stubEnv('GROQ_API_KEY', 'test-groq-key');
+    try {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          choices: [{ message: { content: '{"category":"Misc","confidence":0.3}' } }],
+        }),
+      });
+      const ctx = makeCtx();
+      await handleTextReply(ctx, 'Add zxqv holdings $53.11');
+      expect(lastSent(ctx).text).toContain('a guess');
+    } finally {
+      vi.unstubAllEnvs();
+      vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-bot-token');
+      vi.stubEnv('TELEGRAM_ALLOWED_USERS', '123456789');
+      vi.stubEnv('GEMINI_API_KEY', 'test-gemini-key');
+      vi.stubEnv('ANTHROPIC_API_KEY', 'sk-test');
+      vi.stubEnv('ALLOWED_EMAILS', 'nair.sabarish97@gmail.com');
+      vi.stubEnv('SITE_URL', 'https://test-dashboard.netlify.app');
+    }
+  });
+
   it('applies a card rule to the proposal', async () => {
     getUserSettings.mockResolvedValue({
       cards: ['Amex BCP'],

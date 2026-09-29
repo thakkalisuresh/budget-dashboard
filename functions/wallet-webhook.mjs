@@ -156,16 +156,21 @@ export const walletWebhook = onRequest(
     }
 
     let category = 'Misc';
+    // Set only when extraction really produced a category. `category` above is a
+    // default, and a default must not count as corroboration for Groq's answer.
+    let extractedCategory = null;
     let vendor = merchant.trim();
     if (parsed) {
       // Already parsed from raw text above — reuse it (no second LLM call).
-      category = parsed.reward_category ?? 'Misc';
+      extractedCategory = parsed.reward_category || null;
+      category = extractedCategory ?? 'Misc';
       vendor = parsed.store_name || vendor;
     } else {
       try {
         const result = await extractTransactionText(merchant.trim());
         if (result.ok && result.data) {
-          category = result.data.reward_category ?? 'Misc';
+          extractedCategory = result.data.reward_category || null;
+          category = extractedCategory ?? 'Misc';
           vendor = result.data.store_name || vendor;
         }
       } catch (e) {
@@ -212,7 +217,7 @@ export const walletWebhook = onRequest(
     const decision = await resolveCategory({
       vendor,
       amount,
-      extractedCategory: category,
+      extractedCategory,
       categories: allCategories,
       settings: userSettings,
       enabled: userSettings.llmCategorize !== false,
