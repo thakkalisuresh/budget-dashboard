@@ -322,7 +322,7 @@ describe('resolveCategory with history', () => {
   const settings = { smartRules: [{ pattern: 'avis', category: 'Travel' }] };
   const history = [
     { vendor: 'Avis Car Rental', category: 'Health' },
-    { vendor: 'Petrol', category: 'Misc' }, { vendor: 'Petrol', category: 'Misc' },
+    { vendor: 'Petrol', category: 'Travel' }, { vendor: 'Petrol', category: 'Travel' },
   ];
 
   it('uses the vendor\'s prior filing without calling the LLM or asking', async () => {
@@ -330,7 +330,7 @@ describe('resolveCategory with history', () => {
       vendor: 'PETROL', amount: 40, extractedCategory: 'Travel',
       categories: CATEGORIES, settings: {}, history,
     });
-    expect(out).toMatchObject({ category: 'Misc', source: 'history', needsConfirm: false });
+    expect(out).toMatchObject({ category: 'Travel', source: 'history', needsConfirm: false });
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -356,7 +356,7 @@ describe('resolveCategory with history', () => {
       vendor: 'Petrol', amount: 40, extractedCategory: 'Travel',
       categories: CATEGORIES, settings: {}, history, enabled: false,
     });
-    expect(out).toMatchObject({ category: 'Misc', source: 'history' });
+    expect(out).toMatchObject({ category: 'Travel', source: 'history' });
   });
 
   it('does not let a single prior row skip the prompt for an always-ask vendor', async () => {
@@ -372,7 +372,7 @@ describe('resolveCategory with history', () => {
   });
 
   it('lets three agreeing rows settle an always-ask vendor, but not two', async () => {
-    const rows = (n) => Array.from({ length: n }, () => ({ vendor: 'Target', category: 'Misc' }));
+    const rows = (n) => Array.from({ length: n }, () => ({ vendor: 'Target', category: 'Health' }));
     mockFetch.mockResolvedValue(groqReply('{"category":"Grocery","confidence":1}'));
     const two = await resolveCategory({
       vendor: 'Target', amount: 20, extractedCategory: null, categories: CATEGORIES, settings: {}, history: rows(2),
@@ -381,7 +381,7 @@ describe('resolveCategory with history', () => {
     const three = await resolveCategory({
       vendor: 'Target', amount: 20, extractedCategory: null, categories: CATEGORIES, settings: {}, history: rows(3),
     });
-    expect(three).toMatchObject({ category: 'Misc', source: 'history', needsConfirm: false });
+    expect(three).toMatchObject({ category: 'Health', source: 'history', needsConfirm: false });
   });
 
   it('with one prior row an ordinary vendor goes through the threshold, not straight to history', async () => {
@@ -391,6 +391,35 @@ describe('resolveCategory with history', () => {
       history: [{ vendor: 'Chipotle', category: 'Grocery' }],
     });
     expect(out).toMatchObject({ category: 'Eating Out', source: 'llm', needsConfirm: true });
+  });
+
+  it('treats a history of Misc as no information and goes to the LLM', async () => {
+    // Misc is the unknown bucket, and the old pipeline defaulted many rows to it
+    // (Safeway, Mayuri...) until the user moved them. Repeating that default
+    // silently would freeze the old mistakes; pin a genuine Misc vendor with a
+    // smart rule instead.
+    const misc = Array.from({ length: 4 }, () => ({ vendor: 'Shell Oil', category: 'Misc' }));
+    mockFetch.mockResolvedValue(groqReply('{"category":"Misc","confidence":1}'));
+    const asked = await resolveCategory({
+      vendor: 'SHELL OIL 57444', amount: 40, extractedCategory: null, categories: CATEGORIES, settings: {}, history: misc,
+    });
+    expect(mockFetch).toHaveBeenCalled();
+    expect(asked).toMatchObject({ category: 'Misc', source: 'llm', needsConfirm: true });
+
+    mockFetch.mockResolvedValue(groqReply('{"category":"Travel","confidence":0.9}'));
+    const corrected = await resolveCategory({
+      vendor: 'SHELL OIL 57444', amount: 40, extractedCategory: null, categories: CATEGORIES, settings: {}, history: misc,
+    });
+    expect(corrected).toMatchObject({ category: 'Travel', source: 'llm', needsConfirm: false });
+  });
+
+  it('still lets a smart rule pin a vendor to Misc', async () => {
+    const out = await resolveCategory({
+      vendor: 'Shell Oil', amount: 40, extractedCategory: null, categories: CATEGORIES,
+      settings: { smartRules: [{ pattern: 'shell oil', category: 'Misc' }] },
+      history: [{ vendor: 'Shell Oil', category: 'Misc' }],
+    });
+    expect(out).toMatchObject({ category: 'Misc', source: 'rule', needsConfirm: false });
   });
 
   it('falls through to the LLM for a vendor with no history', async () => {
@@ -436,8 +465,8 @@ describe('always-ask vendors', () => {
 
     const byHistory = await resolveCategory({
       vendor: 'Target', amount: 50, extractedCategory: null, categories: CATEGORIES, settings: {},
-      history: Array.from({ length: 3 }, () => ({ vendor: 'Target', category: 'Misc' })),
+      history: Array.from({ length: 3 }, () => ({ vendor: 'Target', category: 'Health' })),
     });
-    expect(byHistory).toMatchObject({ category: 'Misc', source: 'history', needsConfirm: false });
+    expect(byHistory).toMatchObject({ category: 'Health', source: 'history', needsConfirm: false });
   });
 });

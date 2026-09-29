@@ -259,7 +259,11 @@ export async function resolveCategory({
   }
 
   const prior = categoryFromHistory(vendor, history, categories);
-  if (prior?.supported) {
+  // A history of Misc says nothing: Misc is the unknown bucket, and the old
+  // pipeline defaulted many rows there until the user moved them. Repeating it
+  // silently would freeze those mistakes, so it goes on to the LLM, where the
+  // Misc rule asks. A vendor that really is Misc is pinned with a smart rule.
+  if (prior?.supported && prior.category !== 'Misc') {
     return { category: prior.category, source: 'history', confidence: 1, needsConfirm: false };
   }
 
