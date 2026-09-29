@@ -17,8 +17,11 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { getDb } from './lib/firestore.mjs';
 import { sendMessage, resolveTelegramChatId } from './lib/_telegram.mjs';
-import { ERROR_COLLECTION, RETENTION_DAYS, groupErrors, buildDigest } from './lib/_error-log.mjs';
-import { TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP, ALLOWED_EMAILS } from './lib/secrets.mjs';
+import { ERROR_COLLECTION, RETENTION_DAYS, groupErrors, buildDigest, reportError } from './lib/_error-log.mjs';
+import { getPrimaryEmail, resolvePromptChatId } from './lib/_household.mjs';
+import { runParkedNudge } from './lib/_parked-nudge.mjs';
+import { runHeartbeat } from './lib/_wallet-activity.mjs';
+import { TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP, ALLOWED_EMAILS, SHEETS_DRIVE_SECRETS } from './lib/secrets.mjs';
 
 /** Cap the read: a runaway loop could log thousands and we only need the shape. */
 const MAX_DOCS = 500;
@@ -98,6 +101,44 @@ async function pruneOldErrors(col, now) {
   }
 }
 
+/**
+ * Everything the 08:00 job does. This one scheduled function carries three
+ * independent duties because the project has no spare Cloud Scheduler slot:
+ * the error digest, the parked-charge nudge and the wallet heartbeat. Each runs
+ * in its own try/catch so one failing never blocks the others, and none of them
+ * depends on there being errors (silence still means nothing broke).
+ *
+ * Everything goes to the household primary's chat (same as every wallet
+ * prompt). If no primary is configured it falls back to the first
+ * ALLOWED_EMAILS entry, which is what the digest always used.
+ */
+export async function runDailyChecks({ now = new Date() } = {}) {
+  let email = '';
+  try { email = await getPrimaryEmail(); } catch { /* fall through to the fallback */ }
+  if (!email) email = (process.env.ALLOWED_EMAILS || '').split(',')[0]?.trim() || '';
+  if (!email) {
+    console.warn('error-digest: no household primary or ALLOWED_EMAILS configured; skipping');
+    return { skipped: true };
+  }
+  const chatId = await resolvePromptChatId(email);
+  const out = {};
+
+  const step = async (name, fn) => {
+    try {
+      out[name] = await fn();
+    } catch (e) {
+      console.error(`error-digest: ${name} failed`, e?.message);
+      out[name] = { failed: true };
+      await reportError('WAL-007', e, { step: name });
+    }
+  };
+
+  await step('digest', () => runErrorDigest({ email, now }));
+  await step('nudge', () => runParkedNudge({ now, primaryEmail: email, primaryChatId: chatId }));
+  await step('heartbeat', () => runHeartbeat({ now, primaryEmail: email, chatId }));
+  return out;
+}
+
 export const errorDigest = onSchedule(
   {
     // Daily rather than hourly: a backend error here is something to look at
@@ -105,20 +146,16 @@ export const errorDigest = onSchedule(
     schedule: 'every day 08:00',
     timeZone: 'America/Los_Angeles',
     region: 'us-central1',
-    // ALLOWED_EMAILS is read below to pick the household account. It has to be
-    // bound here or process.env.ALLOWED_EMAILS is undefined at runtime and the
-    // digest silently returns without sending anything, forever.
-    secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP, ALLOWED_EMAILS],
+    // Every secret any of the three duties reads must be bound here, or its
+    // process.env value is undefined at runtime and it silently does nothing.
+    // ALLOWED_EMAILS: fallback household account. Sheets/Drive secrets: the
+    // parked-charge nudge reads the owner's custom categories.
+    secrets: [TELEGRAM_BOT_TOKEN, TELEGRAM_EMAIL_MAP, ALLOWED_EMAILS, ...SHEETS_DRIVE_SECRETS],
     timeoutSeconds: 120,
   },
   async () => {
-    const email = (process.env.ALLOWED_EMAILS || '').split(',')[0]?.trim();
-    if (!email) {
-      console.warn('error-digest: ALLOWED_EMAILS not configured; skipping');
-      return;
-    }
     try {
-      await runErrorDigest({ email });
+      await runDailyChecks();
     } catch (e) {
       console.error('error-digest: run failed', e?.message);
     }

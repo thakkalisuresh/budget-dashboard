@@ -3,7 +3,7 @@
 > **Generated file — do not edit by hand.**
 > Source of truth: `functions/lib/_error-codes.mjs`. Regenerate with `npm run errdoc`.
 
-63 codes across 13 domains.
+65 codes across 13 domains.
 
 Codes appear wherever the failure surfaces: in the bot's reply, on the
 dashboard crash screen, in the wallet webhook response body, in Cloud Logging,
@@ -79,6 +79,8 @@ and in the daily Telegram digest.
 | [`WAL-003`](#wal-003) | degraded | Wallet text parse failed |
 | [`WAL-004`](#wal-004) | degraded | Vendor skipped by user rule |
 | [`WAL-005`](#wal-005) | degraded | Duplicate guard unavailable |
+| [`WAL-006`](#wal-006) | degraded | Wallet heartbeat write failed |
+| [`WAL-007`](#wal-007) | degraded | Daily digest step failed |
 | [`FX-001`](#fx-001) | degraded | Currency conversion failed |
 | [`FX-002`](#fx-002) | degraded | Unknown currency |
 | [`WEB-001`](#web-001) | fatal | Dashboard render crashed |
@@ -563,6 +565,22 @@ and in the daily Telegram digest.
 **Why it happens.** The wallet duplicate guard could not read or update its claim in Firestore. The charge was logged anyway (the guard fails open), so a duplicate source for it may also have been logged.
 
 **What to do.** Usually a transient Firestore blip. Check History → Duplicates for a doubled charge around the reported time.
+
+### WAL-006
+
+**Wallet heartbeat write failed** · `degraded`
+
+**Why it happens.** The webhook could not record that a phone was active in Firestore (wallet_activity). The charge itself was handled normally.
+
+**What to do.** Usually a transient Firestore blip. If it repeats, the "no wallet activity" alert may fire for a phone that is actually working.
+
+### WAL-007
+
+**Daily digest step failed** · `degraded`
+
+**Why it happens.** One of the 08:00 job's steps (error digest, parked-charge nudge or wallet heartbeat) threw. The other steps still ran.
+
+**What to do.** The context names the step. Check the function logs for errorDigest around 08:00 Pacific.
 
 ## FX — Currency conversion
 

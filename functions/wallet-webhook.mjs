@@ -25,6 +25,7 @@ import { matchesSplitVendor } from './lib/_item-categorizer.mjs';
 import { resolveCardName } from './lib/_card-resolver.mjs';
 import { sha256Hex } from './lib/http-common.mjs';
 import { reportError } from './lib/_error-log.mjs';
+import { recordActivity } from './lib/_wallet-activity.mjs';
 import { withErrorContext, setActor, trail } from './lib/_error-context.mjs';
 import {
   WALLET_WEBHOOK_SECRET,
@@ -111,6 +112,14 @@ export const walletWebhook = onRequest(
 
     let { merchant, card, email } = req.body || {};
     if (email) setActor(email);
+    // Heartbeat: the phone is alive whatever this request turns out to be
+    // (non-purchase, unparseable, duplicate). Before any parsing so a failure
+    // below still counts. Fails open — recordActivity never throws, and the
+    // try/catch covers anything else.
+    if (typeof email === 'string' && email.includes('@')) {
+      try { await recordActivity(email, req.body?.source ?? null); }
+      catch (e) { console.warn('wallet-webhook: heartbeat failed', e?.message); }
+    }
     // Optional origin tag so we can tell where a charge came from — an iOS
     // Wallet shortcut, an iOS 27 notification automation, an Android SMS reader,
     // etc. Purely diagnostic; the sheet write channel stays 'wallet'.
