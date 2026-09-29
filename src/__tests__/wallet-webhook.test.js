@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { localToday } from '../../functions/lib/_time.mjs';
 
 vi.stubEnv('WALLET_WEBHOOK_SECRET', 'test-wallet-secret');
 
@@ -220,7 +221,7 @@ describe('wallet-webhook — categorization & write', () => {
   it('defaults txDate to today when omitted', async () => {
     const res = await call(req({ body: { ...validBody, date: undefined } }));
     expect(res.status).toBe(200);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localToday();
     expect(appendMock.mock.calls[0][0].txDate).toBe(today);
   });
 
