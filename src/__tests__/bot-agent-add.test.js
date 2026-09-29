@@ -529,3 +529,32 @@ describe('when the AI agent has no working provider', () => {
     expect(reportError.mock.calls.map(c => c[0])).toContain('LLM-002');
   });
 });
+
+describe('agent log_expense category', () => {
+  // Groq does not enforce a tool's enum, and gpt-oss answered in lowercase and
+  // plural ("groceries") in a live probe. The executor has to normalise or refuse, never
+  // hand an unknown tab name to the sheet writer.
+  const toolUse = (category) => ({ ok: true, status: 200, json: () => Promise.resolve({
+    stop_reason: 'tool_use',
+    content: [{ type: 'tool_use', id: 'tu_1', name: 'log_expense', input: { vendor: 'Walgreens', amount: 53.11, category } }],
+  }) });
+  const endTurn = (text) => ({ ok: true, status: 200, json: () => Promise.resolve({ stop_reason: 'end_turn', content: [{ type: 'text', text }] }) });
+  const toolResult = () => JSON.parse(mockFetch.mock.calls[1][1].body).messages.at(-1).content[0].content;
+
+  it("maps the model's lowercase category onto the canonical tab name", async () => {
+    mockFetch.mockResolvedValueOnce(toolUse('grocery')).mockResolvedValueOnce(endTurn(''));
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'be my budgeting coach and suggest ideas');
+    const proposal = ctx.sent.find(m => /Got it:/.test(m.text));
+    expect(proposal.text).toMatch(/Category: Grocery\b/);
+  });
+
+  it('rejects an unknown category back to the model instead of writing it', async () => {
+    mockFetch.mockResolvedValueOnce(toolUse('Spaceships')).mockResolvedValueOnce(endTurn('Which category?'));
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'be my budgeting coach and suggest ideas');
+    expect(toolResult()).toMatch(/unknown category/i);
+    expect(appendExpense).not.toHaveBeenCalled();
+    expect(ctx.sent.some(m => /Total: \$53\.11/.test(m.text))).toBe(false);
+  });
+});

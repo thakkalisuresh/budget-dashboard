@@ -3435,10 +3435,21 @@ async function runBotAgent(ctx, text) {
       // Same path as the typed fast path: category is resolved server-side
       // (smart rules → Groq) unless the user named one, and the user gets the
       // same confirmation before anything is written.
+      // Groq does not enforce the tool's enum (it has answered "groceries" for
+      // "Grocery"). prepareExpense matches case-insensitively, but it would
+      // quietly re-categorise an unknown name — send that back to the model.
+      let category = null;
+      if (input.category) {
+        const wanted = String(input.category).trim().toLowerCase();
+        category = CATEGORIES.find(c => c.toLowerCase() === wanted) || null;
+        if (!category) {
+          return `Unknown category "${input.category}". Valid categories: ${CATEGORIES.join(', ')}. Ask the user which one, or omit category.`;
+        }
+      }
       const explicitDate = /^\d{4}-\d{2}-\d{2}$/.test(String(input.date || ''));
       await addExpenseFromText(ctx, {
         vendor, amount,
-        category: input.category || null,
+        category,
         card: input.card || null,
         date: explicitDate ? input.date : null,
         explicitDate,
