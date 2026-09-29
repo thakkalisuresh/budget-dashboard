@@ -26,23 +26,52 @@ from the parsed text, so the two can be combined.
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `email` | yes | Which user this charge belongs to (see *Multiple people* below). |
+| `email` | yes | Which user this charge belongs to (see *Multiple people* below). Also the heartbeat and duplicate-guard key. |
 | `merchant` | one of `merchant` / `text` | Merchant/vendor name. |
 | `text` | one of `merchant` / `text` | Raw notification / SMS / email body. The backend LLM parser pulls out merchant, amount, card and date. Preferred for notification & SMS triggers — no fragile on-device regex. |
-| `amount` | recommended | Number or string (`"$1,234.56"` is accepted). Parsed from `text` if omitted. |
-| `card` | optional | Card / payment method. Resolved against the user's card list. Parsed from `text` if omitted. |
+| `amount` | recommended | Number or string (`"$1,234.56"` is accepted). Parsed from `text` if omitted. Rounded to cents once on arrival, so float noise like `17.579999999999998` becomes `17.58` everywhere (sheet, message, dedup, push). |
+| `card` | optional | Card / payment method. Resolved against the user's card list (falls back to the raw string if nothing matches). Parsed from `text` if omitted. |
 | `date` | optional | `YYYY-MM-DD`. **Send the device's local date.** If omitted, the current day in `APP_TZ` (default America/Los_Angeles) is used. This is what files the charge under the right month. |
-| `sheetId` | optional | Force a specific month sheet. Normally omit — the month is derived from `date`. |
-| `source` | optional | Free-text origin tag for diagnostics, e.g. `"ios-shortcut"`, `"ios-notification"`, `"android-sms"`. Does not affect the write; shows up in logs / error reports. |
+| `sheetId` | optional | Force a specific month sheet, bypassing the `Months` registry. Normally omit — the month is derived from `date`. A stale hardcoded `sheetId` writes to that sheet even when the `date` belongs to another month (the `message` still names the transaction's month). |
+| `source` | optional | Free-text origin tag (trimmed, max 40 chars), e.g. `"ios-shortcut"`, `"ios-notification"`, `"android-sms"`. Does not affect the write; recorded in the heartbeat doc (`lastSource`), logs, error reports and parked-charge blobs. |
+
+Structured fields win over parsed ones: when both are sent, `merchant`, `amount`, `card` and `date` from the body are kept and `text` only fills the gaps.
+
+### Raw-text path and non-purchase skip
+
+When `text` is present it is parsed once (Groq `openai/gpt-oss-120b` first, then Gemini, then Claude) and the result is reused for categorization. The trigger fires on every bank notification, so the parser also classifies it: anything that is not an approved purchase (declined, statement/bill, deposit, payment/autopay, refund, or other such as an OTP) returns `200 { ok: true, skipped: true, reason: 'not_a_purchase', kind }` — nothing is logged and **no error is reported**. If the parser fails entirely, the request falls back to whatever structured fields were sent (`WAL-003`, degraded); with none, it ends as `WAL-001`.
 
 ### Responses
 
-- `200 { ok: true, ... }` — logged (may include `pendingCategory`, `split`, `skipped`, or a duplicate note).
-- `200 { ok: true, skipped: true, reason: 'duplicate_recent' }` — the same email posted the same amount (exact cents) within the last 2 minutes, e.g. a Wallet notification plus the issuer app for one tap. The first request wins; the second is not logged, and the household primary gets a Telegram note with a "➕ Log it anyway" button (kept 24h) in case it was a separate purchase. If the guard itself is unavailable it fails open and the charge is logged (`WAL-005`).
-- `400 WAL-001` — missing/invalid merchant, amount or email.
-- `401 AUTH-002` — bad or missing secret.
-- `422 SHT-002 month_not_found` — no month sheet for the resolved month. Create the month in the dashboard first.
-- `500 WAL-002` — the charge parsed but the sheet write failed (the one error worth alerting on — the charge is otherwise lost).
+Every response body includes a one-line `message` (an emoji-led sentence) meant for the phone automation's banner: it says whether the charge was logged, is waiting on Telegram, or was **not** logged.
+
+| Status / body | `message` starts | Meaning |
+|---|---|---|
+| `200 { ok, category, vendor, amount }` | ✅ | Logged to the month sheet. If the ±3-day duplicate check matched an existing row it is still logged and the message adds "⚠️ Possible duplicate" (Telegram gets a note). |
+| `200 { ok, pendingCategory: true }` | 🤔 | Not logged yet: Groq was under 0.75 confident, so Telegram asked for a category (see *Category resolution*). |
+| `200 { ok, split: true }` | 🧾 | Split-receipt vendor (Costco, Amazon…, per the user's `splitReceiptVendors`): parked; upload the receipt in Telegram or tap SKIP to log it as one expense. |
+| `200 { ok, skipped: true, reason: 'not_a_purchase', kind }` | ℹ️ | Raw text that is not a purchase. Not an error. |
+| `200 { ok, skipped: true, reason: 'vendor_disabled' }` | ℹ️ | Vendor matches the user's `disabledWalletVendors`. |
+| `200 { ok, skipped: true, reason: 'duplicate_recent' }` | ⏭ | Same email, same exact cents within 2 minutes (see *Duplicate guard*). |
+| `400 WAL-001` | ⚠️ | Missing/invalid merchant, amount or email. Reported to the error digest. |
+| `401 AUTH-002` | ❌ | Bad or missing secret. |
+| `405` | — | Not a POST. |
+| `422 SHT-002 month_not_found` | ⚠️ | No month sheet for the resolved month. Create the month in the dashboard first. |
+| `500 WAL-002` | ❌ | The charge parsed but the sheet write failed (the one error worth alerting on — the charge is otherwise lost). |
+
+The `message` copy lives in `functions/lib/_wallet-messages.mjs`.
+
+### Category resolution
+
+Order: the user's smart rules (authoritative, never asked) → Groq (`openai/gpt-oss-120b`, returns a category and a confidence) → the extractor's own `reward_category`. A Groq answer is written straight through when its confidence is 0.75 or more, or when it agrees with a category the extractor really produced (`extractedCategory`; the default `Misc` does not count as corroboration). Below 0.75 the charge is **parked** as `category_pending:<chat>:<id>` and a Telegram prompt with a category keyboard goes to the household primary's chat (tapping a category logs it into the charge's original month). Users can turn Groq categorization off with `llmCategorize: false` in their settings; if Telegram is unreachable, or no chat is mapped, the charge is logged with the best guess instead of being dropped. If Groq rejects its model id, `LLM-004` reaches the digest and categorization silently falls back to the extractor (no confirm prompts).
+
+### Primary routing
+
+Every Telegram message from this endpoint (category prompts, split prompts, duplicate notes, warnings) goes to the **household primary's** chat, whoever's card was charged. The primary email comes from the `HOUSEHOLD_PRIMARY_EMAIL` env var if set, otherwise from the Firestore doc `config/household` field `primaryEmail` (cached 5 minutes; no redeploy needed). That email **must have an entry in `TELEGRAM_EMAIL_MAP`**. If no primary is configured, or it has no mapping, prompts fall back to the requesting email's own chat, and if that has none either the charge is logged with the best-guess category.
+
+### Duplicate guard
+
+One tap-to-pay can fire two sources (Wallet notification + issuer app, Samsung Wallet + bank SMS). The key is the requesting email plus the exact cents; the merchant string is only a hint because sources word it differently. The first request claims the key (Firestore `bot_state`, `wdup:` docs); a second inside **2 minutes** is skipped with `duplicate_recent` and the primary gets a Telegram note with a "➕ Log it anyway" button (`DUPLOG`, blob kept 24h). Tapping it logs the skipped charge. A claim that never settled is taken over after 30 seconds, and a failed write releases its claim so a retry can log. The check runs after category resolution and before the park / split / write steps, so a **parked** charge counts too (no second prompt). If the guard itself errors it fails open, the charge is logged and `WAL-005` is reported. This is separate from the ±3-day History check, which never blocks: it logs the charge and adds the ⚠️ note.
 
 ## iOS 27 "notification received" automation (when it ships)
 
@@ -60,15 +89,15 @@ No app change is needed on this side — point the automation at the endpoint.
 
 ## Android SMS (bank transaction texts)
 
-Use MacroDroid or Tasker:
+Use Automate (LlamaLab) or any automation app that can make an HTTP request:
 
-1. **Trigger:** SMS received, from the bank's sender/short-code.
+1. **Trigger:** SMS or bank/wallet notification received, from the bank's sender / app.
 2. **Action:** HTTP POST (`application/json`) to `/api/wallet`:
    ```json
-   { "text": "{sms_body}", "email": "wife@example.com", "source": "android-sms" }
+   { "text": "<the SMS / notification text>", "email": "wife@example.com", "source": "android-sms" }
    ```
-   (`{sms_body}` = the app's incoming-SMS-text variable; MacroDroid `[sms_message]`, Tasker `%SMSRB`.)
    Header: `Authorization: Bearer <secret>`.
+3. Show the response's `message` as the banner, if the flow supports it.
 
 The backend parses the SMS, auto-detects the vendor's category, resolves the
 card and logs it — identical to the wallet path. Bank SMS formats vary by
@@ -76,11 +105,14 @@ region/bank; the LLM parser handles them without per-bank rules.
 
 ## Multiple people (shared household budget)
 
-All charges land in the **same** month spreadsheet (`VITE_TEMPLATE_SHEET_ID`) —
-this is one shared household budget, not per-person budgets. The `email` field
-selects that person's *settings* (disabled vendors, custom categories, card
-list) and, if mapped, who gets Telegram prompts for ambiguous categories or
-receipt splits.
+All charges land in the **same** month spreadsheet (found through the `Months`
+registry tab of `VITE_TEMPLATE_SHEET_ID`) — this is one shared household budget,
+not per-person budgets. The `email` field selects that person's *settings*
+(a row in the `UserSettings` tab, matched by exact email: smart rules, disabled
+vendors, split vendors, custom categories, card list) and keys the duplicate
+guard and heartbeat. Telegram prompts always go to the household primary (see
+*Primary routing*). An email with no `UserSettings` row still logs, with default
+behaviour (no rules, no card resolution, no split vendors).
 
 To add a second person (e.g. a spouse logging via Android SMS):
 
@@ -88,8 +120,9 @@ To add a second person (e.g. a spouse logging via Android SMS):
 2. Add their email to `ALLOWED_EMAILS` (Secret Manager) so the dashboard/app
    recognizes them. *(The wallet endpoint itself gates on the shared secret, not
    the email — this step is for dashboard access and per-user settings.)*
-3. Optional: add `email:telegram_chat_id` to `TELEGRAM_EMAIL_MAP` so category /
-   split prompts reach the right person.
+3. Optional: add `email:telegram_chat_id` to `TELEGRAM_EMAIL_MAP` (only needed
+   for someone who should receive prompts themselves; the household primary must
+   be in it).
 4. Make sure the current month sheet exists (create it in the dashboard).
 
 Nothing else is required — the same endpoint, secret and pipeline serve everyone.
@@ -107,3 +140,9 @@ The `errorDigest` job (the project's scheduler slots are limited, so no new job)
 
 - **Parked-charge nudge.** `category_pending:` charges parked 12h+ are re-sent daily to the chat in their key, with the original category keyboard (a tap logs into the charge's original month). `split_pending:` charges get one message per chat with SKIP; the list order matches what SKIP acts on. At most 8 nudges per run, then a "…and N more" line. After 30 days a blob gets one "giving up" line and no more reminders. Nothing is ever auto-logged or deleted.
 - **Heartbeat.** Every authenticated webhook request stamps `wallet_activity/<hash of email>` (`lastSeenAt`, `lastSource`, `count`). A phone silent for 4+ days triggers a Telegram alert to the household primary, repeated every ~3 days until it posts again. Only emails that have posted at least once are tracked.
+
+If the heartbeat write fails it is reported as `WAL-006`; a step of the 08:00 job that throws is reported as `WAL-007` (the other steps still run). To run the job on demand: `gcloud scheduler jobs run firebase-schedule-errorDigest-us-central1 --project=fundient-dashboard --location=us-central1`.
+
+## Error codes
+
+`WAL-001` rejected request · `WAL-002` sheet write failed (charge lost) · `WAL-003` raw-text parse failed · `WAL-004` vendor skipped by rule · `WAL-005` duplicate guard unavailable (fails open) · `WAL-006` heartbeat write failed · `WAL-007` daily-job step failed · `LLM-004` Groq model unavailable. Definitions and fixes: `functions/lib/_error-codes.mjs`.
