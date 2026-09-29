@@ -63,6 +63,9 @@ vi.mock('../../functions/lib/_extraction.mjs', async (importOriginal) => {
   return { ...actual, extractTransactionText: (...a) => extractTransactionText(...a) };
 });
 
+const reportError = vi.fn(() => Promise.resolve());
+vi.mock('../../functions/lib/_error-log.mjs', () => ({ reportError: (...a) => reportError(...a) }));
+
 const mockFetch = vi.fn();
 globalThis.fetch = mockFetch;
 
@@ -511,5 +514,18 @@ describe('logged-expense edits', () => {
     expect(deleteExpenseByUUID).not.toHaveBeenCalled();
     expect(appendExpense).toHaveBeenCalledTimes(1);
     expect(lastSent(ctx).text).toContain('April 2026');
+  });
+});
+
+describe('when the AI agent has no working provider', () => {
+  it('tells the user plainly and reports the error instead of a bare help blurb', async () => {
+    reportError.mockClear();
+    mockFetch.mockResolvedValue({ ok: false, status: 400, json: () => Promise.resolve({ error: { message: 'credit balance is too low' } }) });
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'be my budgeting coach and suggest ideas');
+    expect(ctx.sent).toHaveLength(1);
+    expect(lastSent(ctx).text).toMatch(/AI assistant isn't available right now/i);
+    expect(lastSent(ctx).text).not.toMatch(/credit balance|Error:|at \S+:\d+/);
+    expect(reportError.mock.calls.map(c => c[0])).toContain('LLM-002');
   });
 });

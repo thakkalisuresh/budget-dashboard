@@ -39,7 +39,7 @@ These are read by the bot webhooks (`functions/`), not baked into the client bun
 | `ANTHROPIC_API_KEY` | Claude API key (receipt extraction fallback + conversational agent) |
 | `GEMINI_API_KEY` | Gemini API key (primary receipt extraction) |
 | `GROQ_API_KEY` | Groq API key (free first tier for budget queries) |
-| `BOT_AGENT_MODEL` | *(optional)* Claude model for the conversational agent fallback. Defaults to `claude-haiku-4-5` — fast + cheap, suited to per-message routing/lookups. Override to trade cost for capability (e.g. `claude-sonnet-5`). |
+| *(no override)* | The bot agent and NL queries run on Groq (`GROQ_TEXT_MODEL` in `functions/lib/_groq.mjs`) with Claude Haiku 4.5 as the last-resort fallback. Model ids are constants, not env vars (a function only receives variables it declares), so changing one is a code change. `BOT_AGENT_MODEL` is no longer read. |
 | `APP_TZ` | *(optional)* IANA timezone the loggers use to resolve the "current month" and day (Telegram/wallet/SMS). Defaults to `America/Los_Angeles`. Cloud Functions run in UTC, so this must match the household's local zone or end-of-month charges land in the wrong month. See `functions/lib/_time.mjs` and `docs/wallet-ingestion.md`. |
 | `WALLET_WEBHOOK_SECRET` | Shared bearer secret for the `/api/wallet` ingestion endpoint (iOS Shortcut / iOS 27 notification / Android SMS). See `docs/wallet-ingestion.md`. |
 

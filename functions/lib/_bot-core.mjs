@@ -808,6 +808,11 @@ export async function handleTextReply(ctx, text) {
       if (await runBotAgent(ctx, text)) return;
     } catch (e) {
       console.warn('bot-core: agent fallback failed', e.message);
+      await reportError('LLM-002', e, { flow: 'agent' });
+      return ctx.send(
+        "The AI assistant isn't available right now, so I can't handle free-form messages. Structured commands still work.\n\n" +
+        'Send a receipt photo, bank screenshot, or paste a transaction SMS.\nManual: "Walmart 45.23 Grocery"\n\nType GUIDE for full command list.'
+      );
     }
     return ctx.send(
       'Send a receipt photo, bank screenshot, or paste a transaction SMS.\nManual: "Walmart 45.23 Grocery"\n\nType GUIDE for full command list.'

@@ -237,7 +237,7 @@ export const ERROR_CODES = {
   'LLM-002': {
     title: 'Agent API error',
     severity: 'fatal',
-    cause: 'The conversational agent could not reach Claude.',
+    cause: 'The conversational agent or an NL query got no answer from any provider (Groq, then Claude). Usually Claude is out of credit AND Groq failed, so check for an LLM-004 alongside.',
     fix: 'The bot cannot answer free-form questions until this clears. Structured commands still work.',
   },
   'LLM-003': {
@@ -250,7 +250,7 @@ export const ERROR_CODES = {
     title: 'Groq model unavailable',
     severity: 'degraded',
     cause: 'Groq rejected the request as an unknown or inaccessible model (model_not_found, 404, or a 400), so the hardcoded model id has been retired, is not on this account, or the request uses a parameter the model rejects.',
-    fix: 'List models with GET https://api.groq.com/openai/v1/models, then update the model constants in functions/lib/_groq.mjs. Until then categorization silently uses the extractor (no confirm prompts) and text extraction falls back to Gemini.',
+    fix: 'List models with GET https://api.groq.com/openai/v1/models, then update the model constants in functions/lib/_groq.mjs. Until then categorization silently uses the extractor (no confirm prompts), text extraction falls back to Gemini, and the bot agent and NL queries fall back to Claude.',
   },
 
   /* ── PUSH: web push notifications ─────────────────────────────────────── */

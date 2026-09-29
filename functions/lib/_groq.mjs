@@ -9,8 +9,7 @@
  * runtime, so an env read would always resolve to the default while implying
  * otherwise (same reasoning as _agent.mjs).
  *
- * NOT yet adopted by _agent.mjs / _query.mjs, which still name their own
- * (retired) llama id and fall back to Claude.
+ * Also used by _agent.mjs (tool calls) and _query.mjs (NL queries).
  */
 export const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
