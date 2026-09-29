@@ -24,7 +24,7 @@ const { extractMock, appendMock, sheetIdMock, webpushSend, getSettingsMock, tele
       return Promise.resolve({ blobs });
     },
   },
-  ctl: { pushDoc: null, deleted: false },
+  ctl: { pushDoc: null, deleted: false, household: null, householdThrows: false },
 }));
 
 vi.mock('../../functions/lib/_extraction.mjs', () => ({
@@ -63,9 +63,15 @@ vi.mock('../../functions/lib/_telegram.mjs', () => ({
 }));
 vi.mock('../../functions/lib/firestore.mjs', () => ({
   getDb: () => ({
-    collection: () => ({
+    collection: (name) => ({
       doc: () => ({
-        get: async () => ({ exists: ctl.pushDoc !== null, data: () => ctl.pushDoc }),
+        get: async () => {
+          if (name === 'config') {
+            if (ctl.householdThrows) throw new Error('firestore down');
+            return { exists: ctl.household !== null, data: () => ctl.household };
+          }
+          return { exists: ctl.pushDoc !== null, data: () => ctl.pushDoc };
+        },
         delete: async () => { ctl.deleted = true; },
       }),
     }),
@@ -73,6 +79,7 @@ vi.mock('../../functions/lib/firestore.mjs', () => ({
 }));
 
 const { walletWebhook } = await import('../../functions/wallet-webhook.mjs');
+const { resetHouseholdCache } = await import('../../functions/lib/_household.mjs');
 
 const SECRET = 'test-wallet-secret';
 
@@ -114,6 +121,9 @@ beforeEach(() => {
   splitStore.data.clear();
   ctl.pushDoc = null;
   ctl.deleted = false;
+  ctl.household = null;
+  ctl.householdThrows = false;
+  resetHouseholdCache();
   vi.stubEnv('VAPID_PUBLIC_KEY', '');
   vi.stubEnv('VAPID_PRIVATE_KEY', '');
   vi.stubEnv('VAPID_EMAIL', '');
@@ -131,7 +141,7 @@ describe('wallet-webhook — method & auth', () => {
     expect(res.status).toBe(401);
     // Error responses now carry the code so it is visible wherever the
     // response is seen — phone automation logs included.
-    expect(res.json).toEqual({ ok: false, code: 'AUTH-002', error: 'Unauthorized' });
+    expect(res.json).toEqual({ ok: false, code: 'AUTH-002', error: 'Unauthorized', message: expect.any(String) });
   });
 
   it('rejects a wrong key (401)', async () => {
@@ -227,7 +237,7 @@ describe('wallet-webhook — categorization & write', () => {
   it('happy path: categorizes, appends with channel=wallet, returns 200', async () => {
     const res = await call(req({ body: validBody }));
     expect(res.status).toBe(200);
-    expect(res.json).toEqual({ ok: true, category: 'Grocery', vendor: 'Costco', amount: 89.5 });
+    expect(res.json).toEqual({ ok: true, category: 'Grocery', vendor: 'Costco', amount: 89.5, message: expect.any(String) });
     expect(appendMock).toHaveBeenCalledOnce();
     const args = appendMock.mock.calls[0][0];
     expect(args).toMatchObject({
@@ -686,5 +696,245 @@ describe('wallet-webhook — non-purchase notifications (raw text)', () => {
     expect(res.status).toBe(400);
     expect(res.json.code).toBe('WAL-001');
     expect(reportErrorMock).toHaveBeenCalledWith('WAL-001', expect.any(Error), expect.objectContaining({ field: 'amount' }));
+  });
+});
+
+/* ── Step 4/5: `message`, rounding, park-vs-send order, primary routing ── */
+
+describe('wallet-webhook — message on every JSON branch + rounding', () => {
+  const WIFE = 'anupamaramesh2697@gmail.com';
+  const PRIMARY = 'nair.sabarish97@gmail.com';
+  const body = { ...validBody, merchant: 'Little Oddfellows', amount: 17.579999999999998, date: '2026-09-12', card: 'Amex BCP' };
+  const groqFetch = vi.fn();
+  const groqSays = (category, confidence) => groqFetch.mockResolvedValue({
+    ok: true,
+    json: () => Promise.resolve({ choices: [{ message: { content: JSON.stringify({ category, confidence }) } }] }),
+  });
+
+  beforeEach(() => {
+    groqFetch.mockReset();
+    global.fetch = groqFetch;
+    vi.stubEnv('GROQ_API_KEY', 'test-groq-key');
+    vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-bot-token');
+    vi.stubEnv('TELEGRAM_EMAIL_MAP', `${PRIMARY}:111222333,${WIFE}:444555666`);
+    vi.stubEnv('HOUSEHOLD_PRIMARY_EMAIL', '');
+    extractMock.mockResolvedValue({ ok: true, data: { reward_category: 'Eating Out', store_name: 'Little Oddfellows' } });
+  });
+
+  it('rounds the parsed amount once: sheet write, message and response all see 17.58', async () => {
+    const res = await call(req({ body }));
+    expect(appendMock.mock.calls[0][0].amount).toBe(17.58);
+    expect(res.json.amount).toBe(17.58);
+    expect(res.json.message).toBe('✅ $17.58 at Little Oddfellows on Amex BCP → Eating Out. Added to your September 2026 budget in Fundient.');
+  });
+
+  it('omits the card segment when there is no card', async () => {
+    const res = await call(req({ body: { ...body, card: undefined } }));
+    expect(res.json.message).toBe('✅ $17.58 at Little Oddfellows → Eating Out. Added to your September 2026 budget in Fundient.');
+  });
+
+  it('web push body prints the rounded amount with two decimals', async () => {
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'pub'); vi.stubEnv('VAPID_PRIVATE_KEY', 'priv'); vi.stubEnv('VAPID_EMAIL', 'a@b.c');
+    ctl.pushDoc = { subscription: { endpoint: 'https://push.example/abc' } };
+    await call(req({ body: { ...body, amount: 17.5 } }));
+    expect(JSON.parse(webpushSend.mock.calls[0][1]).body).toBe('Logged $17.50 at Little Oddfellows as Eating Out');
+  });
+
+  it('keeps every pre-existing response key on the happy path (additive message)', async () => {
+    const res = await call(req({ body }));
+    expect(Object.keys(res.json).sort()).toEqual(['amount', 'category', 'message', 'ok', 'vendor']);
+    expect(res.status).toBe(200);
+  });
+
+  it('parked category: message says waiting on Telegram, never added; keys preserved', async () => {
+    groqSays('Travel', 0.4);
+    const res = await call(req({ body }));
+    expect(Object.keys(res.json).sort()).toEqual(['amount', 'message', 'ok', 'pendingCategory', 'vendor']);
+    expect(res.json.message).toBe("🤔 $17.58 at Little Oddfellows — I need a category. Pick one on Telegram and I'll add it to September 2026.");
+    expect(res.json.message).not.toMatch(/✅|Added to your/);
+  });
+
+  it('Telegram category prompt uses the new copy with the rounded amount', async () => {
+    groqSays('Travel', 0.4);
+    await call(req({ body }));
+    expect(telegramSend.mock.calls[0][1]).toBe(
+      '🤔 Categorize this charge\nLittle Oddfellows · $17.58 · Amex BCP · Sep 2026\nBest guess: Travel. Tap the right one:');
+  });
+
+  it('Telegram category prompt omits the card segment when none', async () => {
+    groqSays('Travel', 0.4);
+    await call(req({ body: { ...body, card: undefined } }));
+    expect(telegramSend.mock.calls[0][1]).toBe(
+      '🤔 Categorize this charge\nLittle Oddfellows · $17.58 · Sep 2026\nBest guess: Travel. Tap the right one:');
+  });
+
+  it('send OK => blob parked with originating email and source', async () => {
+    groqSays('Travel', 0.4);
+    await call(req({ body: { ...body, source: 'android-sms' } }));
+    const [, blob] = [...splitStore.data.entries()].find(([k]) => k.startsWith('category_pending:111222333:'));
+    expect(blob).toMatchObject({ email: PRIMARY, source: 'android-sms', amount: 17.58 });
+  });
+
+  it('sends BEFORE parking: a failed send leaves no blob, and the write message describes the written outcome', async () => {
+    groqSays('Travel', 0.4);
+    telegramSend.mockRejectedValue(new Error('telegram down'));
+    const res = await call(req({ body }));
+    expect([...splitStore.data.keys()].filter(k => k.startsWith('category_pending:'))).toEqual([]);
+    expect(appendMock).toHaveBeenCalledOnce();
+    expect(res.json.pendingCategory).toBeUndefined();
+    expect(res.json.message).toMatch(/^✅ \$17\.58 at Little Oddfellows on Amex BCP → Travel\. Added to your September 2026/);
+  });
+
+  it('send OK but park fails: reports, tells the user, writes once with best guess, written message', async () => {
+    groqSays('Travel', 0.4);
+    const orig = splitStore.setJSON;
+    splitStore.setJSON = () => Promise.reject(new Error('firestore down'));
+    try {
+      const res = await call(req({ body }));
+      expect(reportErrorMock).toHaveBeenCalledWith('TG-001', expect.any(Error), expect.objectContaining({ flow: 'category-park' }));
+      expect(appendMock).toHaveBeenCalledTimes(1);
+      expect(appendMock.mock.calls[0][0].category).toBe('Travel');
+      expect([...splitStore.data.keys()].filter(k => k.startsWith('category_pending:'))).toEqual([]);
+      expect(telegramSend.mock.calls.at(-1)[1]).toBe("⚠️ Couldn't save that prompt — I'm logging it as Travel instead.");
+      expect(res.json.pendingCategory).toBeUndefined();
+      expect(res.json.message).toMatch(/^✅ .*→ Travel\./);
+    } finally { splitStore.setJSON = orig; }
+  });
+
+  it('split vendor parked: message says upload receipt on Telegram; keys preserved; blob has email', async () => {
+    getSettingsMock.mockResolvedValue({ splitReceiptVendors: [{ name: 'Trader', patterns: ['oddfellows'] }] });
+    const res = await call(req({ body }));
+    expect(Object.keys(res.json).sort()).toEqual(['amount', 'message', 'ok', 'split', 'vendor']);
+    expect(res.json.message).toBe('🧾 $17.58 at Little Oddfellows — upload the receipt on Telegram to split it, or SKIP to log as one.');
+    const [, blob] = [...splitStore.data.entries()].find(([k]) => k.startsWith('split_pending:111222333:'));
+    expect(blob).toMatchObject({ email: PRIMARY, amount: 17.58 });
+  });
+
+  it('split: failed send leaves no blob and falls through to a written message', async () => {
+    getSettingsMock.mockResolvedValue({ splitReceiptVendors: [{ name: 'Trader', patterns: ['oddfellows'] }] });
+    telegramSend.mockRejectedValue(new Error('down'));
+    const res = await call(req({ body }));
+    expect([...splitStore.data.keys()].filter(k => k.startsWith('split_pending:'))).toEqual([]);
+    expect(appendMock).toHaveBeenCalledOnce();
+    expect(res.json.message).toMatch(/^✅ /);
+  });
+
+  it('split: send OK but park fails => follow-up, one write as a single expense', async () => {
+    getSettingsMock.mockResolvedValue({ splitReceiptVendors: [{ name: 'Trader', patterns: ['oddfellows'] }] });
+    const orig = splitStore.setJSON;
+    splitStore.setJSON = () => Promise.reject(new Error('firestore down'));
+    try {
+      const res = await call(req({ body }));
+      expect(reportErrorMock).toHaveBeenCalledWith('TG-001', expect.any(Error), expect.objectContaining({ flow: 'split-park' }));
+      expect(appendMock).toHaveBeenCalledTimes(1);
+      expect(telegramSend.mock.calls.at(-1)[1]).toMatch(/logging it as a single Eating Out expense/);
+      expect(res.json.message).toMatch(/^✅ /);
+    } finally { splitStore.setJSON = orig; }
+  });
+
+  it('duplicate: still logged, message flags it', async () => {
+    recentMock.mockResolvedValue([{ vendor: 'Little Oddfellows', amount: 17.58, category: 'Eating Out', txDate: '2026-09-12' }]);
+    const res = await call(req({ body }));
+    expect(res.json.message).toBe('✅ $17.58 at Little Oddfellows → Eating Out, added to September 2026. ⚠️ Possible duplicate — check Telegram.');
+  });
+
+  it('vendor disabled skip has a message and keeps its keys', async () => {
+    getSettingsMock.mockResolvedValue({ disabledWalletVendors: [{ patterns: ['oddfellows'] }] });
+    const res = await call(req({ body }));
+    expect(res.json).toEqual({ ok: true, skipped: true, reason: 'vendor_disabled', vendor: 'Little Oddfellows',
+      message: 'ℹ️ Little Oddfellows is on your ignore list — nothing was logged.' });
+  });
+
+  it.each([
+    ['amount', { amount: 'abc' }, "⚠️ Couldn't read the amount from that notification — nothing was logged."],
+    ['merchant', { merchant: undefined }, "⚠️ Couldn't read the store name from that notification — nothing was logged."],
+    ['email', { email: 'nope' }, '⚠️ No account email came with that charge — nothing was logged.'],
+  ])('400 on bad %s has message and keeps ok/code/error', async (field, override, message) => {
+    const res = await call(req({ body: { ...body, ...override } }));
+    expect(res.status).toBe(400);
+    expect(res.json).toEqual({ ok: false, code: 'WAL-001', error: `Missing or invalid ${field}`, message });
+  });
+
+  it('401 keeps its shape and adds a message', async () => {
+    const res = await call(req({ key: 'nope', body }));
+    expect(res.status).toBe(401);
+    expect(res.json).toMatchObject({ ok: false, code: 'AUTH-002', error: 'Unauthorized' });
+    expect(res.json.message).toMatch(/nothing was logged/);
+  });
+
+  it('422 (sheet resolution) names the transaction month', async () => {
+    sheetIdMock.mockRejectedValueOnce(new Error('none'));
+    const res = await call(req({ body: { ...body, sheetId: undefined } }));
+    expect(res.status).toBe(422);
+    expect(res.json).toEqual({ ok: false, code: 'SHT-002', error: 'month_not_found', monthName: 'September 2026',
+      message: '⚠️ No sheet for September 2026 yet — create the month in Fundient first.' });
+  });
+
+  it('422 from the append itself carries the same message', async () => {
+    appendMock.mockRejectedValue(new Error('No sheet found for month September 2026'));
+    const res = await call(req({ body }));
+    expect(res.status).toBe(422);
+    expect(res.json.message).toBe('⚠️ No sheet for September 2026 yet — create the month in Fundient first.');
+  });
+
+  it('500 write failure: message says NOT logged with the rounded amount', async () => {
+    appendMock.mockRejectedValue(new Error('boom'));
+    const res = await call(req({ body }));
+    expect(res.status).toBe(500);
+    expect(res.json).toMatchObject({ ok: false, code: 'WAL-002', error: 'Failed to write transaction' });
+    expect(res.json.message).toBe('❌ Save FAILED — this charge was NOT logged. Re-enter $17.58 at Little Oddfellows by hand.');
+  });
+
+  describe('household primary routing', () => {
+    it("the wife's charge prompts in the primary's chat when HOUSEHOLD_PRIMARY_EMAIL is set", async () => {
+      vi.stubEnv('HOUSEHOLD_PRIMARY_EMAIL', PRIMARY);
+      groqSays('Travel', 0.4);
+      await call(req({ body: { ...body, email: WIFE } }));
+      expect(telegramSend.mock.calls[0][0]).toBe('111222333');
+      const [, blob] = [...splitStore.data.entries()].find(([k]) => k.startsWith('category_pending:'));
+      expect(blob.email).toBe(WIFE);
+      expect([...splitStore.data.keys()].some(k => k.startsWith('category_pending:111222333:'))).toBe(true);
+    });
+
+    it('duplicate note goes to the primary chat too', async () => {
+      vi.stubEnv('HOUSEHOLD_PRIMARY_EMAIL', PRIMARY);
+      recentMock.mockResolvedValue([{ vendor: 'Little Oddfellows', amount: 17.58, category: 'Eating Out', txDate: '2026-09-12' }]);
+      await call(req({ body: { ...body, email: WIFE } }));
+      expect(telegramSend.mock.calls.at(-1)[0]).toBe('111222333');
+    });
+
+    it('env wins over Firestore', async () => {
+      vi.stubEnv('HOUSEHOLD_PRIMARY_EMAIL', PRIMARY);
+      ctl.household = { primaryEmail: WIFE };
+      groqSays('Travel', 0.4);
+      await call(req({ body: { ...body, email: WIFE } }));
+      expect(telegramSend.mock.calls[0][0]).toBe('111222333');
+    });
+
+    it('uses Firestore config/household when env is unset', async () => {
+      ctl.household = { primaryEmail: PRIMARY };
+      groqSays('Travel', 0.4);
+      await call(req({ body: { ...body, email: WIFE } }));
+      expect(telegramSend.mock.calls[0][0]).toBe('111222333');
+    });
+
+    it('a failed Firestore read falls back to the request email and never blocks', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      ctl.householdThrows = true;
+      groqSays('Travel', 0.4);
+      const res = await call(req({ body: { ...body, email: WIFE } }));
+      expect(res.status).toBe(200);
+      expect(telegramSend.mock.calls[0][0]).toBe('444555666');
+      warn.mockRestore();
+    });
+
+    it('unset => old behavior (chat for the request email) with a warning', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      groqSays('Travel', 0.4);
+      await call(req({ body: { ...body, email: WIFE } }));
+      expect(telegramSend.mock.calls[0][0]).toBe('444555666');
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/HOUSEHOLD_PRIMARY_EMAIL/));
+      warn.mockRestore();
+    });
   });
 });

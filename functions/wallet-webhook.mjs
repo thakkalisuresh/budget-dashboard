@@ -14,7 +14,12 @@ import { findDuplicates } from './lib/_duplicate-match.mjs';
 import { appendExpense, getCurrentMonthSheetId, getUserSettingsByEmail, getRecentExpenses } from './lib/_sheets.mjs';
 import { getDb } from './lib/firestore.mjs';
 import { createBotStore } from './lib/bot-store.mjs';
-import { sendMessage, kbCategoryConfirm, resolveTelegramChatId } from './lib/_telegram.mjs';
+import { sendMessage, kbCategoryConfirm } from './lib/_telegram.mjs';
+import { resolvePromptChatId } from './lib/_household.mjs';
+import {
+  msgWritten, msgWrittenDuplicate, msgNeedsCategory, msgSplitParked, msgUnreadable,
+  msgNoSheet, msgWriteFailed, msgVendorDisabled, msgUnauthorized, tgCategoryPrompt,
+} from './lib/_wallet-messages.mjs';
 import { matchesSplitVendor } from './lib/_item-categorizer.mjs';
 import { resolveCardName } from './lib/_card-resolver.mjs';
 import { sha256Hex } from './lib/http-common.mjs';
@@ -64,7 +69,7 @@ export const walletWebhook = onRequest(
     const key = extractKey(req);
     const secret = process.env.WALLET_WEBHOOK_SECRET;
     if (!key || !secret || !(await keyMatches(key, secret))) {
-      res.status(401).json({ ok: false, code: 'AUTH-002', error: 'Unauthorized' });
+      res.status(401).json({ ok: false, code: 'AUTH-002', error: 'Unauthorized', message: msgUnauthorized() });
       return;
     }
 
@@ -122,7 +127,9 @@ export const walletWebhook = onRequest(
     if (!txDate) txDate = localToday();
     // Amount may arrive with a currency symbol/grouping (e.g. "$1,234.56" from the iOS
     // Transaction trigger). Strip everything except digits, dot and minus before parsing.
-    const amount = parseFloat(String(amountRaw ?? '').replace(/[^\d.-]/g, ''));
+    // Rounded once, here, so the sheet write, message, Telegram text, dedup and
+    // push all agree (the old Shortcut sends float noise like 17.579999999999998).
+    const amount = Math.round(parseFloat(String(amountRaw ?? '').replace(/[^\d.-]/g, '')) * 100) / 100;
 
     // A rejected request is a charge that never got logged, so it belongs in the
     // digest exactly like WAL-002 below. These three sites returned a bare 400
@@ -140,7 +147,7 @@ export const walletWebhook = onRequest(
         fromRawText: Boolean(rawText),
         textLength: rawText.length,
       });
-      res.status(400).json({ ok: false, code: 'WAL-001', error });
+      res.status(400).json({ ok: false, code: 'WAL-001', error, message: msgUnreadable(field) });
     };
 
     if (!merchant || typeof merchant !== 'string') {
@@ -166,7 +173,7 @@ export const walletWebhook = onRequest(
       try {
         sheetId = await getCurrentMonthSheetId(monthName);
       } catch (e) {
-        res.status(422).json({ ok: false, code: 'SHT-002', error: 'month_not_found', monthName });
+        res.status(422).json({ ok: false, code: 'SHT-002', error: 'month_not_found', monthName, message: msgNoSheet(monthName) });
         return;
       }
     }
@@ -203,7 +210,7 @@ export const walletWebhook = onRequest(
         (v.patterns || []).some(p => p && vendorLower.includes(p.toLowerCase()))
       );
       if (isDisabled) {
-        res.status(200).json({ ok: true, skipped: true, reason: 'vendor_disabled', vendor });
+        res.status(200).json({ ok: true, skipped: true, reason: 'vendor_disabled', vendor, message: msgVendorDisabled(vendor) });
         return;
       }
     } catch (e) {
@@ -243,32 +250,54 @@ export const walletWebhook = onRequest(
     }
     category = decision.category;
 
+    // Set when a prompt was sent but its blob could not be parked; the write
+    // below then goes ahead and this follow-up tells the user to ignore the buttons.
+    let parkFailNote = null;
+
     if (decision.needsConfirm) {
-      const chatId = resolveTelegramChatId(email);
+      const chatId = await resolvePromptChatId(email);
       if (chatId) {
+        // Send FIRST, park after: a failed send then never leaves an orphaned
+        // blob for a charge the fall-through below goes on to write.
+        let sent = false;
+        let store = null;
+        let id = null;
         try {
-          const store = createBotStore(getDb());
+          store = createBotStore(getDb());
           // Short id: callback_data must stay under Telegram's 64-byte limit
           // once the category name is appended.
-          const id = crypto.randomUUID().slice(0, 8);
-          await store.setJSON(`category_pending:${chatId}:${id}`, {
-            id, vendor, amount, txDate, monthName, sheetId,
-            paymentMethod: card ?? '',
-            suggested: decision.category,
-            createdAt: new Date().toISOString(),
-          });
+          id = crypto.randomUUID().slice(0, 8);
           await sendMessage(
             chatId,
-            `🤔 ${vendor} · $${amount.toFixed(2)}\n\n` +
-            `Not sure which category — best guess is ${decision.category}. Pick one:`,
+            tgCategoryPrompt({ vendor, amount, card, monthName, suggested: decision.category }),
             kbCategoryConfirm(id, allCategories, decision.category)
           );
-          res.status(200).json({ ok: true, pendingCategory: true, vendor, amount });
-          return;
+          sent = true;
         } catch (e) {
           // Falling through logs it with the best guess, which is strictly
           // better than dropping the transaction because Telegram was down.
           console.error('Category confirm prompt failed (logging with best guess):', e.message);
+        }
+        if (sent) {
+          try {
+            await store.setJSON(`category_pending:${chatId}:${id}`, {
+              id, vendor, amount, txDate, monthName, sheetId,
+              paymentMethod: card ?? '',
+              suggested: decision.category,
+              // Originating account + origin tag, so a later nudge / CATFIX can
+              // attribute the charge even though the prompt went to the primary.
+              email, source,
+              createdAt: new Date().toISOString(),
+            });
+            res.status(200).json({
+              ok: true, pendingCategory: true, vendor, amount,
+              message: msgNeedsCategory({ amount, vendor, monthName }),
+            });
+            return;
+          } catch (e) {
+            await reportError('TG-001', e, { flow: 'category-park', vendor, amount });
+            parkFailNote = `⚠️ Couldn't save that prompt — I'm logging it as ${category} instead.`;
+          }
         }
       } else {
         console.warn(`No Telegram mapping for ${email}; logging best-guess category ${category}.`);
@@ -279,31 +308,46 @@ export const walletWebhook = onRequest(
     // charge and ask the user (via Telegram) to upload the receipt so it can be
     // split by category. Falls back to normal logging if we can't reach them.
     if (matchesSplitVendor(vendor, userSettings.splitReceiptVendors || [])) {
-      const chatId = resolveTelegramChatId(email);
+      const chatId = await resolvePromptChatId(email);
       if (chatId) {
+        let sent = false;
+        let store = null;
+        let id = null;
         try {
-          const store = createBotStore(getDb());
-          const _my = monthYearFromDateStr(txDate) || currentMonthYear();
-          const id = crypto.randomUUID();
-          await store.setJSON(`split_pending:${chatId}:${id}`, {
-            id,
-            vendor, amount, category,
-            txDate,
-            year: _my.year,
-            month: _my.month,
-            paymentMethod: card ?? '',
-            createdAt: new Date().toISOString(),
-          });
+          store = createBotStore(getDb());
+          id = crypto.randomUUID();
           await sendMessage(
             chatId,
             `🧾 ${vendor} charge of $${amount.toFixed(2)} detected.\n\n` +
             `Upload the receipt photo to split it by category, or tap SKIP to log it as a single ${category} expense.`,
             [[{ text: '⏭ SKIP (log as one expense)', callback_data: 'SKIP' }]]
           );
-          res.status(200).json({ ok: true, split: true, vendor, amount });
-          return;
+          sent = true;
         } catch (e) {
           await reportError('TG-001', e, { flow: 'split-prompt', vendor });
+        }
+        if (sent) {
+          try {
+            const _my = monthYearFromDateStr(txDate) || currentMonthYear();
+            await store.setJSON(`split_pending:${chatId}:${id}`, {
+              id,
+              vendor, amount, category,
+              txDate,
+              year: _my.year,
+              month: _my.month,
+              paymentMethod: card ?? '',
+              email, source,
+              createdAt: new Date().toISOString(),
+            });
+            res.status(200).json({
+              ok: true, split: true, vendor, amount,
+              message: msgSplitParked({ amount, vendor }),
+            });
+            return;
+          } catch (e) {
+            await reportError('TG-001', e, { flow: 'split-park', vendor, amount });
+            parkFailNote = `⚠️ Couldn't save that prompt — I'm logging it as a single ${category} expense instead.`;
+          }
         }
       } else {
         console.warn(`No Telegram mapping for ${email}; logging split vendor normally.`);
@@ -353,25 +397,30 @@ export const walletWebhook = onRequest(
       });
     } catch (e) {
       if (e.message?.includes('No sheet found for month')) {
-        res.status(422).json({ ok: false, code: 'SHT-002', error: 'month_not_found', monthName });
+        res.status(422).json({ ok: false, code: 'SHT-002', error: 'month_not_found', monthName, message: msgNoSheet(monthName) });
         return;
       }
       // WAL-002 is the single most important error in the system: the charge
       // arrived and is now lost unless it's re-entered by hand.
       await reportError('WAL-002', e, { vendor, amount, category, monthName, source });
-      res.status(500).json({ ok: false, code: 'WAL-002', error: 'Failed to write transaction' });
+      res.status(500).json({ ok: false, code: 'WAL-002', error: 'Failed to write transaction', message: msgWriteFailed({ amount, vendor }) });
       return;
     }
 
     // Only after the write succeeded — warning about a charge that never
     // landed would be worse than not warning at all.
-    if (dupNotice) {
-      const dupChatId = resolveTelegramChatId(email);
-      if (dupChatId) {
-        try {
-          await sendMessage(dupChatId, dupNotice);
-        } catch (e) {
-          console.warn('wallet-webhook: duplicate notice failed to send', e.message);
+    let dupNotified = false;
+    if (dupNotice || parkFailNote) {
+      const noteChatId = await resolvePromptChatId(email);
+      if (noteChatId) {
+        for (const text of [parkFailNote, dupNotice]) {
+          if (!text) continue;
+          try {
+            await sendMessage(noteChatId, text);
+            if (text === dupNotice) dupNotified = true;
+          } catch (e) {
+            console.warn('wallet-webhook: note failed to send', e.message);
+          }
         }
       }
     }
@@ -390,7 +439,7 @@ export const walletWebhook = onRequest(
             entry.subscription,
             JSON.stringify({
               title: 'Transaction Logged',
-              body: `Logged $${amount} at ${vendor} as ${category}`,
+              body: `Logged $${amount.toFixed(2)} at ${vendor} as ${category}`,
               url: '/',
             })
           );
@@ -403,6 +452,11 @@ export const walletWebhook = onRequest(
       }
     }
 
-    res.status(200).json({ ok: true, category, vendor, amount });
+    res.status(200).json({
+      ok: true, category, vendor, amount,
+      message: dupNotice
+        ? msgWrittenDuplicate({ amount, vendor, category, monthName, notified: dupNotified })
+        : msgWritten({ amount, vendor, card, category, monthName }),
+    });
   })
 );
