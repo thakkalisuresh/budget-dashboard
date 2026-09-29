@@ -7,6 +7,9 @@
  *
  *   node scripts/wallet-roundtrip.mjs --list          # dry: cases only, no network
  *   node scripts/wallet-roundtrip.mjs [--only a,b] [--pause 3] [--yes] [--json]
+ *   node scripts/wallet-roundtrip.mjs --raw "<pasted notification text>" [--raw-as-primary]
+ *       runs ONLY that text through the live webhook against the TEST sheet (same rails);
+ *       --raw-as-primary posts as the household primary so their card list resolves cards.
  *
  * Env (all read from the process environment; nothing is printed except the
  * last 4 chars of the sheet id):
@@ -17,7 +20,7 @@
  *   disabled-vendor cases, SPLIT_VENDOR, DISABLED_VENDOR.
  */
 import readline from 'node:readline/promises';
-import { validateConfig, buildCases, checkRails, keyFields, tail, FAR_FUTURE_DATE } from './lib/wallet-roundtrip-cases.mjs';
+import { validateConfig, buildCases, buildRawCase, checkRails, keyFields, tail, FAR_FUTURE_DATE } from './lib/wallet-roundtrip-cases.mjs';
 
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(n);
@@ -36,7 +39,15 @@ if (errors.length && !listOnly) {
   process.exit(2);
 }
 
-let cases = buildCases(cfg);
+let cases;
+try {
+  cases = opt('--raw', null) !== null
+    ? [buildRawCase(cfg, opt('--raw', ''), { useSettings: flag('--raw-as-primary') })]
+    : buildCases(cfg);
+} catch (e) {
+  console.error(e.message);
+  process.exit(2);
+}
 const only = opt('--only', '');
 if (only) {
   const ids = only.split(',').map(s => s.trim());

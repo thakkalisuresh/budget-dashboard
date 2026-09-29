@@ -246,6 +246,35 @@ export function buildCases(cfg, { today = new Date().toISOString().slice(0, 10) 
 }
 
 /**
+ * One case that posts a pasted REAL notification/SMS text (--raw). Same rails as
+ * every other case: sheetId is always the TEST copy, the email is the test email
+ * (or, with useSettings, the household primary so that person's card list resolves
+ * the card; the row still goes to the TEST copy). The expectation is descriptive:
+ * any well-formed answer passes, the point is to eyeball vendor/category/message.
+ */
+export function buildRawCase(cfg, text, { useSettings = false, today = new Date().toISOString().slice(0, 10) } = {}) {
+  const clean = String(text ?? '').trim();
+  if (!clean) throw new Error('--raw needs the notification text');
+  if (useSettings && !cfg.settingsEmail) throw new Error('--raw-as-primary needs PRIMARY_EMAIL and SETTINGS_EMAIL');
+  return {
+    id: 'raw_paste', title: 'pasted real text', emailKind: useSettings ? 'settings' : 'test', writes: true,
+    body: {
+      email: useSettings ? cfg.settingsEmail : cfg.testEmail,
+      sheetId: cfg.testSheetId,
+      source: SOURCE_TAG,
+      date: today,
+      text: clean,
+    },
+    expect: (res) => {
+      if (res.status !== 200 || !res.json?.ok) return fail(`expected 200 ok, got ${res.status} ${res.json?.code || ''}`);
+      if (res.json.skipped) return warn(`skipped: ${res.json.reason}${res.json.kind ? ` (${res.json.kind})` : ''}`);
+      if (isParked(res)) return warn('parked for a category: tap one in Telegram (writes to the TEST sheet)');
+      return pass();
+    },
+  };
+}
+
+/**
  * Safety rails, asserted over the whole case list before anything is sent.
  * Returns a list of violations (empty = safe).
  */

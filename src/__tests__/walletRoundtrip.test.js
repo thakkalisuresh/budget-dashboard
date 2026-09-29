@@ -2,7 +2,7 @@
 // script talks to LIVE production) and the per-case expectation logic.
 import { describe, it, expect } from 'vitest';
 import {
-  validateConfig, buildCases, checkRails, keyFields, FAR_FUTURE_DATE, SOURCE_TAG,
+  validateConfig, buildCases, buildRawCase, checkRails, keyFields, FAR_FUTURE_DATE, SOURCE_TAG,
 } from '../../scripts/lib/wallet-roundtrip-cases.mjs';
 
 const SHEET = 'x'.repeat(10) + 'TESTSHEET' + '1234';
@@ -138,5 +138,44 @@ describe('expectations', () => {
 
   it('keyFields is compact and omits the message', () => {
     expect(keyFields({ json: { ok: true, category: 'Misc', vendor: 'V', amount: 1, message: 'long', extra: 'x' } })).toBe('ok=true category=Misc vendor=V amount=1');
+  });
+});
+
+describe('--raw (pasted real text)', () => {
+  const cfg = cfgOf(withSettings);
+  const TEXT = '  Cafe Example, Portland, OR\n$9.41  ';
+
+  it('always carries the test sheetId, the test email and the roundtrip source; trims the text', () => {
+    const c = buildRawCase(cfg, TEXT);
+    expect(c.body).toMatchObject({ sheetId: SHEET, email: cfg.testEmail, source: SOURCE_TAG, text: 'Cafe Example, Portland, OR\n$9.41' });
+    expect(Object.keys(c.body).sort()).toEqual(['date', 'email', 'sheetId', 'source', 'text']);
+    expect(checkRails([c], cfg)).toEqual([]);
+  });
+
+  it('--raw-as-primary uses the settings email and still passes the rails; refuses without one', () => {
+    const c = buildRawCase(cfg, TEXT, { useSettings: true });
+    expect(c.body.email).toBe('me@example.com');
+    expect(c.body.sheetId).toBe(SHEET);
+    expect(checkRails([c], cfg)).toEqual([]);
+    expect(() => buildRawCase(cfgOf(), TEXT, { useSettings: true })).toThrow(/PRIMARY_EMAIL/);
+  });
+
+  it('rejects empty text', () => {
+    expect(() => buildRawCase(cfg, '   ')).toThrow(/needs the notification text/);
+  });
+
+  it('rails catch a raw case whose sheetId was dropped', () => {
+    const c = buildRawCase(cfg, TEXT);
+    delete c.body.sheetId;
+    expect(checkRails([c], cfg).join()).toContain('missing or wrong sheetId');
+  });
+
+  it('expectation is descriptive: written PASS, parked/skipped WARN, error FAIL', () => {
+    const c = buildRawCase(cfg, TEXT);
+    const r = (status, json) => ({ status, json });
+    expect(c.expect(r(200, { ok: true, category: 'Eating Out', message: '✅' })).verdict).toBe('PASS');
+    expect(c.expect(r(200, { ok: true, pendingCategory: true })).verdict).toBe('WARN');
+    expect(c.expect(r(200, { ok: true, skipped: true, reason: 'not_a_purchase', kind: 'otp' })).verdict).toBe('WARN');
+    expect(c.expect(r(400, { code: 'WAL-001' })).verdict).toBe('FAIL');
   });
 });
