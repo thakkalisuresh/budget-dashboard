@@ -611,3 +611,80 @@ describe('wallet-webhook — duplicate detection', () => {
     expect(telegramSend).not.toHaveBeenCalled();
   });
 });
+
+describe('wallet-webhook — non-purchase notifications (raw text)', () => {
+  const EMAIL = 'nair.sabarish97@gmail.com';
+  const NON_PURCHASES = [
+    ['declined', 'Your purchase of $23.10 at REAL-DEBRID was declined.'],
+    ['statement', 'Your Capital One statement is ready to view.'],
+    ['payment', 'Payment due: $250.00 due on Oct 3.'],
+    ['deposit', 'A deposit of $1,200.00 was posted to your checking account.'],
+    ['payment', 'Autopay payment of $250.00 was received. Thank you!'],
+    ['refund', 'A credit of $12.99 from Target was posted to your card.'],
+  ];
+
+  it.each(NON_PURCHASES)('skips a %s notification quietly: %s', async (kind, text) => {
+    extractMock.mockResolvedValue({ ok: true, data: {
+      store_name: null, total_amount: null, is_purchase: false, non_purchase_kind: kind,
+    } });
+    const res = await call(req({ body: { text, email: EMAIL } }));
+
+    expect(res.status).toBe(200);
+    expect(res.json).toMatchObject({ ok: true, skipped: true, reason: 'not_a_purchase', kind });
+    expect(res.json.message).toMatch(/not a purchase/i);
+    expect(appendMock).not.toHaveBeenCalled();
+    expect(reportErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('skips even when the model also invented a merchant and amount', async () => {
+    extractMock.mockResolvedValue({ ok: true, data: {
+      store_name: 'Capital One', total_amount: 250, is_purchase: false, non_purchase_kind: 'payment',
+    } });
+    const res = await call(req({ body: { text: 'Payment due', email: EMAIL } }));
+    expect(res.json.skipped).toBe(true);
+    expect(appendMock).not.toHaveBeenCalled();
+  });
+
+  it('asks the parser to detect non-purchases', async () => {
+    await call(req({ body: { text: 'Little Oddfellows $17.58', email: EMAIL } }));
+    expect(extractMock).toHaveBeenCalledWith('Little Oddfellows $17.58', { detectNonPurchase: true });
+  });
+
+  it.each([
+    ['Amex Wallet', 'Little Oddfellows, Portland, OR $17.58', 'Little Oddfellows', 17.58],
+    ['Capital One', 'Your purchase for $23.10 at REAL-DEBRID*17886754 was approved.', 'REAL-DEBRID*17886754', 23.10],
+  ])('still logs a real %s purchase (is_purchase true)', async (_n, text, store, amt) => {
+    extractMock.mockResolvedValue({ ok: true, data: {
+      store_name: store, total_amount: amt, reward_category: 'Misc', is_purchase: true, non_purchase_kind: null,
+    } });
+    const res = await call(req({ body: { text, email: EMAIL, sheetId: 'sheet-abc' } }));
+    expect(res.status).toBe(200);
+    expect(res.json.skipped).toBeUndefined();
+    expect(appendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('still logs when the flag is missing (fail open)', async () => {
+    extractMock.mockResolvedValue({ ok: true, data: { store_name: 'Costco', total_amount: 89.5, reward_category: 'Grocery' } });
+    const res = await call(req({ body: { text: 'Costco $89.50', email: EMAIL, sheetId: 'sheet-abc' } }));
+    expect(res.status).toBe(200);
+    expect(appendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('structured posts never consult the purchase flag', async () => {
+    extractMock.mockResolvedValue({ ok: true, data: { reward_category: 'Grocery', store_name: 'Costco', is_purchase: false, non_purchase_kind: 'other' } });
+    const res = await call(req({ body: validBody }));
+    expect(res.status).toBe(200);
+    expect(res.json.skipped).toBeUndefined();
+    expect(appendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a purchase with an unreadable amount still raises WAL-001', async () => {
+    extractMock.mockResolvedValue({ ok: true, data: {
+      store_name: 'Costco', total_amount: null, is_purchase: true, non_purchase_kind: null,
+    } });
+    const res = await call(req({ body: { text: 'Costco purchase approved', email: EMAIL } }));
+    expect(res.status).toBe(400);
+    expect(res.json.code).toBe('WAL-001');
+    expect(reportErrorMock).toHaveBeenCalledWith('WAL-001', expect.any(Error), expect.objectContaining({ field: 'amount' }));
+  });
+});
