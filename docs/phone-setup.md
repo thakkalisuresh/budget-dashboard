@@ -166,7 +166,7 @@ then **Show notification** with the raw *Contents of URL*.
 
 Once the Capital One / Amex / Chase notification automations work:
 
-1. Shortcuts → Automation → Wallet Logger → tap the "Bilt Blue Card and 6 more" pill and **deselect the other six cards**, leaving only *Bilt Blue Card*. (List the seven cards first; any card that is not in your Fundient settings would resolve to its raw Wallet name.)
+1. Shortcuts → Automation → Wallet Logger → tap the "Bilt Blue Card and 6 more" pill and **deselect the other six cards**, leaving only *Bilt Blue Card*. (The seventh card in the list is Apple Cash, added by default; it goes away with this step. Structured posts skip the server's non-purchase check, so an Apple Cash transfer would otherwise look like a purchase.)
 2. Optional but recommended: before **Show notification** add **Get Dictionary Value** (key `message`, from *Contents of URL*) and show that instead of the raw JSON. Structured posts keep working.
 3. The `card` value is the Wallet card name ("Bilt Blue Card" presumably). Confirm the exact text by running the Shortcut once and check it maps to the Fundient card name.
 4. One real Bilt purchase: it should land once, on Bilt Blue.
