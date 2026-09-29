@@ -542,23 +542,102 @@ describe('wallet-webhook — LLM category correction', () => {
     expect(appendMock).not.toHaveBeenCalled();
   });
 
-  it('writes without asking when extraction fails but Groq is confident', async () => {
+  it('writes without asking when extraction fails but Groq is at the top anchor', async () => {
     extractMock.mockResolvedValue({ ok: false });
-    groqSays('Eating Out', 0.9);
-    await call(req({ body: validBody }));
+    groqSays('Eating Out', 1);
+    await call(req({ body: { ...validBody, merchant: 'Chipotle' } }));
 
     expect(appendMock).toHaveBeenCalledOnce();
     expect(appendMock.mock.calls[0][0].category).toBe('Eating Out');
     expect(telegramSend).not.toHaveBeenCalled();
   });
 
-  it('a really extracted Misc that Groq agrees with is still written silently', async () => {
-    // beforeEach extractor says reward_category: 'Misc'.
-    groqSays('Misc', 0.3);
-    await call(req({ body: validBody }));
+  it('asks when Groq is at 0.8 and writes at 0.9', async () => {
+    extractMock.mockResolvedValue({ ok: true, data: { reward_category: 'Travel', store_name: 'Avis' } });
+    groqSays('Travel', 0.8);
+    const asked = await call(req({ body: { ...validBody, merchant: 'Avis' } }));
+    expect(asked.json).toMatchObject({ ok: true, pendingCategory: true });
+    expect(appendMock).not.toHaveBeenCalled();
 
+    groqSays('Travel', 0.9);
+    await call(req({ body: { ...validBody, merchant: 'Avis', amount: '91.20' } }));
     expect(appendMock).toHaveBeenCalledOnce();
-    expect(telegramSend).not.toHaveBeenCalled();
+  });
+
+  it('always asks about a split-receipt vendor, even when Groq is sure', async () => {
+    extractMock.mockResolvedValue({ ok: true, data: { reward_category: 'Grocery', store_name: 'Costco Wholesale' } });
+    groqSays('Grocery', 1);
+    const res = await call(req({ body: validBody }));
+
+    expect(res.json).toMatchObject({ ok: true, pendingCategory: true });
+    expect(appendMock).not.toHaveBeenCalled();
+  });
+
+  it('asks about a really extracted Misc that Groq also says, the weakest agreement', async () => {
+    // beforeEach extractor says reward_category: 'Misc'.
+    groqSays('Misc', 1);
+    const res = await call(req({ body: validBody }));
+
+    expect(res.json).toMatchObject({ ok: true, pendingCategory: true });
+    expect(appendMock).not.toHaveBeenCalled();
+    expect(telegramSend).toHaveBeenCalledOnce();
+  });
+
+  describe('vendor history', () => {
+    const prevRow = { vendor: 'Chipotle', category: 'Eating Out', amount: 12 };
+
+    beforeEach(() => {
+      sheetIdMock.mockImplementation(async (m) => (m === 'April 2026' ? 'prev-sheet' : 'resolved-month-sheet'));
+      groqSays('Misc', 0.3);   // would ask, if history did not settle it first
+    });
+
+    it('files a repeat vendor under last month\'s category without asking or calling the LLM', async () => {
+      recentMock.mockImplementation(async (id) => (id === 'prev-sheet' ? [prevRow] : []));
+      const res = await call(req({ body: validBody }));
+
+      expect(res.json).toMatchObject({ ok: true });
+      expect(appendMock.mock.calls[0][0].category).toBe('Eating Out');
+      expect(groqFetch).not.toHaveBeenCalled();
+      expect(telegramSend).not.toHaveBeenCalled();
+    });
+
+    it('uses this month\'s rows too, and reads them only once', async () => {
+      recentMock.mockImplementation(async (id) => (id === 'sheet-abc' ? [prevRow] : []));
+      await call(req({ body: validBody }));
+
+      expect(appendMock.mock.calls[0][0].category).toBe('Eating Out');
+      expect(recentMock.mock.calls.filter(c => c[0] === 'sheet-abc')).toHaveLength(1);
+    });
+
+    it('asks when the vendor was filed under different categories', async () => {
+      recentMock.mockImplementation(async (id) => (id === 'sheet-abc'
+        ? [prevRow, { vendor: 'Chipotle', category: 'Grocery' }] : []));
+      groqSays('Eating Out', 1);
+      const res = await call(req({ body: validBody }));
+
+      expect(res.json).toMatchObject({ ok: true, pendingCategory: true });
+      expect(appendMock).not.toHaveBeenCalled();
+    });
+
+    it('fails open when last month has no sheet', async () => {
+      sheetIdMock.mockImplementation(async (m) => {
+        if (m === 'April 2026') throw new Error('No sheet found for month');
+        return 'resolved-month-sheet';
+      });
+      groqSays('Eating Out', 1);
+      await call(req({ body: validBody }));
+
+      expect(appendMock.mock.calls[0][0].category).toBe('Eating Out');
+    });
+
+    it('fails open when the sheet read throws, and still checks for duplicates by retrying', async () => {
+      recentMock.mockRejectedValue(new Error('sheets down'));
+      groqSays('Eating Out', 1);
+      const res = await call(req({ body: validBody }));
+
+      expect(res.json).toMatchObject({ ok: true });
+      expect(appendMock).toHaveBeenCalledOnce();
+    });
   });
 
   it('a smart rule wins outright and never calls the LLM', async () => {

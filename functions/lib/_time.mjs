@@ -60,6 +60,14 @@ export function monthNameFromDateStr(dateStr) {
   return my ? `${my.month} ${my.year}` : null;
 }
 
+/** "August 2026" for "September 2026" (and "December 2026" for "January 2027"), or null. */
+export function previousMonthName(monthName) {
+  const [month, year] = String(monthName || '').trim().split(/\s+/);
+  const idx = MONTH_NAMES.indexOf(month);
+  if (idx < 0 || !/^\d{4}$/.test(year)) return null;
+  return idx === 0 ? `${MONTH_NAMES[11]} ${Number(year) - 1}` : `${MONTH_NAMES[idx - 1]} ${year}`;
+}
+
 /**
  * The month to file a transaction under: the transaction's own date when we have
  * one (device-local date the client sent), otherwise "now" in APP_TZ. Returns
