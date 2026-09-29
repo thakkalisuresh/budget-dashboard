@@ -158,9 +158,10 @@ Rollback: switch the automation off (or delete it). Delete any wrongly logged ro
 
 ### B. Per issuer
 
-- **Capital One** (`source: ios-notif-capone`). The app's notification names the card in-body and the merchant can be ugly (`REAL-DEBRID*…`); the server normalizes it. App: Capital One.
-  Foreign purchases: the Capital One **app** notification is in USD and exact, while the Wallet notification shows the native currency (€16.00) and is converted at an estimated rate (see `wallet-ingestion.md`, *Foreign currency*). Prefer the app automation for this card.
-- **Amex** (`source: ios-notif-amex`). Amex has no purchase notifications of its own; the notification comes from **Wallet** (for taps and for online purchases). Trigger: app = Wallet, Add Filter → Title contains "American Express" (check the real title first; the Wallet pieces may be Title = issuer, Subtitle = merchant, Body = amount, which is why the Text action joins all three). Capture a real Wallet Amex notification (tap and, ideally, online) and check it with `--raw --card` before building.
+- **Capital One** (`source: ios-notif-capone`). Trigger: app = **Capital One**. The app's notification is titled with the card ("Quicksilver Credit Card") and reads "Your purchase for $17.68 at YouTube was approved." (dollars, readable merchant; sometimes `REAL-DEBRID*…`, which the server normalizes). Send the Title as `card`; the server maps "Quicksilver Credit Card" to the held Capital One card.
+  **Capital One can notify twice for one purchase.** An online purchase from a foreign merchant produced, in the same minute, the app notification (`$18.26 at REAL-DEBRID*…`, USD) **and** a Wallet-badged one ("Capital One Mobile / Xt Network Sas / €16.00", native currency, operator name). **Decision: automate only the Capital One app notification.** Never build an automation on the Wallet-badged "Capital One Mobile" one: the two amounts differ, so the 2-minute duplicate guard would not catch the second post.
+  *Watch item:* if you ever see a charge that produced **only** the Wallet-badged notification (no app banner), note the merchant and time and report it; that is the case that would make us revisit this decision. Foreign-currency amounts are converted to dollars by the server.
+- **Amex** (`source: ios-notif-amex`). Amex has no purchase notifications of its own; they come from **Wallet** (for taps, and for online purchases), grouped under "Wallet" with the Amex logo. Observed layout: Title **American Express**; then the merchant line (`Little Oddfellows, Seattle, WA`, sometimes only `Mcdonalds`, long names shortened with "…" in the stack, the full text is in the notification body); then the amount (`$17.58`). Trigger: app = **Wallet**, Add Filter → **Title contains "American Express"** (so other Wallet notifications do not fire it). Text = Title, Subtitle, Body joined (Subtitle may be empty); `card` = Title (the server resolves "American Express" to the single held Amex card). A foreign-currency Wallet amount is converted to dollars by the server. Check a real one with `--raw --card "American Express"` before building.
 - **Chase**: no automation. The Chase app sends no notifications on the iPhone, so nothing can be forwarded. The old Wallet Logger keeps covering Chase card taps.
 
 ### C. Old "Wallet Logger" Shortcut: final card list
@@ -246,13 +247,31 @@ so do it in one sitting with both phones to hand. Nothing here contains a secret
 
 ## Cutover checklist
 
-- [ ] Real text captured per source and pasted through `--raw`; parse looks right
-- [ ] Capital One: test mode proven (locked-phone too) → live → old Shortcut still fine
-- [ ] Amex: same
-- [ ] Old Shortcut reduced to Bilt + the 3 Chase cards (Capital One, Amex, Apple Cash removed after their automations are live)
-- [ ] Android wallet flow: header set, test mode → live
-- [ ] Android Chase SMS flow: test mode → live
+Per source, in this order (one source at a time; the old Wallet Logger is edited only after the matching automation is live and you confirm):
+
+**Capital One (app notification)**
+- [ ] Real text pasted through `--raw --card "Quicksilver Credit Card"`: amount, vendor, card `Capital One Quicksilver`
+- [ ] Test mode (alias email + test `sheetId`): a real notification lands in the test copy; banner shows the ✅/🤔 message
+- [ ] **Locked-phone test:** a real notification while the phone is locked and the screen is off still runs the automation (note the result here)
+- [ ] Go live: delete `sheetId`, set `email` to the phone owner; one real charge lands **once** in the real sheet
+- [ ] Only then remove Capital One (and Apple Cash) from the old Wallet Logger's card list
+
+**Amex (Wallet notification)**
+- [ ] Real text (a tap, ideally also an online purchase) through `--raw --card "American Express"`
+- [ ] Test mode, locked-phone test, go live as above (`source: ios-notif-amex`)
+- [ ] Only then remove Amex from the old Wallet Logger's card list
+
+**Old Wallet Logger**
+- [ ] Final list is Bilt Blue Card + the three Chase cards; optionally show `message` in the banner
+- [ ] One real Bilt purchase and one Chase purchase still land once
+
+**Android (her phone)**
+- [ ] Wallet flow: header set, test mode → live
+- [ ] Chase-SMS flow: test mode → live
 - [ ] Battery settings done; heartbeat visible in Firestore `wallet_activity`
+
+**Finish**
+- [ ] Watch item reviewed (a Capital One charge with only the Wallet-badged notification?)
 - [ ] Test-email `wallet_activity` docs deleted; test copy sheet deleted
 - [ ] Webhook key rotated (see *Rotating the webhook key*) and every phone updated
 
