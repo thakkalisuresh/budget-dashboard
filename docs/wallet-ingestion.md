@@ -30,6 +30,7 @@ from the parsed text, so the two can be combined.
 | `merchant` | one of `merchant` / `text` | Merchant/vendor name. |
 | `text` | one of `merchant` / `text` | Raw notification / SMS / email body. The backend LLM parser pulls out merchant, amount, card and date. Preferred for notification & SMS triggers — no fragile on-device regex. |
 | `amount` | recommended | Number or string (`"$1,234.56"` is accepted). Parsed from `text` if omitted. Rounded to cents once on arrival, so float noise like `17.579999999999998` becomes `17.58` everywhere (sheet, message, dedup, push). |
+| `currency` | optional | 3-letter ISO code (`EUR`, `GBP`, `INR`…) of `amount`. Omit for dollars. A symbol or code inside the `amount` string (`"€16.00"`, `"16.00 EUR"`) is detected the same way. See *Foreign currency*. |
 | `card` | optional | Card / payment method. Resolved against the user's card list (falls back to the raw string if nothing matches). Parsed from `text` if omitted. |
 | `date` | optional | `YYYY-MM-DD`. **Send the device's local date.** If omitted, the current day in `APP_TZ` (default America/Los_Angeles) is used. This is what files the charge under the right month. |
 | `sheetId` | optional | Force a specific month sheet, bypassing the `Months` registry. Normally omit — the month is derived from `date`. A stale hardcoded `sheetId` writes to that sheet even when the `date` belongs to another month (the `message` still names the transaction's month). |
@@ -57,6 +58,7 @@ Every response body includes a one-line `message` (an emoji-led sentence) meant 
 | `401 AUTH-002` | ❌ | Bad or missing secret. |
 | `405` | — | Not a POST. |
 | `422 SHT-002 month_not_found` | ⚠️ | No month sheet for the resolved month. Create the month in the dashboard first. |
+| `502 WAL-008 currency_conversion_failed` | ⚠️ | A non-USD charge whose exchange rate could not be looked up (or whose currency code is unknown). **Not logged**; the primary gets a Telegram note. See *Foreign currency*. |
 | `500 WAL-002` | ❌ | The charge parsed but the sheet write failed (the one error worth alerting on — the charge is otherwise lost). |
 
 The `message` copy lives in `functions/lib/_wallet-messages.mjs`.
@@ -72,6 +74,14 @@ Every Telegram message from this endpoint (category prompts, split prompts, dupl
 ### Duplicate guard
 
 One tap-to-pay can fire two sources (Wallet notification + issuer app, Samsung Wallet + bank SMS). The key is the requesting email plus the exact cents; the merchant string is only a hint because sources word it differently. The first request claims the key (Firestore `bot_state`, `wdup:` docs); a second inside **2 minutes** is skipped with `duplicate_recent` and the primary gets a Telegram note with a "➕ Log it anyway" button (`DUPLOG`, blob kept 24h). Tapping it logs the skipped charge. A claim that never settled is taken over after 30 seconds, and a failed write releases its claim so a retry can log. The check runs after category resolution and before the park / split / write steps, so a **parked** charge counts too (no second prompt). If the guard itself errors it fails open, the charge is logged and `WAL-005` is reported. This is separate from the ±3-day History check, which never blocks: it logs the charge and adds the ⚠️ note.
+
+### Foreign currency
+
+Apple Wallet shows a transaction in its **native** currency ("€16.00"), and Amex has no app notification for this, so the webhook converts to USD before anything else. The currency comes from an explicit `currency` field, else from the parser (raw `text`, when the amount came from it), else from a symbol or code in a structured `amount` string. Conversion uses `convertToUSD` (`functions/lib/_currency.mjs`, open.er-api.com, 5-minute cache), and the result is rounded to cents once. Every later step (validation, categorization, the duplicate guard, the sheet write, the push) sees the dollar amount, so the duplicate guard keys on the **converted** cents. USD, `$` and a bare number behave exactly as before.
+
+- **A converted amount is an estimate.** The bank's actual rate and foreign-transaction fee differ by a few percent. The Capital One **app** notification is in USD and exact, so it is the preferred source for that card; the two copies of one charge rarely dedupe: the 2-minute guard needs the same exact cents (an estimate usually differs from the bank's figure) and the History check needs a similar merchant name (`Xt Network Sas` vs `REAL-DEBRID*…`). If both automations are live for a card, expect both rows and delete the Wallet estimate; the better fix is to leave that card's Wallet automation off.
+- The `message` and the Telegram prompts show the original: `✅ $18.33 at Xt Network Sas (€16.00 converted at 0.873) on Capital One Quicksilver → Misc. …` (the rate is units of the original currency per USD). Response keys and status codes are unchanged; `message` is additive.
+- **If the conversion fails** (rate service down, unknown code) the charge is **not logged**: `502 { ok: false, code: 'WAL-008', error: 'currency_conversion_failed', message }` with "⚠️ Couldn't convert €16.00 to dollars — nothing was logged. Add it by hand.", the failure goes to the error digest, and the household primary gets the same note on Telegram. No duplicate-guard claim is taken, so a retry (or the USD app notification) can still log. There is deliberately no stale-rate fallback.
 
 ## iOS 27 "notification received" automation (when it ships)
 

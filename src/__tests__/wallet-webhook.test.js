@@ -15,8 +15,9 @@ vi.mock('firebase-admin/firestore', () => ({
 vi.stubEnv('WALLET_WEBHOOK_SECRET', 'test-wallet-secret');
 
 // Shared mock state (hoisted so the vi.mock factories can close over it).
-const { activityMock, extractMock, appendMock, sheetIdMock, webpushSend, getSettingsMock, telegramSend, splitStore, ctl, recentMock, reportErrorMock } = vi.hoisted(() => ({
+const { activityMock, extractMock, appendMock, sheetIdMock, webpushSend, getSettingsMock, telegramSend, splitStore, ctl, recentMock, reportErrorMock, convertMock } = vi.hoisted(() => ({
   activityMock: vi.fn(async () => {}),
+  convertMock: vi.fn(),
   reportErrorMock: vi.fn(async () => {}),
   recentMock: vi.fn(async () => []),
   extractMock: vi.fn(),
@@ -43,6 +44,8 @@ vi.mock('../../functions/lib/_extraction.mjs', () => ({
   extractTransactionText: extractMock,
   CATEGORIES: ['Grocery', 'Eating Out', 'Misc', 'Travel', 'Entertainment', 'Health', 'Utilities'],
 }));
+// Live FX rates are a network call; the webhook only ever calls this for a non-USD charge.
+vi.mock('../../functions/lib/_currency.mjs', () => ({ convertToUSD: (...args) => convertMock(...args) }));
 vi.mock('../../functions/lib/_sheets.mjs', () => ({
   appendExpense: appendMock,
   getCurrentMonthSheetId: sheetIdMock,
@@ -147,6 +150,13 @@ beforeEach(() => {
   recentMock.mockReset().mockResolvedValue([]);
   reportErrorMock.mockReset().mockResolvedValue(undefined);
   activityMock.mockReset().mockResolvedValue(undefined);
+  // Units per USD, same shape as the real converter (amount / rate, rounded to cents).
+  const RATES = { EUR: 0.873, GBP: 0.75, INR: 83.2 };
+  convertMock.mockReset().mockImplementation(async (amount, currency) => {
+    const rate = RATES[currency];
+    if (!rate) throw new Error(`Unknown currency: ${currency}`);
+    return { amount: Math.round((amount / rate) * 100) / 100, rate, original: amount, originalCurrency: currency };
+  });
   splitStore.data.clear();
   fakeDb.docs.clear();
   fakeDb.state.failTransactions = false;
@@ -1277,5 +1287,219 @@ describe('wallet-webhook — heartbeat (last activity per email)', () => {
     expect(res.status).toBe(200);
     expect(res.json.ok).toBe(true);
     expect(appendMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+/* ── Foreign-currency charges: converted to USD before anything downstream ── */
+
+describe('wallet-webhook — foreign currency', () => {
+  const PRIMARY = 'nair.sabarish97@gmail.com';
+  const xt = { store_name: 'Xt Network Sas', total_amount: 16, currency: 'EUR', reward_category: 'Misc', is_purchase: true, payment_method: 'Capital One Quicksilver' };
+  const rawBody = { text: 'Capital One Mobile\nXt Network Sas\n€16.00', email: PRIMARY, sheetId: 'sheet-abc', date: '2026-09-12' };
+
+  beforeEach(() => {
+    vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-bot-token');
+    vi.stubEnv('TELEGRAM_EMAIL_MAP', `${PRIMARY}:111222333`);
+    vi.stubEnv('HOUSEHOLD_PRIMARY_EMAIL', PRIMARY);
+    getSettingsMock.mockResolvedValue({ llmCategorize: false });
+    extractMock.mockResolvedValue({ ok: true, data: xt });
+  });
+
+  it('raw text in EUR is converted before the write; message shows the original', async () => {
+    const res = await call(req({ body: rawBody }));
+    expect(res.status).toBe(200);
+    expect(convertMock).toHaveBeenCalledWith(16, 'EUR');
+    expect(appendMock.mock.calls[0][0].amount).toBe(18.33);
+    expect(res.json.amount).toBe(18.33);
+    expect(res.json.message).toBe('✅ $18.33 at Xt Network Sas (€16.00 converted at 0.873) on Capital One Quicksilver → Misc. Added to your September 2026 budget in Fundient.');
+  });
+
+  it('response keys are unchanged (message stays additive)', async () => {
+    const res = await call(req({ body: rawBody }));
+    expect(Object.keys(res.json).sort()).toEqual(['amount', 'category', 'message', 'ok', 'vendor']);
+  });
+
+  it.each([
+    ['GBP', 12.5, '£12.50', 16.67, 0.75],
+    ['INR', 1000, '₹1000.00', 12.02, 83.2],
+  ])('raw text in %s converts (%s → %s)', async (currency, total, shown, usd, rate) => {
+    extractMock.mockResolvedValue({ ok: true, data: { ...xt, currency, total_amount: total } });
+    const res = await call(req({ body: rawBody }));
+    expect(convertMock).toHaveBeenCalledWith(total, currency);
+    expect(res.json.amount).toBe(usd);
+    expect(res.json.message).toContain(`(${shown} converted at ${rate.toFixed(3)})`);
+  });
+
+  it('a currency without a symbol shows as "16.00 CHF"', async () => {
+    convertMock.mockResolvedValueOnce({ amount: 17.5, rate: 0.914, original: 16, originalCurrency: 'CHF' });
+    extractMock.mockResolvedValue({ ok: true, data: { ...xt, currency: 'CHF' } });
+    const res = await call(req({ body: rawBody }));
+    expect(res.json.message).toContain('(16.00 CHF converted at 0.914)');
+  });
+
+  it('USD is untouched: no conversion call, no suffix', async () => {
+    extractMock.mockResolvedValue({ ok: true, data: { ...xt, total_amount: 18.26, currency: 'USD' } });
+    const res = await call(req({ body: rawBody }));
+    expect(convertMock).not.toHaveBeenCalled();
+    expect(res.json.amount).toBe(18.26);
+    expect(res.json.message).not.toMatch(/converted/);
+  });
+
+  it('a missing currency is USD', async () => {
+    extractMock.mockResolvedValue({ ok: true, data: { ...xt, currency: undefined } });
+    await call(req({ body: rawBody }));
+    expect(convertMock).not.toHaveBeenCalled();
+    expect(appendMock.mock.calls[0][0].amount).toBe(16);
+  });
+
+  it('re-rounds the converted amount once so float noise never reaches the sheet', async () => {
+    convertMock.mockResolvedValueOnce({ amount: 18.329999999999998, rate: 0.873, original: 16, originalCurrency: 'EUR' });
+    const res = await call(req({ body: rawBody }));
+    expect(appendMock.mock.calls[0][0].amount).toBe(18.33);
+    expect(res.json.amount).toBe(18.33);
+  });
+
+  describe('structured posts', () => {
+    const base = { merchant: 'Xt Network Sas', email: PRIMARY, sheetId: 'sheet-abc', date: '2026-09-12', card: 'Capital One Quicksilver' };
+    beforeEach(() => extractMock.mockResolvedValue({ ok: true, data: { reward_category: 'Misc', store_name: 'Xt Network Sas' } }));
+
+    it.each([
+      ['€16.00', 16, 'EUR'],
+      ['16.00 EUR', 16, 'EUR'],
+      ['£9.99', 9.99, 'GBP'],
+      ['₹1,000.00', 1000, 'INR'],
+      ['EUR 16.00', 16, 'EUR'],
+    ])('amount %s is detected as %s and converted', async (amount, n, currency) => {
+      const res = await call(req({ body: { ...base, amount } }));
+      expect(convertMock).toHaveBeenCalledWith(n, currency);
+      expect(res.status).toBe(200);
+      expect(appendMock.mock.calls[0][0].amount).toBe(res.json.amount);
+      expect(res.json.message).toMatch(/converted at/);
+    });
+
+    it('an explicit body currency converts a plain number', async () => {
+      const res = await call(req({ body: { ...base, amount: 16, currency: 'eur' } }));
+      expect(convertMock).toHaveBeenCalledWith(16, 'EUR');
+      expect(res.json.amount).toBe(18.33);
+    });
+
+    it.each(['$1,234.56', '89.50', 89.5, '17.579999999999998', 'USD 12.00', '$12.00 USD'])(
+      'USD-shaped amount %s behaves exactly as before (no conversion)', async (amount) => {
+        const res = await call(req({ body: { ...base, amount } }));
+        expect(convertMock).not.toHaveBeenCalled();
+        expect(res.status).toBe(200);
+        expect(res.json.message).not.toMatch(/converted/);
+      }
+    );
+
+    it('explicit currency USD is a no-op', async () => {
+      await call(req({ body: { ...base, amount: '16.00', currency: 'USD' } }));
+      expect(convertMock).not.toHaveBeenCalled();
+    });
+
+    it('a body amount wins over the text amount, and the text currency is not applied to it', async () => {
+      extractMock.mockResolvedValue({ ok: true, data: { ...xt } });
+      await call(req({ body: { ...base, amount: '20.00', text: 'Xt Network Sas €16.00' } }));
+      expect(convertMock).not.toHaveBeenCalled();
+      expect(appendMock.mock.calls[0][0].amount).toBe(20);
+    });
+
+    it('an unreadable amount is still WAL-001, not a conversion failure', async () => {
+      const res = await call(req({ body: { ...base, amount: '€', currency: 'EUR' } }));
+      expect(res.status).toBe(400);
+      expect(res.json.code).toBe('WAL-001');
+      expect(convertMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('conversion failure', () => {
+    const ONE = "⚠️ Couldn't convert €16.00 to dollars — nothing was logged. Add it by hand.";
+
+    it('rate lookup down: not logged, non-2xx, WAL-008, additive message, primary told on Telegram', async () => {
+      convertMock.mockRejectedValue(new Error('Currency API failed: 503'));
+      const res = await call(req({ body: rawBody }));
+      expect(res.status).toBe(502);
+      expect(res.json).toEqual({ ok: false, code: 'WAL-008', error: 'currency_conversion_failed', message: ONE });
+      expect(appendMock).not.toHaveBeenCalled();
+      expect(reportErrorMock).toHaveBeenCalledWith('WAL-008', expect.any(Error), expect.objectContaining({ currency: 'EUR', original: 16, vendor: 'Xt Network Sas' }));
+      const [chatId, text] = telegramSend.mock.calls.at(-1);
+      expect(chatId).toBe('111222333');
+      expect(text).toBe("⚠️ Couldn't convert €16.00 at Xt Network Sas to dollars — not logged. Add it by hand.");
+    });
+
+    it('unknown currency behaves the same', async () => {
+      extractMock.mockResolvedValue({ ok: true, data: { ...xt, currency: 'XYZ' } });
+      const res = await call(req({ body: rawBody }));
+      expect(res.status).toBe(502);
+      expect(res.json.code).toBe('WAL-008');
+      expect(res.json.message).toBe("⚠️ Couldn't convert 16.00 XYZ to dollars — nothing was logged. Add it by hand.");
+      expect(appendMock).not.toHaveBeenCalled();
+    });
+
+    it('never logs a guessed number: nothing reaches the sheet even with structured fields', async () => {
+      convertMock.mockRejectedValue(new Error('down'));
+      await call(req({ body: { merchant: 'Xt', amount: '€16.00', email: PRIMARY, sheetId: 'sheet-abc' } }));
+      expect(appendMock).not.toHaveBeenCalled();
+    });
+
+    it('does not take the duplicate-guard claim, so a retry can still log', async () => {
+      convertMock.mockRejectedValueOnce(new Error('down'));
+      await call(req({ body: rawBody }));
+      expect(fakeDb.docs.size).toBe(0);
+      const retry = await call(req({ body: rawBody }));
+      expect(retry.status).toBe(200);
+      expect(retry.json.skipped).toBeUndefined();
+      expect(appendMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('a Telegram failure does not change the response', async () => {
+      convertMock.mockRejectedValue(new Error('down'));
+      telegramSend.mockRejectedValue(new Error('telegram down'));
+      const res = await call(req({ body: rawBody }));
+      expect(res.status).toBe(502);
+      expect(res.json.code).toBe('WAL-008');
+    });
+
+    it('no Telegram mapping: still 502 with the message', async () => {
+      vi.stubEnv('TELEGRAM_EMAIL_MAP', 'someone-else@x.com:999');
+      vi.stubEnv('HOUSEHOLD_PRIMARY_EMAIL', '');
+      convertMock.mockRejectedValue(new Error('down'));
+      const res = await call(req({ body: rawBody }));
+      expect(res.status).toBe(502);
+      expect(telegramSend).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('duplicate guard keys on the converted cents', () => {
+    it('the same charge from the USD app notification is skipped as a duplicate', async () => {
+      const first = await call(req({ body: rawBody }));
+      expect(first.json.amount).toBe(18.33);
+      extractMock.mockResolvedValue({ ok: true, data: { store_name: 'REAL-DEBRID*17886754', total_amount: 18.33, currency: 'USD', reward_category: 'Misc', is_purchase: true } });
+      const second = await call(req({ body: { ...rawBody, text: 'Your purchase for $18.33 at REAL-DEBRID*17886754 was approved.' } }));
+      expect(second.json).toMatchObject({ skipped: true, reason: 'duplicate_recent', amount: 18.33 });
+      expect(appendMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('the skipped-duplicate message and Telegram note carry the original amount', async () => {
+      await call(req({ body: rawBody }));
+      const second = await call(req({ body: rawBody }));
+      expect(second.json.message).toContain('$18.33 at Xt Network Sas (€16.00 converted at 0.873) looks like');
+      expect(telegramSend.mock.calls.at(-1)[1]).toContain('Xt Network Sas · $18.33 (€16.00 converted at 0.873)');
+    });
+  });
+
+  it('split-receipt prompt shows the original amount', async () => {
+    getSettingsMock.mockResolvedValue({ llmCategorize: false, splitReceiptVendors: [{ name: 'Xt', patterns: ['xt network'] }] });
+    const res = await call(req({ body: rawBody }));
+    expect(res.json.split).toBe(true);
+    expect(telegramSend.mock.calls.at(-1)[1]).toContain('charge of $18.33 (€16.00 converted at 0.873) detected');
+    expect(res.json.message).toContain('$18.33 at Xt Network Sas (€16.00 converted at 0.873) —');
+  });
+
+  it('the possible-duplicate note shows the original amount', async () => {
+    recentMock.mockResolvedValue([{ vendor: 'Xt Network Sas', amount: 18.33, txDate: '2026-09-12', category: 'Misc' }]);
+    const res = await call(req({ body: rawBody }));
+    expect(telegramSend.mock.calls.at(-1)[1]).toContain('Xt Network Sas · $18.33 (€16.00 converted at 0.873)');
+    expect(res.json.message).toContain('(€16.00 converted at 0.873)');
   });
 });
