@@ -16,8 +16,7 @@
  * rules. Mirroring it here fixes that as a side effect of adding layer 2.
  */
 
-const GROQ_URL   = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = 'llama-3.3-70b-versatile';
+import { GROQ_URL, GROQ_TEXT_MODEL, groqParams, groqContent, reportGroqFailure } from './_groq.mjs';
 
 /**
  * Below this, the answer goes to the user instead of straight to the sheet.
@@ -73,8 +72,11 @@ export async function categorizeWithGroq(vendor, amount, categories, { fetchImpl
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: GROQ_MODEL,
-        max_tokens: 80,
+        model: GROQ_TEXT_MODEL,
+        ...groqParams(GROQ_TEXT_MODEL),
+        // Reasoning tokens count against this; 80 left a reasoning model with
+        // nothing to say. The answer itself is ~20 tokens.
+        max_tokens: 512,
         temperature: 0,
         response_format: { type: 'json_object' },
         messages: [
@@ -87,11 +89,12 @@ export async function categorizeWithGroq(vendor, amount, categories, { fetchImpl
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       console.warn('categorize: Groq API', err?.error?.message || res.status);
+      await reportGroqFailure(GROQ_TEXT_MODEL, res.status, err?.error);
       return null;
     }
 
     const data = await res.json();
-    const raw = data.choices?.[0]?.message?.content?.trim();
+    const raw = groqContent(data);
     if (!raw) return null;
 
     const parsed = JSON.parse(raw);

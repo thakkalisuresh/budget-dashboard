@@ -3,7 +3,7 @@
 > **Generated file — do not edit by hand.**
 > Source of truth: `functions/lib/_error-codes.mjs`. Regenerate with `npm run errdoc`.
 
-61 codes across 13 domains.
+62 codes across 13 domains.
 
 Codes appear wherever the failure surfaces: in the bot's reply, on the
 dashboard crash screen, in the wallet webhook response body, in Cloud Logging,
@@ -57,6 +57,7 @@ and in the daily Telegram digest.
 | [`LLM-001`](#llm-001) | degraded | Groq API error |
 | [`LLM-002`](#llm-002) | fatal | Agent API error |
 | [`LLM-003`](#llm-003) | degraded | Category suggestion unusable |
+| [`LLM-004`](#llm-004) | degraded | Groq model unavailable |
 | [`PUSH-001`](#push-001) | degraded | Push subscription change failed |
 | [`PUSH-002`](#push-002) | degraded | Push notification send failed |
 | [`MCP-001`](#mcp-001) | fatal | MCP tool call failed |
@@ -375,6 +376,14 @@ and in the daily Telegram digest.
 **Why it happens.** The model returned a category that is not one of the sheet tabs, so it was discarded.
 
 **What to do.** Informational. Repeated hits mean the category list sent in the prompt is out of sync with the sheet.
+
+### LLM-004
+
+**Groq model unavailable** · `degraded`
+
+**Why it happens.** Groq rejected the request as an unknown or inaccessible model (model_not_found, 404, or a 400), so the hardcoded model id has been retired, is not on this account, or the request uses a parameter the model rejects.
+
+**What to do.** List models with GET https://api.groq.com/openai/v1/models, then update the model constants in functions/lib/_groq.mjs. Until then categorization silently uses the extractor (no confirm prompts) and text extraction falls back to Gemini.
 
 ## PUSH — Web push notifications
 
