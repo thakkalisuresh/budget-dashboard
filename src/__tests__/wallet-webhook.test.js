@@ -592,7 +592,7 @@ describe('wallet-webhook — LLM category correction', () => {
     });
 
     it('files a repeat vendor under last month\'s category without asking or calling the LLM', async () => {
-      recentMock.mockImplementation(async (id) => (id === 'prev-sheet' ? [prevRow] : []));
+      recentMock.mockImplementation(async (id) => (id === 'prev-sheet' ? [prevRow, prevRow] : []));
       const res = await call(req({ body: validBody }));
 
       expect(res.json).toMatchObject({ ok: true });
@@ -601,8 +601,17 @@ describe('wallet-webhook — LLM category correction', () => {
       expect(telegramSend).not.toHaveBeenCalled();
     });
 
+    it('does not let one prior row settle the category: falls through to Groq', async () => {
+      recentMock.mockImplementation(async (id) => (id === 'prev-sheet' ? [prevRow] : []));
+      const res = await call(req({ body: validBody }));
+
+      expect(groqFetch).toHaveBeenCalled();
+      expect(res.json).toMatchObject({ ok: true, pendingCategory: true });   // Groq says Misc 0.3
+      expect(appendMock).not.toHaveBeenCalled();
+    });
+
     it('uses this month\'s rows too, and reads them only once', async () => {
-      recentMock.mockImplementation(async (id) => (id === 'sheet-abc' ? [prevRow] : []));
+      recentMock.mockImplementation(async (id) => (id === 'sheet-abc' ? [prevRow, prevRow] : []));
       await call(req({ body: validBody }));
 
       expect(appendMock.mock.calls[0][0].category).toBe('Eating Out');

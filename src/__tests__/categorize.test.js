@@ -270,7 +270,17 @@ describe('categoryFromHistory', () => {
 
   it('takes the category of a single prior filing', () => {
     expect(categoryFromHistory('SAFEWAY', [row('Safeway', 'Grocery')], CATEGORIES))
-      .toEqual({ category: 'Grocery', count: 1, agree: true });
+      .toEqual({ category: 'Grocery', count: 1, agree: true, supported: false });
+  });
+
+  it('needs two agreeing rows, or three for an always-ask vendor, before it is supported', () => {
+    // One trip purchase must not pin a category for good.
+    const two = (v, c) => [row(v, c), row(v, c)];
+    expect(categoryFromHistory('Safeway', two('Safeway', 'Grocery'), CATEGORIES).supported).toBe(true);
+    expect(categoryFromHistory('Walmart', two('Walmart', 'Holiday'), CATEGORIES.concat('Holiday')))
+      .toMatchObject({ agree: true, supported: false });
+    expect(categoryFromHistory('Walmart', [...two('Walmart', 'Grocery'), row('Walmart', 'Grocery')], CATEGORIES))
+      .toMatchObject({ agree: true, supported: true });
   });
 
   it('matches store numbers, truncation and extra words on the same vendor', () => {
@@ -310,7 +320,10 @@ describe('categoryFromHistory', () => {
 
 describe('resolveCategory with history', () => {
   const settings = { smartRules: [{ pattern: 'avis', category: 'Travel' }] };
-  const history = [{ vendor: 'Avis Car Rental', category: 'Health' }, { vendor: 'Petrol', category: 'Misc' }];
+  const history = [
+    { vendor: 'Avis Car Rental', category: 'Health' },
+    { vendor: 'Petrol', category: 'Misc' }, { vendor: 'Petrol', category: 'Misc' },
+  ];
 
   it('uses the vendor\'s prior filing without calling the LLM or asking', async () => {
     const out = await resolveCategory({
@@ -344,6 +357,40 @@ describe('resolveCategory with history', () => {
       categories: CATEGORIES, settings: {}, history, enabled: false,
     });
     expect(out).toMatchObject({ category: 'Misc', source: 'history' });
+  });
+
+  it('does not let a single prior row skip the prompt for an always-ask vendor', async () => {
+    // One Hawaii-trip Walmart row filed as Holiday must not pin Walmart forever.
+    mockFetch.mockResolvedValue(groqReply('{"category":"Grocery","confidence":1}'));
+    const out = await resolveCategory({
+      vendor: 'WALMART SUPERCENTER', amount: 41, extractedCategory: null,
+      categories: [...CATEGORIES, 'Holiday'], settings: {},
+      history: [{ vendor: 'Walmart', category: 'Holiday' }],
+    });
+    expect(mockFetch).toHaveBeenCalled();
+    expect(out).toMatchObject({ category: 'Grocery', source: 'llm', needsConfirm: true });
+  });
+
+  it('lets three agreeing rows settle an always-ask vendor, but not two', async () => {
+    const rows = (n) => Array.from({ length: n }, () => ({ vendor: 'Target', category: 'Misc' }));
+    mockFetch.mockResolvedValue(groqReply('{"category":"Grocery","confidence":1}'));
+    const two = await resolveCategory({
+      vendor: 'Target', amount: 20, extractedCategory: null, categories: CATEGORIES, settings: {}, history: rows(2),
+    });
+    expect(two).toMatchObject({ source: 'llm', needsConfirm: true });
+    const three = await resolveCategory({
+      vendor: 'Target', amount: 20, extractedCategory: null, categories: CATEGORIES, settings: {}, history: rows(3),
+    });
+    expect(three).toMatchObject({ category: 'Misc', source: 'history', needsConfirm: false });
+  });
+
+  it('with one prior row an ordinary vendor goes through the threshold, not straight to history', async () => {
+    mockFetch.mockResolvedValue(groqReply('{"category":"Eating Out","confidence":0.7}'));
+    const out = await resolveCategory({
+      vendor: 'Chipotle', amount: 14, extractedCategory: null, categories: CATEGORIES, settings: {},
+      history: [{ vendor: 'Chipotle', category: 'Grocery' }],
+    });
+    expect(out).toMatchObject({ category: 'Eating Out', source: 'llm', needsConfirm: true });
   });
 
   it('falls through to the LLM for a vendor with no history', async () => {
@@ -389,7 +436,7 @@ describe('always-ask vendors', () => {
 
     const byHistory = await resolveCategory({
       vendor: 'Target', amount: 50, extractedCategory: null, categories: CATEGORIES, settings: {},
-      history: [{ vendor: 'Target', category: 'Misc' }],
+      history: Array.from({ length: 3 }, () => ({ vendor: 'Target', category: 'Misc' })),
     });
     expect(byHistory).toMatchObject({ category: 'Misc', source: 'history', needsConfirm: false });
   });
