@@ -14,10 +14,14 @@ paste it into chat, screenshots or this repo.
 ## The endpoint, header, body
 
 ```
-POST https://<webhook host>/api/wallet
-Authorization: Bearer <WALLET_WEBHOOK_SECRET>
+POST https://<dashboard hosting domain>/api/wallet
+X-API-Key: <WALLET_WEBHOOK_SECRET>
 Content-Type: application/json
 ```
+
+Use the same hosting-domain URL and the same `X-API-Key` header the old Shortcut
+already uses (copy the header from it). The server also accepts
+`Authorization: Bearer <secret>`; either works, pick one per automation.
 
 ```json
 { "text": "<the notification text>", "email": "<phone owner's email>", "source": "<tag>" }
@@ -54,7 +58,7 @@ Every response has a `message`; show **only** that. Full table: `wallet-ingestio
 | Duplicate within 2 minutes | ⏭ | skipped, Telegram note with "Log it anyway" |
 | Could not read amount | ⚠️ | nothing logged |
 | No sheet for the month | ⚠️ | create the month in the dashboard |
-| Bad or missing secret | ❌ | check the Authorization header |
+| Bad or missing secret | ❌ | check the `X-API-Key` / Authorization header |
 | Save failed | ❌ | the charge was NOT logged: enter it by hand |
 
 ## Cutover order (safe, one automation at a time)
@@ -95,7 +99,7 @@ From the repo, in your own terminal (secret typed with `read -s`, never echoed):
 
 ```bash
 read -s WALLET_WEBHOOK_SECRET && export WALLET_WEBHOOK_SECRET
-export WALLET_URL='https://<webhook host>/api/wallet'
+export WALLET_URL='https://<dashboard hosting domain>/api/wallet'
 export TEST_SHEET_ID='<test sheet id>' TEST_EMAIL='<test email>'
 export REAL_EMAILS='<primary email>,<other phone email>'
 node scripts/wallet-roundtrip.mjs --raw "Little Oddfellows, Portland, OR
@@ -136,7 +140,7 @@ from the same app are grouped. Step 1 below includes a locked-phone test.
    work unattended: note that in your report). Turn **Notify When Run** off.
 4. Add the actions:
    1. **Text**: three lines, the variable pills from the *Notification* variable: `Title`, `Subtitle`, `Body` (one per line). An empty subtitle is harmless.
-   2. **Get Contents of URL**: URL as above; Method **POST**; Headers: `Authorization` = `Bearer <secret>`, `Content-Type` = `application/json`; Request Body **JSON** with fields: `text` (the Text from step 1), `email`, `source`, and, **in test mode**, `sheetId`.
+   2. **Get Contents of URL**: URL as above; Method **POST**; Headers: `X-API-Key` = `<secret>` (same as the old Shortcut), `Content-Type` = `application/json`; Request Body **JSON** with fields: `text` (the Text from step 1), `email`, `source`, and, **in test mode**, `sheetId`.
    3. **Get Dictionary Value**: key `message` from the *Contents of URL*.
    4. **Show Notification** with that value. (Title e.g. "Fundient".)
 5. Test mode body: `email` = `<test email>`, `sheetId` = `<test sheet id>`.
@@ -151,23 +155,29 @@ Rollback: switch the automation off (or delete it). Delete any wrongly logged ro
 - **Amex** (`source: ios-notif-amex`). Amex usually arrives via **Wallet** titled "American Express" with the merchant and amount in the body; if the Amex app also sends purchase notifications, pick one source only, or the same charge posts twice (the 2-minute guard skips the second and Telegram gets a note). Ask which one fires.
 - **Chase** (`source: ios-notif-chase`). Three cards share the notification; the **notification prints the card name**, so the server maps it (`resolveCardName`). Before go-live, run `--raw-as-primary` with a real text from each card you can capture (Debit, Freedom Rise, Sapphire Reserve) and confirm the card resolves. The Sapphire Reserve belongs to the other person, so the row should attribute to them through the card-owner setting even though it posts from the primary's phone.
 
-### C. Old "wallet logger" Shortcut: restrict to Bilt only
+### C. Old "Wallet Logger" Shortcut: restrict to Bilt only
 
-Bilt does not send notifications; it only appears in the **Wallet transaction**
-trigger of the old Shortcut (structured fields merchant/amount/card/email, no
-`sheetId`). Once Amex/Chase/Capital One notifications work:
+What it is (from its editor): trigger **Wallet transaction**, "When **Bilt Blue Card and 6
+more** is tapped" (7 cards selected), Categories: Any, Merchants: Any, Automation on,
+Notify on, Confirm Before Run off. Variables `amount`, `merchant`, `Card` (the Wallet
+card name), then **Get contents of** the hosting-domain `/api/wallet` URL, POST, header
+`X-API-Key`, JSON body `amount`, `merchant`, `email`, `card` (no `sheetId`, no `source`),
+then **Show notification** with the raw *Contents of URL*.
 
-1. Open the old automation → the Wallet Transaction trigger → restrict it to the Bilt card (the trigger's card filter). 
-2. Confirm which field says "Bilt" in its result (card name vs merchant) by running it once and reading the value it sends; the server maps it to the Fundient card name.
-3. One real Bilt purchase: confirm it lands once, on the Bilt card.
+Once the Capital One / Amex / Chase notification automations work:
 
-Do not edit anything else in it: structured posts must keep working. Rollback: remove the card filter (all cards again; the duplicate guard covers the overlap).
+1. Shortcuts → Automation → Wallet Logger → tap the "Bilt Blue Card and 6 more" pill and **deselect the other six cards**, leaving only *Bilt Blue Card*. (The seventh card in the list is Apple Cash, added by default; it goes away with this step. Structured posts skip the server's non-purchase check, so an Apple Cash transfer would otherwise look like a purchase.)
+2. Optional but recommended: before **Show notification** add **Get Dictionary Value** (key `message`, from *Contents of URL*) and show that instead of the raw JSON. Structured posts keep working.
+3. The `card` value is the Wallet card name ("Bilt Blue Card" presumably). Confirm the exact text by running the Shortcut once and check it maps to the Fundient card name.
+4. One real Bilt purchase: it should land once, on Bilt Blue.
+
+Do not change the other actions. Rollback: reselect the six cards (all cards again; the 2-minute duplicate guard covers the overlap, at the cost of a "skipped duplicate" Telegram note per charge).
 
 ## Android (Samsung, Automate by LlamaLab)
 
 Automate, **not** Tasker or MacroDroid. Flows are block diagrams; the pieces:
 
-- **HTTP request** block: Request URL; Request method POST; **Request headers** (a dictionary) `{"Authorization":"Bearer <secret>"}` (this is the field an earlier attempt stalled at); Request content type `application/json`; Request content: a JSON string or dictionary with `text`, `email`, `source` (and `sheetId` in test mode). Default timeout 15 s: raise to 45 s (cold start). Response content goes to a variable.
+- **HTTP request** block: Request URL; Request method POST; **Request headers** (a dictionary) `{"X-API-Key":"<secret>"}` or `{"Authorization":"Bearer <secret>"}` (this is the field an earlier attempt stalled at); Request content type `application/json`; Request content: a JSON string or dictionary with `text`, `email`, `source` (and `sheetId` in test mode). Default timeout 15 s: raise to 45 s (cold start). Response content goes to a variable.
 - Show the banner from the response: `jsonDecode(response)["message"]` in a **Toast/Notification** block. *(Expression syntax should be checked on the device; the function `jsonDecode` exists in Automate's function list. If it is awkward, `replaceAll` with a regex on the raw text works too, or show the whole response while testing.)*
 
 ### A. Wallet flow (Samsung Wallet tap-to-pay) — `source: android-wallet`
