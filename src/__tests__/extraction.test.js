@@ -108,9 +108,17 @@ describe('sanitizeExtraction', () => {
     expect(result.items[0].amount).toBe(10);
   });
 
-  it('replaces invalid category with Misc', () => {
+  // Coercing to 'Misc' made a hallucinated category look like a real "Misc"
+  // extraction, which could corroborate Groq's own Misc and skip the confirm.
+  // null is what transfers already produce, so every consumer treats it as
+  // "extractor had no opinion" and shows/writes Misc itself.
+  it('nulls an invalid category rather than passing it off as Misc', () => {
     const result = sanitizeExtraction({ reward_category: 'InvalidCategory' });
-    expect(result.reward_category).toBe('Misc');
+    expect(result.reward_category).toBeNull();
+  });
+
+  it('keeps a genuine Misc', () => {
+    expect(sanitizeExtraction({ reward_category: 'Misc' }).reward_category).toBe('Misc');
   });
 
   it('accepts all valid categories', () => {
@@ -247,7 +255,7 @@ describe('extractReceipt', () => {
     expect(result.ok).toBe(true);
     expect(result.data.store_name.startsWith("'")).toBe(true);
     expect(result.data.total_amount).toBe(50);
-    expect(result.data.reward_category).toBe('Misc');
+    expect(result.data.reward_category).toBeNull();
     expect(result.data.items[0].name).toBe("'+cmd");
     expect(result.data.items[0].amount).toBe(10);
   });

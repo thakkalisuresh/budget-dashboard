@@ -5,6 +5,8 @@
  * Files in lib/ are shared modules, not standalone deployed functions.
  */
 
+import { GROQ_URL, GROQ_TEXT_MODEL, GROQ_VISION_MODEL, groqParams, groqContent, reportGroqFailure } from './_groq.mjs';
+
 const GEMINI_API_KEY    = process.env.GEMINI_API_KEY;
 const GEMINI_URL        = 'https://generativelanguage.googleapis.com/v1beta/models';
 
@@ -238,8 +240,10 @@ export function sanitizeExtraction(data) {
     result.payment_method = safeString(result.payment_method);
   }
   if (typeof result.reward_category === 'string') {
+    // Not 'Misc': that would be indistinguishable from a real Misc answer and
+    // could corroborate Groq's own Misc. null is what transfers already yield.
     if (!CATEGORIES.includes(result.reward_category)) {
-      result.reward_category = 'Misc';
+      result.reward_category = null;
     }
   }
   if (typeof result.total_amount === 'number') {
@@ -422,12 +426,7 @@ async function callClaudeText(model, text, opts) {
 
    Groq has no documented PDF support, so the PDF path skips it entirely. */
 
-// Constants, not env overrides — nothing binds a model name into the functions
-// runtime, so an env read here would always resolve to the default while
-// implying otherwise. Same reasoning as the model constants in _agent.mjs.
-const GROQ_URL          = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_TEXT_MODEL   = 'llama-3.3-70b-versatile';
-const GROQ_VISION_MODEL = 'qwen/qwen3.6-27b';
+// Groq model ids and the request quirks of reasoning models live in _groq.mjs.
 
 async function callGroq(messages, model) {
   const apiKey = process.env.GROQ_API_KEY;
@@ -438,16 +437,18 @@ async function callGroq(messages, model) {
     headers: { Authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: JSON.stringify({
       model, temperature: 0,
+      ...groqParams(model),
       response_format: { type: 'json_object' },
       messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...messages],
     }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    await reportGroqFailure(model, res.status, err?.error);
     throw new Error(`Groq API (${model}): ${err?.error?.message || `HTTP ${res.status}`}`);
   }
   const data = await res.json();
-  return parseJSON(data.choices?.[0]?.message?.content || '');
+  return parseJSON(groqContent(data));
 }
 
 const callGroqVision = (base64, mediaType, userPrompt) => callGroq([{

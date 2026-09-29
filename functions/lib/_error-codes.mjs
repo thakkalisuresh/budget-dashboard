@@ -246,6 +246,12 @@ export const ERROR_CODES = {
     cause: 'The model returned a category that is not one of the sheet tabs, so it was discarded.',
     fix: 'Informational. Repeated hits mean the category list sent in the prompt is out of sync with the sheet.',
   },
+  'LLM-004': {
+    title: 'Groq model unavailable',
+    severity: 'degraded',
+    cause: 'Groq rejected the request as an unknown or inaccessible model (model_not_found, 404, or a 400), so the hardcoded model id has been retired, is not on this account, or the request uses a parameter the model rejects.',
+    fix: 'List models with GET https://api.groq.com/openai/v1/models, then update the model constants in functions/lib/_groq.mjs. Until then categorization silently uses the extractor (no confirm prompts) and text extraction falls back to Gemini.',
+  },
 
   /* ── PUSH: web push notifications ─────────────────────────────────────── */
   'PUSH-001': {
