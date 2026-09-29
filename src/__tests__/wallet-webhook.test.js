@@ -1,5 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
 import { localToday } from '../../functions/lib/_time.mjs';
+import { createFakeDb } from './helpers/fake-firestore.js';
+
+// Backs the duplicate guard's transactional claims (real bot-store code over an
+// in-memory Firestore double); blobs still go to splitStore below.
+const fakeDb = createFakeDb();
+
+// firebase-admin is only installed under functions/; the store just needs these two symbols.
+vi.mock('firebase-admin/firestore', () => ({
+  FieldPath: { documentId: () => '__name__' },
+  Timestamp: { fromMillis: (ms) => ({ ms }) },
+}));
 
 vi.stubEnv('WALLET_WEBHOOK_SECRET', 'test-wallet-secret');
 
@@ -49,7 +60,21 @@ vi.mock('web-push', () => ({ default: { setVapidDetails: vi.fn(), sendNotificati
 vi.mock('../../functions/lib/_error-log.mjs', () => ({ reportError: reportErrorMock }));
 // The wallet split path builds a bot store + sends Telegram; stub both so the
 // import chain doesn't pull in firebase-admin and no real network calls fire.
-vi.mock('../../functions/lib/bot-store.mjs', () => ({ createBotStore: () => splitStore }));
+vi.mock('../../functions/lib/bot-store.mjs', async () => {
+  const actual = await vi.importActual('../../functions/lib/bot-store.mjs');
+  const claims = actual.createBotStore(fakeDb);
+  return {
+    createBotStore: () => ({
+      get: (k) => splitStore.get(k),
+      setJSON: (k, v, o) => splitStore.setJSON(k, v, o),
+      delete: (k) => splitStore.delete(k),
+      list: (o) => splitStore.list(o),
+      claimWindow: (...a) => claims.claimWindow(...a),
+      settleClaim: (...a) => claims.settleClaim(...a),
+      releaseClaim: (...a) => claims.releaseClaim(...a),
+    }),
+  };
+});
 vi.mock('../../functions/lib/_telegram.mjs', () => ({
   sendMessage: telegramSend,
   kbCategoryConfirm: (id, cats, suggestion) => [[{ text: suggestion, callback_data: `CATFIX:${id}:${suggestion}` }]],
@@ -119,6 +144,8 @@ beforeEach(() => {
   recentMock.mockReset().mockResolvedValue([]);
   reportErrorMock.mockReset().mockResolvedValue(undefined);
   splitStore.data.clear();
+  fakeDb.docs.clear();
+  fakeDb.state.failTransactions = false;
   ctl.pushDoc = null;
   ctl.deleted = false;
   ctl.household = null;
@@ -936,5 +963,190 @@ describe('wallet-webhook — message on every JSON branch + rounding', () => {
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/HOUSEHOLD_PRIMARY_EMAIL/));
       warn.mockRestore();
     });
+  });
+});
+
+/* ── Step 6: idempotency guard (exact cents + email + 2-minute window) ── */
+
+describe('wallet-webhook — duplicate-source guard', () => {
+  const PRIMARY = 'nair.sabarish97@gmail.com';
+  const WIFE = 'anupamaramesh2697@gmail.com';
+  const body = { ...validBody, merchant: 'Safeway', amount: 11.46, date: '2026-09-12', card: 'Amex BCP', source: 'ios-wallet' };
+  const groqFetch = vi.fn();
+  const groqSays = (category, confidence) => groqFetch.mockResolvedValue({
+    ok: true,
+    json: () => Promise.resolve({ choices: [{ message: { content: JSON.stringify({ category, confidence }) } }] }),
+  });
+  const nowMs = () => Date.now();
+  const advance = (ms) => vi.setSystemTime(nowMs() + ms);
+  const dupKeys = () => [...splitStore.data.keys()].filter(k => k.startsWith('dup_skipped:'));
+
+  beforeAll(() => { vi.useFakeTimers({ toFake: ['Date'] }); });
+  afterAll(() => { vi.useRealTimers(); });
+
+  beforeEach(() => {
+    vi.setSystemTime(new Date('2026-09-28T12:00:00Z'));
+    groqFetch.mockReset();
+    global.fetch = groqFetch;
+    vi.stubEnv('GROQ_API_KEY', 'test-groq-key');
+    vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-bot-token');
+    vi.stubEnv('TELEGRAM_EMAIL_MAP', `${PRIMARY}:111222333,${WIFE}:444555666`);
+    vi.stubEnv('HOUSEHOLD_PRIMARY_EMAIL', PRIMARY);
+    extractMock.mockResolvedValue({ ok: true, data: { reward_category: 'Grocery', store_name: 'Safeway' } });
+  });
+
+  it('second source for the same amount+email inside 2 minutes is skipped; first is written once', async () => {
+    const first = await call(req({ body }));
+    advance(20_000);
+    extractMock.mockResolvedValue({ ok: true, data: { reward_category: 'Grocery', store_name: 'SAFEWAY #1234' } });
+    const second = await call(req({ body: { ...body, merchant: 'SAFEWAY #1234', source: 'sms' } }));
+
+    expect(first.json.category).toBe('Grocery');
+    expect(appendMock).toHaveBeenCalledTimes(1);
+    expect(second.status).toBe(200);
+    expect(second.json).toEqual({
+      ok: true, skipped: true, reason: 'duplicate_recent',
+      vendor: 'SAFEWAY #1234', amount: 11.46,
+      message: '⏭ $11.46 at SAFEWAY #1234 looks like a duplicate of a charge just logged — skipped. Tap "Log it anyway" on Telegram if it was separate.',
+    });
+  });
+
+  it('the skipped charge sends the primary chat a note with a Log-it-anyway button and parks a full blob', async () => {
+    await call(req({ body }));
+    advance(20_000);
+    await call(req({ body: { ...body, email: PRIMARY, source: 'sms' } }));
+
+    const [chatId, text, keyboard] = telegramSend.mock.calls.at(-1);
+    expect(chatId).toBe('111222333');
+    expect(text).toBe(
+      '⏭ Skipped a likely duplicate\nSafeway · $11.46 · Amex BCP · Sep 2026\n' +
+      'Looks like Safeway from 20s ago. Same amount arrived from the same phone within 2 minutes. If it was a separate purchase, tap:'
+    );
+    const btn = keyboard[0][0];
+    expect(btn.text).toBe('➕ Log it anyway');
+    expect(btn.callback_data).toMatch(/^DUPLOG:[0-9a-f-]{8}$/);
+    expect(Buffer.byteLength(btn.callback_data)).toBeLessThan(64);
+
+    const id = btn.callback_data.split(':')[1];
+    const blob = splitStore.data.get(`dup_skipped:111222333:${id}`);
+    expect(blob).toMatchObject({
+      id, vendor: 'Safeway', amount: 11.46, category: 'Grocery', txDate: '2026-09-12',
+      monthName: 'September 2026', sheetId: 'sheet-abc', paymentMethod: 'Amex BCP',
+      email: PRIMARY, source: 'sms',
+    });
+    expect(new Date(blob.expiresAt).getTime() - nowMs()).toBe(24 * 3600_000);
+    expect(typeof blob.createdAt).toBe('string');
+  });
+
+  it("note goes to the household primary's chat, not the request email's", async () => {
+    await call(req({ body }));
+    await call(req({ body: { ...body, email: PRIMARY } }));
+    telegramSend.mockClear();
+    // wife's Samsung notification for the SAME email key? key includes email, so use the wife's own pair
+    await call(req({ body: { ...body, email: WIFE } }));
+    advance(5_000);
+    await call(req({ body: { ...body, email: WIFE } }));
+    expect(telegramSend.mock.calls.at(-1)[0]).toBe('111222333');
+    expect(dupKeys().every(k => k.startsWith('dup_skipped:111222333:'))).toBe(true);
+  });
+
+  it('different amount, different email, or more than 2 minutes later => both are logged', async () => {
+    await call(req({ body }));
+    await call(req({ body: { ...body, amount: 11.47 } }));
+    await call(req({ body: { ...body, email: WIFE } }));
+    advance(121_000);
+    await call(req({ body }));
+    expect(appendMock).toHaveBeenCalledTimes(4);
+    expect(dupKeys()).toHaveLength(0);
+  });
+
+  it('float noise is rounded before keying: 11.459999999 and 11.46 are the same charge', async () => {
+    await call(req({ body: { ...body, amount: 11.459999999999999 } }));
+    const second = await call(req({ body }));
+    expect(second.json.reason).toBe('duplicate_recent');
+    expect(appendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('a parked first charge + a second source => ONE category prompt, no second write', async () => {
+    groqSays('Travel', 0.4); // unconfident => parked
+    const first = await call(req({ body }));
+    advance(10_000);
+    const second = await call(req({ body: { ...body, source: 'sms' } }));
+
+    expect(first.json.pendingCategory).toBe(true);
+    expect(second.json.reason).toBe('duplicate_recent');
+    const prompts = telegramSend.mock.calls.filter(c => String(c[1]).startsWith('🤔 Categorize'));
+    expect(prompts).toHaveLength(1);
+    expect(appendMock).not.toHaveBeenCalled();
+    expect(dupKeys()).toHaveLength(1);
+    // the skipped blob carries the suggestion for the DUPLOG handler
+    expect(splitStore.data.get(dupKeys()[0]).category).toBe('Travel');
+  });
+
+  it('concurrent duplicate requests => exactly one write', async () => {
+    const results = await Promise.all([call(req({ body })), call(req({ body: { ...body, source: 'sms' } })), call(req({ body }))]);
+    expect(appendMock).toHaveBeenCalledTimes(1);
+    expect(results.filter(r => r.json.reason === 'duplicate_recent')).toHaveLength(2);
+    expect(results.filter(r => r.json.category === 'Grocery')).toHaveLength(1);
+  });
+
+  it('a failed write RELEASES the claim so a retry / second source can still log', async () => {
+    appendMock.mockRejectedValueOnce(new Error('sheets down'));
+    const first = await call(req({ body }));
+    expect(first.status).toBe(500);
+    const retry = await call(req({ body }));
+    expect(retry.status).toBe(200);
+    expect(retry.json.category).toBe('Grocery');
+    expect(appendMock).toHaveBeenCalledTimes(2);
+    expect(dupKeys()).toHaveLength(0);
+  });
+
+  it('a month-not-found 422 from the append also releases the claim', async () => {
+    appendMock.mockRejectedValueOnce(new Error('No sheet found for month September 2026'));
+    expect((await call(req({ body }))).status).toBe(422);
+    expect((await call(req({ body }))).status).toBe(200);
+  });
+
+  it('an in-flight claim (<30s, never settled) blocks; an abandoned one (>30s) is taken over', async () => {
+    const { createHash } = await import('node:crypto');
+    const key = `wdup:${createHash('sha256').update(PRIMARY).digest('hex').slice(0, 16)}:1146`;
+    fakeDb.docs.set(key, { v: { ts: nowMs() - 5_000, status: 'claimed', vendor: 'Safeway', token: 't1' } });
+    expect((await call(req({ body }))).json.reason).toBe('duplicate_recent');
+    expect(appendMock).not.toHaveBeenCalled();
+
+    fakeDb.docs.set(key, { v: { ts: nowMs() - 31_000, status: 'claimed', vendor: 'Safeway', token: 't1' } });
+    const res = await call(req({ body }));
+    expect(res.json.category).toBe('Grocery');
+    expect(appendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('guard infrastructure failure fails OPEN: charge logged, error reported, not dropped', async () => {
+    fakeDb.state.failTransactions = true;
+    const res = await call(req({ body }));
+    expect(res.status).toBe(200);
+    expect(res.json.category).toBe('Grocery');
+    expect(appendMock).toHaveBeenCalledTimes(1);
+    expect(reportErrorMock).toHaveBeenCalledWith('WAL-005', expect.any(Error), expect.any(Object));
+  });
+
+  it('a Telegram/park failure on the skipped path never turns the skip into an error', async () => {
+    await call(req({ body }));
+    telegramSend.mockRejectedValue(new Error('telegram down'));
+    const second = await call(req({ body }));
+    expect(second.status).toBe(200);
+    expect(second.json.reason).toBe('duplicate_recent');
+    expect(second.json.message).toMatch(/^⏭ \$11\.46 at Safeway looks like a duplicate/);
+  });
+
+  it('non-duplicate happy path keeps exactly its pre-existing response keys', async () => {
+    const res = await call(req({ body }));
+    expect(Object.keys(res.json).sort()).toEqual(['amount', 'category', 'message', 'ok', 'vendor']);
+  });
+
+  it('the existing ±3-day findDuplicates notice still fires and still logs', async () => {
+    recentMock.mockResolvedValue([{ vendor: 'Safeway', amount: 11.46, category: 'Grocery', txDate: '2026-09-11' }]);
+    const res = await call(req({ body }));
+    expect(appendMock).toHaveBeenCalledTimes(1);
+    expect(res.json.message).toMatch(/Possible duplicate/);
   });
 });

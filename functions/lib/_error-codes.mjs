@@ -384,6 +384,12 @@ export const ERROR_CODES = {
     cause: 'The vendor matches a disabled-wallet-vendor rule and was intentionally not logged.',
     fix: 'Working as configured. Remove the rule in Settings if this vendor should be logged.',
   },
+  'WAL-005': {
+    title: 'Duplicate guard unavailable',
+    severity: 'degraded',
+    cause: 'The wallet duplicate guard could not read or update its claim in Firestore. The charge was logged anyway (the guard fails open), so a duplicate source for it may also have been logged.',
+    fix: 'Usually a transient Firestore blip. Check History → Duplicates for a doubled charge around the reported time.',
+  },
 
   /* ── FX: currency ─────────────────────────────────────────────────────── */
   'FX-001': {

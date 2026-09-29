@@ -3,7 +3,7 @@
 > **Generated file — do not edit by hand.**
 > Source of truth: `functions/lib/_error-codes.mjs`. Regenerate with `npm run errdoc`.
 
-62 codes across 13 domains.
+63 codes across 13 domains.
 
 Codes appear wherever the failure surfaces: in the bot's reply, on the
 dashboard crash screen, in the wallet webhook response body, in Cloud Logging,
@@ -78,6 +78,7 @@ and in the daily Telegram digest.
 | [`WAL-002`](#wal-002) | fatal | Wallet transaction write failed |
 | [`WAL-003`](#wal-003) | degraded | Wallet text parse failed |
 | [`WAL-004`](#wal-004) | degraded | Vendor skipped by user rule |
+| [`WAL-005`](#wal-005) | degraded | Duplicate guard unavailable |
 | [`FX-001`](#fx-001) | degraded | Currency conversion failed |
 | [`FX-002`](#fx-002) | degraded | Unknown currency |
 | [`WEB-001`](#web-001) | fatal | Dashboard render crashed |
@@ -554,6 +555,14 @@ and in the daily Telegram digest.
 **Why it happens.** The vendor matches a disabled-wallet-vendor rule and was intentionally not logged.
 
 **What to do.** Working as configured. Remove the rule in Settings if this vendor should be logged.
+
+### WAL-005
+
+**Duplicate guard unavailable** · `degraded`
+
+**Why it happens.** The wallet duplicate guard could not read or update its claim in Firestore. The charge was logged anyway (the guard fails open), so a duplicate source for it may also have been logged.
+
+**What to do.** Usually a transient Firestore blip. Check History → Duplicates for a doubled charge around the reported time.
 
 ## FX — Currency conversion
 

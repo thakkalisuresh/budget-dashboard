@@ -19,6 +19,7 @@ import { resolvePromptChatId } from './lib/_household.mjs';
 import {
   msgWritten, msgWrittenDuplicate, msgNeedsCategory, msgSplitParked, msgUnreadable,
   msgNoSheet, msgWriteFailed, msgVendorDisabled, msgUnauthorized, tgCategoryPrompt,
+  msgDuplicateSkipped, tgDuplicateNote,
 } from './lib/_wallet-messages.mjs';
 import { matchesSplitVendor } from './lib/_item-categorizer.mjs';
 import { resolveCardName } from './lib/_card-resolver.mjs';
@@ -45,6 +46,41 @@ function extractKey(req) {
   const m = /^Bearer\s+(.+)$/i.exec(auth);
   if (m) return m[1].trim();
   return req.get('x-api-key')?.trim() || null;
+}
+
+// Same exact-cents charge from the same email inside this window is one purchase.
+const DUP_WINDOW_MS = 2 * 60 * 1000;
+// A claim that never settled is an abandoned attempt after the function timeout.
+const DUP_TAKEOVER_MS = 30 * 1000;
+const DUP_BLOB_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Park the skipped charge, then tell the household primary's chat with a
+ * "Log it anyway" button. Park FIRST (opposite of the category prompt): there is
+ * no fall-through-to-write here if the send fails, and an unsent blob just
+ * expires, whereas a sent button with no blob would be dead. Never throws.
+ */
+async function notifyDuplicateSkipped({ store, email, source, vendor, amount, card, category, txDate, monthName, sheetId, priorVendor, ageSec }) {
+  try {
+    const chatId = await resolvePromptChatId(email);
+    if (!chatId) return;
+    const id = crypto.randomUUID().slice(0, 8);
+    const now = Date.now();
+    await store.setJSON(`dup_skipped:${chatId}:${id}`, {
+      id, vendor, amount, category, txDate, monthName, sheetId,
+      paymentMethod: card ?? '',
+      email, source,
+      createdAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + DUP_BLOB_TTL_MS).toISOString(),
+    }, { ttlMs: DUP_BLOB_TTL_MS + 60 * 60 * 1000 });
+    await sendMessage(
+      chatId,
+      tgDuplicateNote({ vendor, amount, card, monthName, priorVendor, ageSec }),
+      [[{ text: '➕ Log it anyway', callback_data: `DUPLOG:${id}` }]]
+    );
+  } catch (e) {
+    await reportError('TG-001', e, { flow: 'dup-skipped-note', vendor, amount });
+  }
 }
 
 export const walletWebhook = onRequest(
@@ -250,6 +286,46 @@ export const walletWebhook = onRequest(
     }
     category = decision.category;
 
+    // ── Duplicate-source guard. One tap-to-pay can fire two sources (Wallet
+    // notification + issuer app, Samsung Wallet + bank SMS). Key = same email +
+    // exact cents; merchant strings differ across sources so the vendor only
+    // rides along as a hint. The first request claims; a second inside 2 minutes
+    // is skipped. Placed after category resolution so the skipped blob carries
+    // the category, and before park/split/write so a PARKED charge counts too
+    // (no second Telegram prompt). Any guard failure fails OPEN.
+    const claimKey = `wdup:${crypto.createHash('sha256').update(email.toLowerCase()).digest('hex').slice(0, 16)}:${Math.round(amount * 100)}`;
+    let claim = null;
+    let guardStore = null;
+    try {
+      guardStore = createBotStore(getDb());
+      const r = await guardStore.claimWindow(claimKey, { windowMs: DUP_WINDOW_MS, takeoverMs: DUP_TAKEOVER_MS, vendor });
+      if (r.claimed) {
+        claim = r;
+      } else {
+        const ageSec = Math.round(r.ageMs / 1000);
+        console.log(`wallet-webhook: duplicate_recent ${vendor} $${amount} (${ageSec}s after "${r.vendor}", vendorMatch=${r.vendor.toLowerCase() === vendor.toLowerCase()})`);
+        await notifyDuplicateSkipped({ store: guardStore, email, source, vendor, amount, card, category, txDate, monthName, sheetId, priorVendor: r.vendor, ageSec });
+        res.status(200).json({
+          ok: true, skipped: true, reason: 'duplicate_recent', vendor, amount,
+          message: msgDuplicateSkipped({ amount, vendor }),
+        });
+        return;
+      }
+    } catch (e) {
+      await reportError('WAL-005', e, { step: 'claim', vendor, amount });
+    }
+    // Best-effort: bookkeeping trouble must never change the response or drop a charge.
+    const settle = async () => {
+      if (!claim) return;
+      try { await guardStore.settleClaim(claimKey, claim.token); }
+      catch (e) { await reportError('WAL-005', e, { step: 'settle', vendor, amount }); }
+    };
+    const release = async () => {
+      if (!claim) return;
+      try { await guardStore.releaseClaim(claimKey, claim.token); }
+      catch (e) { await reportError('WAL-005', e, { step: 'release', vendor, amount }); }
+    };
+
     // Set when a prompt was sent but its blob could not be parked; the write
     // below then goes ahead and this follow-up tells the user to ignore the buttons.
     let parkFailNote = null;
@@ -289,6 +365,7 @@ export const walletWebhook = onRequest(
               email, source,
               createdAt: new Date().toISOString(),
             });
+            await settle();
             res.status(200).json({
               ok: true, pendingCategory: true, vendor, amount,
               message: msgNeedsCategory({ amount, vendor, monthName }),
@@ -339,6 +416,7 @@ export const walletWebhook = onRequest(
               email, source,
               createdAt: new Date().toISOString(),
             });
+            await settle();
             res.status(200).json({
               ok: true, split: true, vendor, amount,
               message: msgSplitParked({ amount, vendor }),
@@ -396,6 +474,8 @@ export const walletWebhook = onRequest(
         channel: 'wallet',
       });
     } catch (e) {
+      // Nothing was written: free the claim so a retry / second source can log.
+      await release();
       if (e.message?.includes('No sheet found for month')) {
         res.status(422).json({ ok: false, code: 'SHT-002', error: 'month_not_found', monthName, message: msgNoSheet(monthName) });
         return;
@@ -406,6 +486,8 @@ export const walletWebhook = onRequest(
       res.status(500).json({ ok: false, code: 'WAL-002', error: 'Failed to write transaction', message: msgWriteFailed({ amount, vendor }) });
       return;
     }
+
+    await settle();
 
     // Only after the write succeeded — warning about a charge that never
     // landed would be worse than not warning at all.

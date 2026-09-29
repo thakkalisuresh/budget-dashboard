@@ -45,7 +45,7 @@ These are read by the bot webhooks (`functions/`), not baked into the client bun
 
 ### One-time Firestore TTL for idempotency markers
 
-The Telegram webhook writes `seen:<update_id>` docs (in the `bot_state` collection) to dedupe retries; each carries an `expireAt` Timestamp. Enable the native TTL policy once so they auto-purge (no other `bot_state` doc has this field, so only seen markers are affected):
+The Telegram webhook writes `seen:<update_id>` docs (in the `bot_state` collection) to dedupe retries, the wallet duplicate guard writes `wdup:` / `wdup-log:` claim docs, and skipped-duplicate blobs (`dup_skipped:`) are parked with a TTL; each carries an `expireAt` Timestamp. Enable the native TTL policy once so they auto-purge (no other `bot_state` doc has this field, so only those are affected). Correctness never depends on it: windows and expiries are checked in code from timestamps inside the docs, so without the policy these docs just accumulate:
 
 ```sh
 gcloud firestore fields ttls update expireAt \
