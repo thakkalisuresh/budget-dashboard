@@ -208,6 +208,36 @@ Automate, **not** Tasker or MacroDroid. Flows are block diagrams; the pieces:
 
 Rollback: stop the flow in Automate (the app's flow list → Stop).
 
+## Rotating the webhook key
+
+Do this once **after all sources are live** (and any time the key may have been seen, for
+example in a screenshot or a chat). Rotating breaks every phone until it has the new key,
+so do it in one sitting with both phones to hand. Nothing here contains a secret.
+
+1. **Pick the new key** (a long random string) and keep it in your password manager. Type
+   it only into your own terminal and phone apps; never paste it into chat or the repo.
+2. **Set it in Firebase** (this creates a new version of the `WALLET_WEBHOOK_SECRET`
+   secret):
+   ```bash
+   firebase functions:secrets:set WALLET_WEBHOOK_SECRET --project fundient-dashboard
+   ```
+   It prompts for the value.
+3. **Redeploy the functions** so they pick up the new version (a merge to `develop`
+   deploys them, or deploy by hand):
+   ```bash
+   firebase deploy --only functions --project fundient-dashboard
+   ```
+   From this moment every request with the old key gets `401` (❌ banner).
+4. **Update the key everywhere it lives:**
+   - the old Wallet Logger Shortcut (header `X-API-Key`),
+   - every new notification Shortcut (header `X-API-Key`),
+   - the Android Automate flows (Request headers dictionary).
+5. **Verify** with the round-trip kit (`docs/wallet-verification.md`), for example
+   `node scripts/wallet-roundtrip.mjs --only auth_bad,purchase_structured` with the new
+   key exported via `read -s`: `auth_bad` must still be 401 and `purchase_structured` 200.
+6. **Watch the heartbeat**: a phone that still holds the old key posts nothing, and after
+   4 days the primary gets a 📵 alert. Trigger a real notification on each phone to be sure.
+
 ## Cutover checklist
 
 - [ ] Real text captured per source and pasted through `--raw`; parse looks right
@@ -219,6 +249,7 @@ Rollback: stop the flow in Automate (the app's flow list → Stop).
 - [ ] Android Chase SMS flow: test mode → live
 - [ ] Battery settings done; heartbeat visible in Firestore `wallet_activity`
 - [ ] Test-email `wallet_activity` docs deleted; test copy sheet deleted
+- [ ] Webhook key rotated (see *Rotating the webhook key*) and every phone updated
 
 ## Contributing real texts as test fixtures (public repo)
 
