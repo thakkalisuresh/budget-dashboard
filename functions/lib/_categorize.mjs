@@ -71,6 +71,16 @@ export const AUDIT_CONFIDENCE = 1.0;
 const HISTORY_AGREEMENT = 0.75;
 
 /**
+ * How many agreeing prior rows history needs before it may skip the prompt:
+ * a single row is one data point (one holiday purchase at a big-box store would
+ * otherwise pin that store's category for good), so ordinary vendors need two
+ * and the always-ask class needs three. With fewer, the charge goes on to the
+ * LLM and the threshold like a first sighting.
+ */
+const HISTORY_MIN_ROWS = 2;
+const HISTORY_MIN_ROWS_ALWAYS_ASK = 3;
+
+/**
  * MIRROR of applySmartRules in src/smartRules.js — keep the two in step.
  * Returns the matching category, or null. Most specific (longest pattern) wins.
  */
@@ -188,9 +198,11 @@ function startsWith(short, long) {
 /**
  * What the user themselves have filed this vendor under, from recent sheet rows
  * ({ vendor, category }). Returns null with no usable prior filing, otherwise
- * { category, count, agree }: the most frequent category, and whether at least
- * HISTORY_AGREEMENT of the rows share it. A vendor that is split across
- * categories (a warehouse store) reports agree: false and the caller asks.
+ * { category, count, agree, supported }: the most frequent category, whether at
+ * least HISTORY_AGREEMENT of the rows share it, and whether enough rows agree
+ * (HISTORY_MIN_ROWS, or more for an always-ask vendor) for it to settle the
+ * charge. A vendor that is split across categories (a warehouse store) reports
+ * agree: false and the caller asks; too little support just means "no answer yet".
  */
 export function categoryFromHistory(vendor, rows, categories) {
   if (!vendor || !rows?.length) return null;
@@ -203,7 +215,9 @@ export function categoryFromHistory(vendor, rows, categories) {
   }
   if (!total) return null;
   const [category, top] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
-  return { category, count: total, agree: top / total >= HISTORY_AGREEMENT };
+  const agree = top / total >= HISTORY_AGREEMENT;
+  const needed = isAlwaysAsk(vendor) ? HISTORY_MIN_ROWS_ALWAYS_ASK : HISTORY_MIN_ROWS;
+  return { category, count: total, agree, supported: agree && top >= needed };
 }
 
 /**
@@ -211,8 +225,8 @@ export function categoryFromHistory(vendor, rows, categories) {
  *
  * Returns { category, source, confidence, needsConfirm }:
  *   source 'rule'       — a smart rule matched; authoritative, never confirmed.
- *   source 'history'    — the user has filed this vendor before, consistently.
- *                         Their own decision beats a guess; never confirmed.
+ *   source 'history'    — the user has filed this vendor before, consistently and
+ *                         more than once. Their own decision beats a guess; never confirmed.
  *   source 'llm'        — Groq answered. needsConfirm is true below
  *                         CONFIDENCE_THRESHOLD, when the answer is Misc, for a vendor on
  *                         ALWAYS_ASK_VENDORS, or when the vendor's history is split, meaning the caller
@@ -245,7 +259,7 @@ export async function resolveCategory({
   }
 
   const prior = categoryFromHistory(vendor, history, categories);
-  if (prior?.agree) {
+  if (prior?.supported) {
     return { category: prior.category, source: 'history', confidence: 1, needsConfirm: false };
   }
 

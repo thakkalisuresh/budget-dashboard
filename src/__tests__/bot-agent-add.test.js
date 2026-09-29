@@ -267,6 +267,7 @@ describe('confirm-first add', () => {
       });
       getRecentExpenses.mockResolvedValue([
         { vendor: 'Petrol', amount: 40, txDate: '2026-05-01', category: 'Misc' },
+        { vendor: 'Petrol', amount: 35, txDate: '2026-05-08', category: 'Misc' },
       ]);
       const ctx = makeCtx();
       await handleTextReply(ctx, 'Add petrol $38.00');
