@@ -133,6 +133,82 @@ describe('resolveCardName — ambiguity', () => {
   });
 });
 
+describe('resolveCardName — masked last-four suffix and truncation', () => {
+  // The Capital One app titles its notification "Quicksilver Credit Card…NNNN".
+  // Digits below are obviously fake.
+  const both = (raw, cards = CARDS) => {
+    const a = resolveCardName(raw, cards);
+    expect(backendResolve(raw, cards), `mirror drift on "${raw}"`).toBe(a);
+    return a;
+  };
+
+  it('strips an ellipsis + last four before matching', () => {
+    expect(both('Quicksilver Credit Card…0000')).toBe('Capital One Quicksilver');
+    expect(both('Quicksilver Credit Card...0000')).toBe('Capital One Quicksilver');
+    expect(both('Quicksilver Credit Card … 0000')).toBe('Capital One Quicksilver');
+    expect(both('Quicksilver Credit Card…000')).toBe('Capital One Quicksilver');
+  });
+
+  it('strips "ending in", bullets, asterisks, parens, x and dash forms', () => {
+    for (const raw of [
+      'Quicksilver Credit Card ending in 0000',
+      'Quicksilver Credit Card ending 0000',
+      'Quicksilver Credit Card •••• 0000',
+      'Quicksilver Credit Card **** 0000',
+      'Quicksilver Credit Card (…0000)',
+      'Quicksilver Credit Card (••••0000)',
+      'Quicksilver Credit Card x0000',
+      'Quicksilver Credit Card - 0000',
+    ]) expect(both(raw), raw).toBe('Capital One Quicksilver');
+  });
+
+  it('also works for names that resolve by containment, not alias', () => {
+    expect(both('Chase Sapphire Reserve…0000')).toBe('Chase Sapphire Reserve');
+    expect(both('Sapphire Reserve ending in 0000')).toBe('Chase Sapphire Reserve');
+  });
+
+  it('only strips a short (3-4 digit) suffix at the end', () => {
+    // 5 digits after the ellipsis is not a last-four mask: left alone.
+    expect(both('Quicksilver Credit Card…00000')).toBe('');
+    // digits in the middle are untouched
+    expect(both('Quicksilver 0000 Credit Card')).toBe('');
+  });
+
+  it('does not mangle a held name that legitimately contains digits', () => {
+    const cards = ['Gold 5000', 'Visa - 1234', 'Chase Sapphire Reserve'];
+    expect(both('Gold 5000', cards)).toBe('Gold 5000');
+    expect(both('gold5000', cards)).toBe('Gold 5000');
+    // exact match on the unstripped string wins before any stripping
+    expect(both('Visa - 1234', cards)).toBe('Visa - 1234');
+    // the real suffix comes off, leaving the held name itself
+    expect(both('Visa - 1234…0000', cards)).toBe('Visa - 1234');
+  });
+
+  it('keeps ambiguity => empty after stripping', () => {
+    const cards = ['Chase Debit Card - A', 'Chase Debit Card - B'];
+    expect(both('Chase Debit Card…0000', cards)).toBe('');
+    expect(both('Chase Debit Card…0000', [...cards].reverse())).toBe('');
+  });
+
+  it('never invents an unheld card, with or without the suffix', () => {
+    expect(both('Quicksilver Credit Card…0000', ['Chase Sapphire Reserve'])).toBe('');
+  });
+
+  it('resolves a truncated title through a unique alias prefix', () => {
+    expect(both('Quicksilver Credit C…')).toBe('Capital One Quicksilver');
+    expect(both('Quicksilver Credit C...')).toBe('Capital One Quicksilver');
+    expect(both('Quicksilver Credit C…', ['Chase Sapphire Reserve'])).toBe('');
+  });
+
+  it('truncation needs >= 5 chars and exactly one target', () => {
+    expect(both('Quic…')).toBe('');            // 4 chars
+    // "c1" prefixes nothing >= 5; "bilt" family is too short / unheld
+    expect(both('Blue…')).toBe('');
+    // two different canonical targets share the prefix "chase": ambiguous
+    expect(both('Chase…', ['Chase Sapphire Reserve', 'Chase Freedom Unlimited'])).toBe('');
+  });
+});
+
 describe('card resolver — backend/frontend mirror parity', () => {
   // src/receiptHelpers.js and functions/lib/_card-resolver.mjs are duplicated
   // deliberately (the frontend bundle can't import from functions/). This test

@@ -441,6 +441,13 @@ describe('wallet-webhook — resolves the card against the user card list', () =
       .toBe('American Express Blue Cash Preferred');
   });
 
+  it('strips the masked last-four the Capital One title carries', async () => {
+    // Real title shape: "Quicksilver Credit Card…NNNN" (digits fake here).
+    getSettingsMock.mockResolvedValue({ cards: [...CARDS, 'Capital One Quicksilver'] });
+    await call(req({ body: { ...validBody, card: 'Quicksilver Credit Card…0000' } }));
+    expect(appendMock.mock.calls[0][0].paymentMethod).toBe('Capital One Quicksilver');
+  });
+
   it('keeps the raw card when it matches nothing', async () => {
     // Better to log an unrecognised card than to blank it.
     getSettingsMock.mockResolvedValue({ cards: CARDS });

@@ -143,6 +143,16 @@ export const CARD_ALIASES = {
   biltmastercard: 'Bilt Blue Card',
 };
 
+// MIRROR: keep in sync with MASKED_LAST4 / TRAILING_ELLIPSIS in functions/lib/_card-resolver.mjs.
+// Notification titles can end in a masked last four: "Quicksilver Credit
+// Card…1234", "… ending in 1234", "•••• 1234", "(…1234)", "x1234", "- 1234".
+// Strip only a SHORT (3-4 digit) tail behind an explicit mask/separator so
+// digits that belong to a card name are never eaten.
+const MASK = '(?:…|\\.{2,}|[*•·●]+|\\(\\s*(?:…|\\.{2,}|[*•·●]+|x)?|\\s(?:ending(?:\\s+in)?|x|[-–—]))';
+const MASKED_LAST4 = new RegExp(`\\s*${MASK}\\s*\\d{3,4}\\s*\\)?\\s*$`, 'i');
+// A title the iOS notification stack truncated: ends in an ellipsis, no digits.
+const TRAILING_ELLIPSIS = /\s*(?:…|\.{2,})\s*$/;
+
 // Fuzzy-match a raw card string from Vision against the known cards list.
 // Returns the canonical card name or '' if no confident match.
 // MIRROR: keep in sync with resolveCardName in functions/lib/_card-resolver.mjs.
@@ -151,10 +161,25 @@ export function resolveCardName(raw, cards = []) {
   const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
   let r = norm(raw);
   if (!r) return '';
+  // A held name that already equals the raw text wins before any stripping, so
+  // a card legitimately named "Visa - 1234" is never mangled.
+  for (const c of cards) if (norm(c) === r) return c;
+  // Drop a masked last-four, then a trailing ellipsis (truncated title).
+  const noDigits = String(raw).replace(MASKED_LAST4, '');
+  const truncated = TRAILING_ELLIPSIS.test(noDigits);
+  r = norm(noDigits);
+  if (!r) return '';
   // Expand a known shorthand first, so "BCP" can reach a canonical name it
   // shares no usable substring with. An alias only rewrites the input — it
   // never invents a card the user doesn't hold.
   if (CARD_ALIASES[r]) r = norm(CARD_ALIASES[r]);
+  else if (truncated && r.length >= 5) {
+    // "Quicksilver Credit C…": expand only when exactly one canonical name's
+    // alias starts with the text; otherwise fall through to normal matching.
+    const targets = new Set(Object.entries(CARD_ALIASES)
+      .filter(([k]) => k.startsWith(r)).map(([, v]) => v));
+    if (targets.size === 1) r = norm([...targets][0]);
+  }
   // Exact normalized match first
   for (const c of cards) if (norm(c) === r) return c;
   // Substring either direction (Vision may return "Sapphire Reserve" for
