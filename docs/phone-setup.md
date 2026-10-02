@@ -60,7 +60,7 @@ Every response has a `message`; show **only** that. Full table: `wallet-ingestio
 | Waiting on a category (Telegram prompt) | 🤔 | not logged yet: tap a category on Telegram |
 | Split-receipt vendor | 🧾 | not logged yet: upload receipt or SKIP on Telegram |
 | Not a purchase (declined, statement, deposit, autopay, refund, OTP) | ℹ️ | skipped quietly, nothing logged, no error |
-| Duplicate within 2 minutes | ⏭ | skipped, Telegram note with "Log it anyway" |
+| Duplicate within 2 minutes (same email), or same card + amount from the other phone within 3 minutes | ⏭ | skipped, Telegram note with "Log it anyway" |
 | Could not read amount | ⚠️ | nothing logged |
 | No sheet for the month | ⚠️ | create the month in the dashboard |
 | Bad or missing secret | ❌ | check the `X-API-Key` / Authorization header |

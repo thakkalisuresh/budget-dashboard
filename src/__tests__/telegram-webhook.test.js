@@ -1066,6 +1066,14 @@ describe('telegram webhook — DUPLOG log-it-anyway', () => {
     expect(mockStore.data.get(`lastlog:${userId}`)).toMatchObject({ vendor: 'Safeway', category: 'Grocery' });
   });
 
+  it('is not blocked by a live cross-phone card claim for the same charge', async () => {
+    mockStore.data.set(key, blob());
+    claimDb.docs.set('wdup-card:amexbcp:1146', { v: { ts: Date.now(), status: 'done', vendor: 'Safeway', token: 't' } });
+    await handler(buildRequest(callbackQuery('DUPLOG:abc12345')));
+    expect(expenseWrites()).toBe(1);
+    expect(lastSend()).toBe('Logged Safeway · $11.46 as Grocery.');
+  });
+
   it('a double tap writes once; the second says it is no longer waiting', async () => {
     mockStore.data.set(key, blob());
     await handler(buildRequest(callbackQuery('DUPLOG:abc12345')));

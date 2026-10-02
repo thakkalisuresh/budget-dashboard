@@ -22,7 +22,7 @@ import {
   msgDuplicateSkipped, tgDuplicateNote, msgConvertFailed, tgConvertFailed, fxNote,
 } from './lib/_wallet-messages.mjs';
 import { matchesSplitVendor } from './lib/_item-categorizer.mjs';
-import { resolveCardName } from './lib/_card-resolver.mjs';
+import { resolveCardName, normCard } from './lib/_card-resolver.mjs';
 import { sha256Hex } from './lib/http-common.mjs';
 import { convertToUSD } from './lib/_currency.mjs';
 import { reportError } from './lib/_error-log.mjs';
@@ -67,6 +67,9 @@ function detectCurrency(amountRaw) {
 
 // Same exact-cents charge from the same email inside this window is one purchase.
 const DUP_WINDOW_MS = 2 * 60 * 1000;
+// Household-level (card + cents) window, wider than the per-email one: her SMS
+// can trail the other phone's Wallet tap by more than 2 minutes.
+const DUP_CARD_WINDOW_MS = 3 * 60 * 1000;
 // A claim that never settled is an abandoned attempt after the function timeout.
 const DUP_TAKEOVER_MS = 30 * 1000;
 const DUP_BLOB_TTL_MS = 24 * 60 * 60 * 1000;
@@ -103,7 +106,7 @@ async function getPreviousMonthRows(monthName) {
  * no fall-through-to-write here if the send fails, and an unsent blob just
  * expires, whereas a sent button with no blob would be dead. Never throws.
  */
-async function notifyDuplicateSkipped({ store, email, source, vendor, amount, card, category, txDate, monthName, sheetId, priorVendor, ageSec, fx }) {
+async function notifyDuplicateSkipped({ store, email, source, vendor, amount, card, category, txDate, monthName, sheetId, priorVendor, ageSec, fx, by }) {
   try {
     const chatId = await resolvePromptChatId(email);
     if (!chatId) return;
@@ -118,7 +121,7 @@ async function notifyDuplicateSkipped({ store, email, source, vendor, amount, ca
     }, { ttlMs: DUP_BLOB_TTL_MS + 60 * 60 * 1000 });
     await sendMessage(
       chatId,
-      tgDuplicateNote({ vendor, amount, card, monthName, priorVendor, ageSec, fx }),
+      tgDuplicateNote({ vendor, amount, card, monthName, priorVendor, ageSec, fx, by }),
       [[{ text: '➕ Log it anyway', callback_data: `DUPLOG:${id}` }]]
     );
   } catch (e) {
@@ -397,23 +400,52 @@ export const walletWebhook = onRequest(
 
     // ── Duplicate-source guard. One tap-to-pay can fire two sources (Wallet
     // notification + issuer app, Samsung Wallet + bank SMS). Key = same email +
-    // exact cents; merchant strings differ across sources so the vendor only
-    // rides along as a hint. The first request claims; a second inside 2 minutes
-    // is skipped. Placed after category resolution so the skipped blob carries
+    // exact cents (2 min), plus a household-level card + cents key (3 min) below
+    // for the same charge seen by two phones; merchant strings differ across
+    // sources so the vendor only rides along as a hint. The first request claims;
+    // a second inside the window is skipped. Placed after category resolution so the skipped blob carries
     // the category, and before park/split/write so a PARKED charge counts too
     // (no second Telegram prompt). Any guard failure fails OPEN.
-    const claimKey = `wdup:${crypto.createHash('sha256').update(email.toLowerCase()).digest('hex').slice(0, 16)}:${Math.round(amount * 100)}`;
+    const cents = Math.round(amount * 100);
+    const claimKey = `wdup:${crypto.createHash('sha256').update(email.toLowerCase()).digest('hex').slice(0, 16)}:${cents}`;
+    // Second, household-level key: the same card + cents from ANOTHER phone (the
+    // primary's Wallet tap and her Chase SMS for the one Sapphire charge). Vendor
+    // is not part of it (the two sources spell it differently); the trailing
+    // network word is dropped so "... Visa" equals the bare card name.
+    const cardPart = normCard(card).replace(/(visa|mastercard|americanexpress|amex)$/, '');
+    const cardKey = cardPart ? `wdup-card:${cardPart}:${cents}` : null;
     let claim = null;
+    let cardClaim = null;
     let guardStore = null;
     try {
       guardStore = createBotStore(getDb());
       const r = await guardStore.claimWindow(claimKey, { windowMs: DUP_WINDOW_MS, takeoverMs: DUP_TAKEOVER_MS, vendor });
+      let blocked = null;
       if (r.claimed) {
         claim = r;
+        if (cardKey) {
+          try {
+            const c = await guardStore.claimWindow(cardKey, { windowMs: DUP_CARD_WINDOW_MS, takeoverMs: DUP_TAKEOVER_MS, vendor });
+            if (c.claimed) {
+              cardClaim = c;
+            } else {
+              // Another phone already has this charge: give our email claim back.
+              try { await guardStore.releaseClaim(claimKey, claim.token); }
+              catch (e) { await reportError('WAL-005', e, { step: 'release', vendor, amount }); }
+              claim = null;
+              blocked = { ...c, by: 'card' };
+            }
+          } catch (e) {
+            await reportError('WAL-005', e, { step: 'card-claim', vendor, amount });
+          }
+        }
       } else {
-        const ageSec = Math.round(r.ageMs / 1000);
-        console.log(`wallet-webhook: duplicate_recent ${vendor} $${amount} (${ageSec}s after "${r.vendor}", vendorMatch=${r.vendor.toLowerCase() === vendor.toLowerCase()})`);
-        await notifyDuplicateSkipped({ store: guardStore, email, source, vendor, amount, card, category, txDate, monthName, sheetId, priorVendor: r.vendor, ageSec, fx });
+        blocked = r;
+      }
+      if (blocked) {
+        const ageSec = Math.round(blocked.ageMs / 1000);
+        console.log(`wallet-webhook: duplicate_recent${blocked.by ? ` (${blocked.by})` : ''} ${vendor} $${amount} (${ageSec}s after "${blocked.vendor}", vendorMatch=${blocked.vendor.toLowerCase() === vendor.toLowerCase()})`);
+        await notifyDuplicateSkipped({ store: guardStore, email, source, vendor, amount, card, category, txDate, monthName, sheetId, priorVendor: blocked.vendor, ageSec, fx, by: blocked.by });
         res.status(200).json({
           ok: true, skipped: true, reason: 'duplicate_recent', vendor, amount,
           message: msgDuplicateSkipped({ amount, vendor, fx }),
@@ -425,14 +457,18 @@ export const walletWebhook = onRequest(
     }
     // Best-effort: bookkeeping trouble must never change the response or drop a charge.
     const settle = async () => {
-      if (!claim) return;
-      try { await guardStore.settleClaim(claimKey, claim.token); }
-      catch (e) { await reportError('WAL-005', e, { step: 'settle', vendor, amount }); }
+      for (const [k, c] of [[claimKey, claim], [cardKey, cardClaim]]) {
+        if (!c) continue;
+        try { await guardStore.settleClaim(k, c.token); }
+        catch (e) { await reportError('WAL-005', e, { step: 'settle', vendor, amount }); }
+      }
     };
     const release = async () => {
-      if (!claim) return;
-      try { await guardStore.releaseClaim(claimKey, claim.token); }
-      catch (e) { await reportError('WAL-005', e, { step: 'release', vendor, amount }); }
+      for (const [k, c] of [[claimKey, claim], [cardKey, cardClaim]]) {
+        if (!c) continue;
+        try { await guardStore.releaseClaim(k, c.token); }
+        catch (e) { await reportError('WAL-005', e, { step: 'release', vendor, amount }); }
+      }
     };
 
     // Set when a prompt was sent but its blob could not be parked; the write

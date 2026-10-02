@@ -74,11 +74,13 @@ export const tgCategoryPrompt = ({ vendor, amount, card, monthName, suggested, f
   `Best guess: ${suggested}. Tap the right one:`;
 
 /** Telegram text for the "skipped a likely duplicate" note (button: Log it anyway). */
-export const tgDuplicateNote = ({ vendor, amount, card, monthName, priorVendor, ageSec, fx }) =>
+export const tgDuplicateNote = ({ vendor, amount, card, monthName, priorVendor, ageSec, fx, by }) =>
   `⏭ Skipped a likely duplicate\n` +
   `${vendor} · ${usd(amount)}${fxNote(fx)}${card ? ` · ${card}` : ''} · ${shortMonth(monthName)}\n` +
   `${priorVendor ? `Looks like ${priorVendor} from ${ageSec}s ago. ` : ''}` +
-  `Same amount arrived from the same phone within 2 minutes. If it was a separate purchase, tap:`;
+  (by === 'card'
+    ? `Same amount on the same card arrived from another phone within 3 minutes. If it was a separate purchase, tap:`
+    : `Same amount arrived from the same phone within 2 minutes. If it was a separate purchase, tap:`);
 
 /** Daily nudge for a parked category charge (buttons: kbCategoryConfirm, same as the original prompt). */
 export const tgCategoryNudge = ({ vendor, amount, card, monthName, txDate, suggested, parkedHours, fromEmail }) =>
