@@ -1159,11 +1159,11 @@ describe('wallet-webhook — duplicate-source guard', () => {
     expect(dupKeys().every(k => k.startsWith('dup_skipped:111222333:'))).toBe(true);
   });
 
-  it('different amount, different email, or more than 2 minutes later => both are logged', async () => {
+  it('different amount, different email+card, or more than 3 minutes later => all are logged', async () => {
     await call(req({ body }));
     await call(req({ body: { ...body, amount: 11.47 } }));
-    await call(req({ body: { ...body, email: WIFE } }));
-    advance(121_000);
+    await call(req({ body: { ...body, email: WIFE, card: 'Chase Freedom Unlimited' } }));
+    advance(181_000);
     await call(req({ body }));
     expect(appendMock).toHaveBeenCalledTimes(4);
     expect(dupKeys()).toHaveLength(0);
@@ -1245,6 +1245,108 @@ describe('wallet-webhook — duplicate-source guard', () => {
     expect(second.status).toBe(200);
     expect(second.json.reason).toBe('duplicate_recent');
     expect(second.json.message).toMatch(/^⏭ \$11\.46 at Safeway looks like a duplicate/);
+  });
+
+  describe('cross-phone guard: same card + cents from a different email', () => {
+    const SAPPHIRE = 'Chase Sapphire Reserve';
+    const tap = { ...body, card: SAPPHIRE, source: 'ios-wallet' };
+    const sms = { ...body, email: WIFE, card: `${SAPPHIRE} Visa`, merchant: 'EXAMPLE STORE #0001', source: 'android-chase-sms' };
+    const guardKeys = () => [...fakeDb.docs.keys()].filter(k => k.startsWith('wdup'));
+
+    it('the primary tap and her SMS for the same Sapphire charge log exactly once', async () => {
+      const first = await call(req({ body: tap }));
+      advance(30_000);
+      const second = await call(req({ body: sms }));
+
+      expect(first.json.category).toBe('Grocery');
+      expect(second.json).toMatchObject({ ok: true, skipped: true, reason: 'duplicate_recent', amount: 11.46 });
+      expect(appendMock).toHaveBeenCalledTimes(1);
+      expect(appendMock.mock.calls[0][0].paymentMethod).toBe(SAPPHIRE);
+    });
+
+    it('works in the other order too (SMS first, then the tap)', async () => {
+      await call(req({ body: sms }));
+      advance(30_000);
+      expect((await call(req({ body: tap }))).json.reason).toBe('duplicate_recent');
+      expect(appendMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('matches even when her card list does not hold the card (raw "... Visa" vs the held name)', async () => {
+      getSettingsMock.mockImplementation(async (e) => (e === WIFE ? { cards: [] } : { cards: [SAPPHIRE] }));
+      await call(req({ body: tap }));
+      expect((await call(req({ body: sms }))).json.reason).toBe('duplicate_recent');
+      expect(appendMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses its own Telegram copy; the same-phone copy is unchanged', async () => {
+      await call(req({ body: tap }));
+      advance(30_000);
+      await call(req({ body: sms }));
+      expect(telegramSend.mock.calls.at(-1)[1]).toBe(
+        '⏭ Skipped a likely duplicate\nSafeway · $11.46 · Chase Sapphire Reserve Visa · Sep 2026\n' +
+        'Looks like Safeway from 30s ago. Same amount on the same card arrived from another phone within 3 minutes. If it was a separate purchase, tap:'
+      );
+      expect(telegramSend.mock.calls.at(-1)[2][0][0].callback_data).toMatch(/^DUPLOG:/);
+    });
+
+    it('a different card or a different amount is NOT a duplicate', async () => {
+      await call(req({ body: tap }));
+      await call(req({ body: { ...sms, card: 'Chase Freedom Unlimited Visa' } }));
+      await call(req({ body: { ...sms, amount: 11.47 } }));
+      expect(appendMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('the card key lasts 3 minutes while the email key stays at 2', async () => {
+      await call(req({ body: tap }));
+      advance(150_000);
+      expect((await call(req({ body: sms }))).json.reason).toBe('duplicate_recent');
+      // same email again at 150 s is past the 2-minute email window but inside the card window
+      expect((await call(req({ body: tap }))).json.reason).toBe('duplicate_recent');
+      advance(31_000); // 181 s
+      expect((await call(req({ body: sms }))).json.category).toBe('Grocery');
+    });
+
+    it('requests with no card keep the email-key-only behaviour', async () => {
+      const noCard = { ...body, card: undefined };
+      await call(req({ body: noCard }));
+      await call(req({ body: { ...noCard, email: WIFE } }));
+      expect(appendMock).toHaveBeenCalledTimes(2);
+      expect((await call(req({ body: noCard }))).json.reason).toBe('duplicate_recent');
+    });
+
+    it('a card-key block releases the blocked request\'s email claim', async () => {
+      await call(req({ body: tap }));
+      await call(req({ body: sms }));
+      expect(guardKeys().filter(k => k.startsWith('wdup:'))).toHaveLength(1); // only the primary's
+      expect(guardKeys().filter(k => k.startsWith('wdup-card:'))).toHaveLength(1);
+    });
+
+    it('a failed write (500) releases BOTH claims so her SMS can still log', async () => {
+      appendMock.mockRejectedValueOnce(new Error('sheets down'));
+      expect((await call(req({ body: tap }))).status).toBe(500);
+      expect(guardKeys()).toHaveLength(0);
+      expect((await call(req({ body: sms }))).json.category).toBe('Grocery');
+    });
+
+    it('a month-not-found 422 releases BOTH claims', async () => {
+      appendMock.mockRejectedValueOnce(new Error('No sheet found for month September 2026'));
+      expect((await call(req({ body: tap }))).status).toBe(422);
+      expect(guardKeys()).toHaveLength(0);
+    });
+
+    it('a parked charge settles BOTH claims, so the other phone does not prompt again', async () => {
+      groqSays('Travel', 0.4); // unconfident => parked
+      const first = await call(req({ body: tap }));
+      expect(first.json.pendingCategory).toBe(true);
+      expect(guardKeys().map(k => fakeDb.docs.get(k).v.status)).toEqual(['done', 'done']);
+      expect((await call(req({ body: sms }))).json.reason).toBe('duplicate_recent');
+      expect(telegramSend.mock.calls.filter(c => String(c[1]).startsWith('🤔 Categorize'))).toHaveLength(1);
+    });
+
+    it('a successful write settles BOTH claims', async () => {
+      await call(req({ body: tap }));
+      expect(guardKeys().map(k => fakeDb.docs.get(k).v.status)).toEqual(['done', 'done']);
+    });
   });
 
   it('non-duplicate happy path keeps exactly its pre-existing response keys', async () => {
