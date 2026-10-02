@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest';
 import { localToday } from '../../functions/lib/_time.mjs';
 import { createFakeDb } from './helpers/fake-firestore.js';
 
@@ -1508,5 +1508,91 @@ describe('wallet-webhook — foreign currency', () => {
     const res = await call(req({ body: rawBody }));
     expect(telegramSend.mock.calls.at(-1)[1]).toContain('Xt Network Sas · $18.33 (€16.00 converted at 0.873)');
     expect(res.json.message).toContain('(€16.00 converted at 0.873)');
+  });
+});
+
+
+/* ── Chase SMS: the date in the text is Eastern; file by the household's local date ── */
+
+describe('wallet-webhook — raw-text date from the Chase SMS format', () => {
+  const EMAIL = 'primary@example.com';
+  const smsText = (when) =>
+    `Chase Example Card Visa: You made a $12.34 transaction with EXAMPLE STORE #0001 on ${when} ET.`;
+  const mockParsed = (purchase_date) =>
+    extractMock.mockResolvedValue({ ok: true, data: {
+      store_name: 'Example Store', total_amount: 12.34, reward_category: 'Misc',
+      purchase_date, payment_method: null, is_purchase: true, non_purchase_kind: null,
+    } });
+
+  afterEach(() => vi.useRealTimers());
+
+  it('files a late-evening Pacific charge on the last day of the month under that month', async () => {
+    // The model reads the text literally: Oct 1. The household was still on Sep 30.
+    mockParsed('2026-10-01');
+    const res = await call(req({ body: { text: smsText('Oct 1, 2026 at 2:30 AM'), email: EMAIL } }));
+
+    expect(res.status).toBe(200);
+    expect(sheetIdMock).toHaveBeenCalledWith('September 2026');
+    expect(appendMock.mock.calls[0][0]).toMatchObject({ txDate: '2026-09-30', monthName: 'September 2026' });
+  });
+
+  it('uses the text date even when the model returned no date', async () => {
+    mockParsed(null);
+    await call(req({ body: { text: smsText('Sep 20, 2026 at 12:05 AM'), email: EMAIL, sheetId: 'sheet-abc' } }));
+    expect(appendMock.mock.calls[0][0].txDate).toBe('2026-09-19');
+  });
+
+  it('a delayed SMS keeps its true date, not the arrival date', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-05T12:00:00Z'));
+    mockParsed('2026-09-18');
+    await call(req({ body: { text: smsText('Sep 18, 2026 at 9:46 PM'), email: EMAIL } }));
+
+    expect(sheetIdMock).toHaveBeenCalledWith('September 2026');
+    expect(appendMock.mock.calls[0][0].txDate).toBe('2026-09-18');
+  });
+
+  it('an explicit body.date still wins over the text', async () => {
+    mockParsed('2026-10-01');
+    await call(req({ body: { text: smsText('Oct 1, 2026 at 2:30 AM'), date: '2026-09-29', email: EMAIL, sheetId: 'sheet-abc' } }));
+    expect(appendMock.mock.calls[0][0].txDate).toBe('2026-09-29');
+  });
+
+  it('falls back to the model date when the text has no Chase date pattern', async () => {
+    mockParsed('2026-08-12');
+    await call(req({ body: { text: 'Little Oddfellows, Portland, OR $17.58 on Aug 12', email: EMAIL, sheetId: 'sheet-abc' } }));
+    expect(appendMock.mock.calls[0][0].txDate).toBe('2026-08-12');
+  });
+
+  it.each([
+    ['Amex', 'Example Store, Portland, OR $17.58'],
+    ['Capital One', 'Your purchase for $23.10 at EXAMPLE*0001 was approved.'],
+  ])('%s notification with no date falls to the local today', async (_n, text) => {
+    mockParsed(null);
+    await call(req({ body: { text, email: EMAIL, sheetId: 'sheet-abc' } }));
+    expect(appendMock.mock.calls[0][0].txDate).toBe(localToday());
+  });
+});
+
+
+describe('wallet-webhook — Chase SMS card and vendor pass-through', () => {
+  const EMAIL = 'primary@example.com';
+  const HELD = ['Chase Sapphire Reserve', 'Chase Freedom Unlimited', 'Chase Debit Card - Anu'];
+
+  it.each([
+    ['Chase Sapphire Reserve Visa', 'Chase Sapphire Reserve'],
+    ['Chase Freedom Unlimited Visa', 'Chase Freedom Unlimited'],
+  ])('logs a "%s" text under the held card name', async (prefix, held) => {
+    getSettingsMock.mockResolvedValue({ cards: HELD });
+    extractMock.mockResolvedValue({ ok: true, data: {
+      store_name: 'Example Store', total_amount: 12.34, reward_category: 'Misc',
+      payment_method: prefix, is_purchase: true, non_purchase_kind: null,
+    } });
+    const text = `${prefix}: You made a $12.34 transaction with EXAMPLE STORE #0001 on Sep 18, 2026 at 9:46 PM ET.`;
+    const res = await call(req({ body: { text, email: EMAIL, sheetId: 'sheet-abc' } }));
+
+    expect(res.status).toBe(200);
+    expect(extractMock).toHaveBeenCalledWith(text, { detectNonPurchase: true });
+    expect(appendMock.mock.calls[0][0]).toMatchObject({ amount: 12.34, paymentMethod: held });
   });
 });

@@ -262,6 +262,16 @@ Automate, **not** Tasker or MacroDroid. Flows are block diagrams; the pieces:
 1. **SMS received** block; sender = Chase's short code or sender ID (check the number in a real text). This block sees **SMS only**: if her Chase texts arrive over RCS in Google Messages, the block will not fire. Fallback: a **Notification posted** block on the Messages app package.
 2. Same HTTP request; `text` = the message body; `email` = `<other phone email>`.
 
+**What the text looks like** (synthetic example; the real alerts come from short code 24273):
+
+```
+Chase Example Card Visa: You made a $12.34 transaction with EXAMPLE STORE #0001 on Sep 18, 2026 at 9:46 PM ET.
+```
+
+- **Send the body verbatim.** The backend parses card, vendor and amount; the card prefix ("Chase Sapphire Reserve Visa") is resolved to the card name held in that user's settings. Other Chase texts (one-time codes, balance alerts, "payment received") are skipped as non-purchases.
+- **The time in the text is Eastern ("ET"), not local.** The backend converts it to the household's timezone before choosing the day and month sheet, so a charge made at 11:30 PM Pacific on the last day of a month (shown as 2:30 AM ET on the 1st) is filed under the earlier month. A delayed text keeps its true date. Texts without a date (Amex, Capital One) use the arrival day.
+- **Descriptors are raw** (`DD *...`, `SQ *...`, store numbers, `... TEMP AUTH ...` pre-authorisations). A pre-authorisation and the later final charge both arrive as separate purchases.
+
 ### C. Keep Automate alive (this is where it fails silently)
 
 - Settings → Apps → Automate → Battery → **Unrestricted**.
