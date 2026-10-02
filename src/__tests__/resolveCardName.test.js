@@ -229,3 +229,26 @@ describe('card resolver — backend/frontend mirror parity', () => {
     }
   });
 });
+
+
+describe('resolveCardName — Chase text-alert card prefixes', () => {
+  const HELD = ['Chase Sapphire Reserve', 'Chase Freedom Unlimited', 'Chase Debit Card - Anu', 'Bilt Blue Card'];
+
+  it.each([
+    ['Chase Sapphire Reserve Visa', 'Chase Sapphire Reserve'],
+    ['Chase Freedom Unlimited Visa', 'Chase Freedom Unlimited'],
+    ['Chase Freedom Unlimited Mastercard', 'Chase Freedom Unlimited'],
+  ])('resolves "%s" to the held card', (raw, held) => {
+    expect(resolveCardName(raw, HELD)).toBe(held);
+  });
+
+  it('never resolves a Chase credit-card prefix to the Chase debit card', () => {
+    expect(resolveCardName('Chase Sapphire Reserve Visa', HELD)).not.toMatch(/debit/i);
+    expect(resolveCardName('Chase Freedom Unlimited Visa', HELD)).not.toMatch(/debit/i);
+  });
+
+  it('does not invent a card the user does not hold', () => {
+    expect(resolveCardName('Chase Sapphire Preferred Visa', HELD)).toBe('');
+    expect(resolveCardName('Chase Sapphire Reserve Visa', ['Chase Debit Card - Anu'])).toBe('');
+  });
+});

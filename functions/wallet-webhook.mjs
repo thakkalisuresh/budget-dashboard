@@ -5,7 +5,7 @@
  * Categorizes (smart rules → Groq → extractor), writes to Google Sheets, and confirms via push.
  */
 import { onRequest } from 'firebase-functions/v2/https';
-import { currentMonthName, currentMonthYear, monthNameFromDateStr, monthYearFromDateStr, previousMonthName, localToday } from './lib/_time.mjs';
+import { currentMonthName, currentMonthYear, monthNameFromDateStr, monthYearFromDateStr, previousMonthName, localToday, dateFromChaseSms } from './lib/_time.mjs';
 import webpush from 'web-push';
 import crypto from 'node:crypto';
 import { extractTransactionText, CATEGORIES } from './lib/_extraction.mjs';
@@ -206,7 +206,10 @@ export const walletWebhook = onRequest(
             amountFromParsed = true;
           }
           if (!card && parsed.payment_method) card = parsed.payment_method;
-          if (!txDate && parsed.purchase_date) txDate = parsed.purchase_date;
+          // The text's own date is Eastern wall-clock; convert it to the
+          // household's local date deterministically and prefer it over the
+          // model's literal reading (which can land in the next month).
+          if (!txDate) txDate = dateFromChaseSms(rawText) || parsed.purchase_date || null;
         }
       } catch (e) {
         await reportError('WAL-003', e, { textLength: rawText.length });
