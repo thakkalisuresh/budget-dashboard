@@ -3,7 +3,7 @@
 > **Generated file — do not edit by hand.**
 > Source of truth: `functions/lib/_error-codes.mjs`. Regenerate with `npm run errdoc`.
 
-65 codes across 13 domains.
+66 codes across 13 domains.
 
 Codes appear wherever the failure surfaces: in the bot's reply, on the
 dashboard crash screen, in the wallet webhook response body, in Cloud Logging,
@@ -81,6 +81,7 @@ and in the daily Telegram digest.
 | [`WAL-005`](#wal-005) | degraded | Duplicate guard unavailable |
 | [`WAL-006`](#wal-006) | degraded | Wallet heartbeat write failed |
 | [`WAL-007`](#wal-007) | degraded | Daily digest step failed |
+| [`WAL-008`](#wal-008) | degraded | Foreign-currency charge not converted |
 | [`FX-001`](#fx-001) | degraded | Currency conversion failed |
 | [`FX-002`](#fx-002) | degraded | Unknown currency |
 | [`WEB-001`](#web-001) | fatal | Dashboard render crashed |
@@ -581,6 +582,14 @@ and in the daily Telegram digest.
 **Why it happens.** One of the 08:00 job's steps (error digest, parked-charge nudge or wallet heartbeat) threw. The other steps still ran.
 
 **What to do.** The context names the step. Check the function logs for errorDigest around 08:00 Pacific.
+
+### WAL-008
+
+**Foreign-currency charge not converted** · `degraded`
+
+**Why it happens.** A wallet notification in a non-USD currency (for example €16.00) arrived, but the exchange rate could not be looked up or the currency code is unknown. The charge was NOT logged and no duplicate-guard claim was taken; the phone banner and the household primary's Telegram both say so.
+
+**What to do.** Add the charge by hand (the card issuer's app notification, in USD, is the exact amount). If it repeats for a normal currency, check that open.er-api.com is reachable.
 
 ## FX — Currency conversion
 

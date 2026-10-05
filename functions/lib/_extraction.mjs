@@ -115,9 +115,9 @@ Rules:
 - store_name: Merchant/vendor name from the text (for transfers, use the recipient name)
 - purchase_date: Date in YYYY-MM-DD if mentioned. If not, use null
 ${dateRules(today)}
-- total_amount: The charge amount. Positive number, no currency symbol
+- total_amount: The charge amount exactly as printed, in its ORIGINAL currency. Positive number, no currency symbol. Do not convert it to dollars
 - tax_amount: null (text usually doesn't mention tax separately)
-- currency: 3-letter ISO code (USD, INR, EUR, GBP, etc.). Detect from symbols ($, \\u20b9, \\u20ac, \\u00a3) or text. Default "USD"
+- currency: 3-letter ISO code of the currency total_amount is written in. Detect from the symbol or code in the text: $ = USD, € = EUR, £ = GBP, ₹ = INR (also "Rs" and "INR"), or a printed code such as CAD, AUD, CHF, JPY. "€16.00" is total_amount 16 with currency "EUR". Default "USD" only when the text shows a $ or no currency at all
 - items: Always empty []
 - reward_category: MUST be exactly one of: ${CATEGORIES.join(', ')}. Pick closest match based on merchant. Use "Misc" if unclear. For transfers, set to null.
 - is_transfer: true if this is a peer-to-peer payment (Zelle, Venmo, PayPal P2P, bank transfer "to" someone). false for merchant charges.

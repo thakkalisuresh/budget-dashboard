@@ -258,6 +258,34 @@ describe('confirm-first add', () => {
     }
   });
 
+  it('files a repeat vendor under the category the user gave it before, without a guess flag', async () => {
+    vi.stubEnv('GROQ_API_KEY', 'test-groq-key');
+    try {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ choices: [{ message: { content: '{"category":"Travel","confidence":0.3}' } }] }),
+      });
+      getRecentExpenses.mockResolvedValue([
+        { vendor: 'Petrol', amount: 40, txDate: '2026-05-01', category: 'Health' },
+        { vendor: 'Petrol', amount: 35, txDate: '2026-05-08', category: 'Health' },
+      ]);
+      const ctx = makeCtx();
+      await handleTextReply(ctx, 'Add petrol $38.00');
+
+      expect(lastSent(ctx).text).toContain('Category: Health');
+      expect(lastSent(ctx).text).not.toContain('a guess');
+      expect(mockFetch).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+      vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-bot-token');
+      vi.stubEnv('TELEGRAM_ALLOWED_USERS', '123456789');
+      vi.stubEnv('GEMINI_API_KEY', 'test-gemini-key');
+      vi.stubEnv('ANTHROPIC_API_KEY', 'sk-test');
+      vi.stubEnv('ALLOWED_EMAILS', 'nair.sabarish97@gmail.com');
+      vi.stubEnv('SITE_URL', 'https://test-dashboard.netlify.app');
+    }
+  });
+
   it('applies a card rule to the proposal', async () => {
     getUserSettings.mockResolvedValue({
       cards: ['Amex BCP'],

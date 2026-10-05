@@ -2559,21 +2559,16 @@ async function prepareExpense(ctx, input) {
   const history = vendorHistory(recent, vendor);
 
   // An explicitly named category is the user's own words — never second-guessed.
-  // Otherwise: smart rules → Groq → 'Misc', with needsConfirm below 0.75.
+  // Otherwise: smart rules → the user's own past filings of this vendor → Groq →
+  // 'Misc', with needsConfirm below CONFIDENCE_THRESHOLD.
   let resolvedCategory = CATEGORIES.find(c => c.toLowerCase() === String(category || '').toLowerCase()) || null;
   let needsConfirm = false;
   if (!resolvedCategory) {
     const decision = await resolveCategory({
-      vendor, amount, extractedCategory: null, categories: CATEGORIES, settings,
+      vendor, amount, extractedCategory: null, categories: CATEGORIES, settings, history: recent,
     });
     resolvedCategory = decision.category;
     needsConfirm = decision.needsConfirm;
-    // Past rows for this vendor are the user's own filing decision — better
-    // evidence than an LLM guess, so they settle a shaky one.
-    if (needsConfirm && history?.category) {
-      resolvedCategory = history.category;
-      needsConfirm = false;
-    }
   }
 
   // Rules first (explicit intent), then what the card history shows.

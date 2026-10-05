@@ -35,10 +35,20 @@ export const CARD_ALIASES = {
   // Capital One Quicksilver
   c1quicksilver: 'Capital One Quicksilver',
   capitalonequicksilver: 'Capital One Quicksilver',
+  quicksilvercreditcard: 'Capital One Quicksilver', // title of the Capital One app notification
   // Bilt
   bilt: 'Bilt Blue Card',
   biltmastercard: 'Bilt Blue Card',
 };
+
+// Notification titles can end in a masked last four: "Quicksilver Credit
+// Card…1234", "… ending in 1234", "•••• 1234", "(…1234)", "x1234", "- 1234".
+// Strip only a SHORT (3-4 digit) tail behind an explicit mask/separator so
+// digits that belong to a card name are never eaten.
+const MASK = '(?:…|\\.{2,}|[*•·●]+|\\(\\s*(?:…|\\.{2,}|[*•·●]+|x)?|\\s(?:ending(?:\\s+in)?|x|[-–—]))';
+const MASKED_LAST4 = new RegExp(`\\s*${MASK}\\s*\\d{3,4}\\s*\\)?\\s*$`, 'i');
+// A title the iOS notification stack truncated: ends in an ellipsis, no digits.
+const TRAILING_ELLIPSIS = /\s*(?:…|\.{2,})\s*$/;
 
 /**
  * Fuzzy-match a raw card string (Vision output, or a wallet notification
@@ -54,17 +64,50 @@ export function resolveCardName(raw, cards = []) {
   let r = normCard(raw);
   if (!r) return '';
 
+  // A held name that already equals the raw text wins before any stripping, so
+  // a card legitimately named "Visa - 1234" is never mangled.
+  for (const c of cards) if (normCard(c) === r) return c;
+
+  // Drop a masked last-four, then a trailing ellipsis (truncated title).
+  const str = String(raw);
+  const noDigits = str.replace(MASKED_LAST4, '');
+  const truncated = TRAILING_ELLIPSIS.test(noDigits);
+  r = normCard(noDigits);
+  if (!r) return '';
+
   // Expand a known shorthand before matching, so "BCP" can reach the canonical
   // name it shares no usable substring with.
   if (CARD_ALIASES[r]) r = normCard(CARD_ALIASES[r]);
+  else if (truncated && r.length >= 5) {
+    // "Quicksilver Credit C…": expand only when exactly one canonical name's
+    // alias starts with the text; otherwise fall through to normal matching.
+    const targets = new Set(Object.entries(CARD_ALIASES)
+      .filter(([k]) => k.startsWith(r)).map(([, v]) => v));
+    if (targets.size === 1) r = normCard([...targets][0]);
+  }
 
   for (const c of cards) if (normCard(c) === r) return c;
   // Substring either direction (Vision may return "Sapphire Reserve" for
   // "Chase Sapphire Reserve"). Guard with a min length so short names like
   // "Cash" don't match "...activecash".
+  //
+  // Never first-wins: two held cards that both fit ("Chase Debit" for
+  // "Chase Debit Card - A" and "- B") must not be settled by list order.
+  //   * text CONTAINS held card names: the longest unique one wins.
+  //   * held names CONTAIN the text: only when exactly one does.
+  // Anything ambiguous returns '' and the caller keeps the raw string.
+  const contained = [];
+  const containing = [];
   for (const c of cards) {
     const nc = normCard(c);
-    if (nc.length >= 5 && r.length >= 5 && (nc.includes(r) || r.includes(nc))) return c;
+    if (nc.length < 5 || r.length < 5) continue;
+    if (r.includes(nc)) contained.push({ c, n: nc.length });
+    else if (nc.includes(r)) containing.push(c);
   }
-  return '';
+  if (contained.length) {
+    const max = Math.max(...contained.map(x => x.n));
+    const top = contained.filter(x => x.n === max);
+    return top.length === 1 ? top[0].c : '';
+  }
+  return containing.length === 1 ? containing[0] : '';
 }

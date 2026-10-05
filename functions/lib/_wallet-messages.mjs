@@ -8,24 +8,38 @@
 const usd = (n) => `$${Number(n).toFixed(2)}`;
 const onCard = (card) => (card ? ` on ${card}` : '');
 
+const SYMBOLS = { EUR: '€', GBP: '£', INR: '₹' };
+
+/** A native-currency amount: "€16.00", or "16.00 CHF" when there is no symbol we print. */
+export const money = (n, currency) =>
+  SYMBOLS[currency] ? `${SYMBOLS[currency]}${Number(n).toFixed(2)}` : `${Number(n).toFixed(2)} ${currency}`;
+
+/**
+ * " (€16.00 converted at 0.873)" for a charge the webhook converted to USD, else "".
+ * The rate is units of the original currency per USD. The result is an ESTIMATE:
+ * the bank's own rate and fees differ by a few percent.
+ */
+export const fxNote = (fx) =>
+  fx ? ` (${money(fx.original, fx.currency)} converted at ${Number(fx.rate).toFixed(3)})` : '';
+
 /** "September 2026" → "Sep 2026" */
 export const shortMonth = (monthName) => String(monthName || '').replace(/^([A-Za-z]{3})[A-Za-z]*/, '$1');
 
-export const msgWritten = ({ amount, vendor, card, category, monthName }) =>
-  `✅ ${usd(amount)} at ${vendor}${onCard(card)} → ${category}. Added to your ${monthName} budget in Fundient.`;
+export const msgWritten = ({ amount, vendor, card, category, monthName, fx }) =>
+  `✅ ${usd(amount)} at ${vendor}${fxNote(fx)}${onCard(card)} → ${category}. Added to your ${monthName} budget in Fundient.`;
 
-export const msgWrittenDuplicate = ({ amount, vendor, category, monthName, notified }) =>
-  `✅ ${usd(amount)} at ${vendor} → ${category}, added to ${monthName}. ` +
+export const msgWrittenDuplicate = ({ amount, vendor, category, monthName, notified, fx }) =>
+  `✅ ${usd(amount)} at ${vendor}${fxNote(fx)} → ${category}, added to ${monthName}. ` +
   `⚠️ Possible duplicate — ${notified ? 'check Telegram' : 'check History → Duplicates'}.`;
 
-export const msgNeedsCategory = ({ amount, vendor, monthName }) =>
-  `🤔 ${usd(amount)} at ${vendor} — I need a category. Pick one on Telegram and I'll add it to ${monthName}.`;
+export const msgNeedsCategory = ({ amount, vendor, monthName, fx }) =>
+  `🤔 ${usd(amount)} at ${vendor}${fxNote(fx)} — I need a category. Pick one on Telegram and I'll add it to ${monthName}.`;
 
-export const msgSplitParked = ({ amount, vendor }) =>
-  `🧾 ${usd(amount)} at ${vendor} — upload the receipt on Telegram to split it, or SKIP to log as one.`;
+export const msgSplitParked = ({ amount, vendor, fx }) =>
+  `🧾 ${usd(amount)} at ${vendor}${fxNote(fx)} — upload the receipt on Telegram to split it, or SKIP to log as one.`;
 
-export const msgDuplicateSkipped = ({ amount, vendor }) =>
-  `⏭ ${usd(amount)} at ${vendor} looks like a duplicate of a charge just logged — skipped. ` +
+export const msgDuplicateSkipped = ({ amount, vendor, fx }) =>
+  `⏭ ${usd(amount)} at ${vendor}${fxNote(fx)} looks like a duplicate of a charge just logged — skipped. ` +
   `Tap "Log it anyway" on Telegram if it was separate.`;
 
 export const msgUnreadable = (field) => ({
@@ -40,6 +54,13 @@ export const msgNoSheet = (monthName) =>
 export const msgWriteFailed = ({ amount, vendor }) =>
   `❌ Save FAILED — this charge was NOT logged. Re-enter ${usd(amount)} at ${vendor} by hand.`;
 
+/** A foreign charge whose rate could not be looked up: nothing was written. */
+export const msgConvertFailed = ({ original, currency }) =>
+  `⚠️ Couldn't convert ${money(original, currency)} to dollars — nothing was logged. Add it by hand.`;
+
+export const tgConvertFailed = ({ original, currency, vendor }) =>
+  `⚠️ Couldn't convert ${money(original, currency)} at ${vendor} to dollars — not logged. Add it by hand.`;
+
 export const msgVendorDisabled = (vendor) =>
   `ℹ️ ${vendor} is on your ignore list — nothing was logged.`;
 
@@ -47,17 +68,19 @@ export const msgUnauthorized = () =>
   '❌ Fundient rejected the automation key — nothing was logged.';
 
 /** Telegram text for the category-confirm prompt. */
-export const tgCategoryPrompt = ({ vendor, amount, card, monthName, suggested }) =>
+export const tgCategoryPrompt = ({ vendor, amount, card, monthName, suggested, fx }) =>
   `🤔 Categorize this charge\n` +
-  `${vendor} · ${usd(amount)}${card ? ` · ${card}` : ''} · ${shortMonth(monthName)}\n` +
+  `${vendor} · ${usd(amount)}${fxNote(fx)}${card ? ` · ${card}` : ''} · ${shortMonth(monthName)}\n` +
   `Best guess: ${suggested}. Tap the right one:`;
 
 /** Telegram text for the "skipped a likely duplicate" note (button: Log it anyway). */
-export const tgDuplicateNote = ({ vendor, amount, card, monthName, priorVendor, ageSec }) =>
+export const tgDuplicateNote = ({ vendor, amount, card, monthName, priorVendor, ageSec, fx, by }) =>
   `⏭ Skipped a likely duplicate\n` +
-  `${vendor} · ${usd(amount)}${card ? ` · ${card}` : ''} · ${shortMonth(monthName)}\n` +
+  `${vendor} · ${usd(amount)}${fxNote(fx)}${card ? ` · ${card}` : ''} · ${shortMonth(monthName)}\n` +
   `${priorVendor ? `Looks like ${priorVendor} from ${ageSec}s ago. ` : ''}` +
-  `Same amount arrived from the same phone within 2 minutes. If it was a separate purchase, tap:`;
+  (by === 'card'
+    ? `Same amount on the same card arrived from another phone within 3 minutes. If it was a separate purchase, tap:`
+    : `Same amount arrived from the same phone within 2 minutes. If it was a separate purchase, tap:`);
 
 /** Daily nudge for a parked category charge (buttons: kbCategoryConfirm, same as the original prompt). */
 export const tgCategoryNudge = ({ vendor, amount, card, monthName, txDate, suggested, parkedHours, fromEmail }) =>
