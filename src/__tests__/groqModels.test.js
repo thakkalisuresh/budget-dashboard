@@ -36,7 +36,7 @@ beforeEach(() => {
 
 describe('model constants', () => {
   it('no source file still names the retired model', () => {
-    for (const f of ['_categorize', '_extraction', '_agent', '_query']) {
+    for (const f of ['_categorize', '_extraction', '_agent', '_query', '_item-llm']) {
       const src = readFileSync(fileURLToPath(new URL(`../../functions/lib/${f}.mjs`, import.meta.url)), 'utf8');
       expect(src, f).not.toMatch(/llama-3\.3-70b/);
     }

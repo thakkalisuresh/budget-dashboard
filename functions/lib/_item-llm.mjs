@@ -20,9 +20,7 @@
  * Files starting with "_" are NOT deployed as standalone functions.
  */
 import { CONFIDENCE_THRESHOLD } from './_categorize.mjs';
-
-const GROQ_URL   = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = 'llama-3.3-70b-versatile';
+import { GROQ_URL, GROQ_TEXT_MODEL, groqParams, groqContent, reportGroqFailure } from './_groq.mjs';
 
 // A long Costco receipt is ~60 lines; the caps guard against a malformed or
 // hostile payload, not a limit the real flows are expected to reach.
@@ -125,9 +123,13 @@ export async function categorizeItemsBatch({ vendor, items, categories, examples
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: GROQ_MODEL,
-        // ~25 tokens per {i, category, confidence} triple, plus slack.
-        max_tokens: Math.min(4000, 200 + clean.items.length * 30),
+        model: GROQ_TEXT_MODEL,
+        ...groqParams(GROQ_TEXT_MODEL),
+        // ~25 tokens per {i, category, confidence} triple, plus slack. The base
+        // is generous because GROQ_TEXT_MODEL reasons before it answers and the
+        // reasoning tokens count here too — too small a budget and `content`
+        // comes back empty (see _groq.mjs / _categorize.mjs).
+        max_tokens: Math.min(4000, 512 + clean.items.length * 30),
         temperature: 0,
         response_format: { type: 'json_object' },
         messages: [
@@ -140,17 +142,24 @@ export async function categorizeItemsBatch({ vendor, items, categories, examples
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       console.warn('LLM-001 — Groq API error (item split):', err?.error?.message || res.status);
+      // A retired/unknown model id surfaces as LLM-004 in the daily digest; any
+      // other API error as LLM-001. Without this a dead model fails silently.
+      await reportGroqFailure(GROQ_TEXT_MODEL, res.status, err?.error);
       return none('llm-error');
     }
 
     const data = await res.json();
-    const raw = data.choices?.[0]?.message?.content?.trim();
+    // Only `content` holds the answer; a reasoning model's chain of thought
+    // arrives in message.reasoning and must never be parsed as one.
+    const raw = groqContent(data);
     if (!raw) return none('empty');
 
     return { results: parseResults(raw, clean.items.length, clean.categories) };
   } catch (e) {
-    // LLM-004 — degraded, never fatal: the user just picks the categories.
-    console.warn('LLM-004 — Item categorization unavailable:', e.message);
+    // Degraded, never fatal: the user just picks the categories. A thrown error
+    // here is a transport/network failure (no HTTP status to classify), so it
+    // is not reported as a model problem.
+    console.warn('LLM — item categorization unavailable (network):', e.message);
     return none('error');
   }
 }

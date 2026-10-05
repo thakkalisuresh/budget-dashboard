@@ -34,7 +34,7 @@ import {
 import {
   looksLikeMultiExpense, parseMultiExpense, classifyMulti, distributeGap, MAX_ITEMS,
 } from './_multi-expense.mjs';
-import { categorizeItems, categorizeItem, matchesSplitVendor } from './_item-categorizer.mjs';
+import { categorizeItem, matchesSplitVendor } from './_item-categorizer.mjs';
 import { currentMonthName, currentMonthYear, monthYearFromDateStr, localToday, resolveMonth } from './_time.mjs';
 import { lookupLearned, learnedExamples, buildMemoryRows, newSplitId } from './_item-memory.mjs';
 import { categorizeItemsBatch } from './_item-llm.mjs';

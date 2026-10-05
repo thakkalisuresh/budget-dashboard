@@ -1,7 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+// reportGroqFailure routes a dead/unknown model to the daily digest via
+// _error-log; mock it so the item path's digest wiring can be asserted without
+// pulling in firebase-admin.
+const reportError = vi.fn(() => Promise.resolve());
+vi.mock('../../functions/lib/_error-log.mjs', () => ({ reportError: (...a) => reportError(...a) }));
+
 import { categorizeItemsBatch, sanitizeItemInput, MAX_ITEMS, MAX_EXAMPLES } from '../../functions/lib/_item-llm.mjs';
+import { GROQ_TEXT_MODEL, __resetGroqReports } from '../../functions/lib/_groq.mjs';
 
 const CATEGORIES = ['Grocery', 'Misc', 'Health', 'Eating Out'];
+
+// The model id Groq retired (the Sept outages). The item path must never send it.
+const RETIRED_MODEL = 'llama-3.3-70b-versatile';
 
 /** A Groq-shaped success response wrapping `results`. */
 const groqOk = (results) => ({
@@ -122,5 +133,51 @@ describe('categorizeItemsBatch', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(results).toEqual([null]);
     expect(reason).toBe('unavailable');
+  });
+});
+
+// LANDMINE GUARD: _item-llm.mjs used to hardcode the retired llama-3.3-70b model
+// and had no reasoning_effort, so merged as-is the item step failed 100% and a
+// naive model swap returned empty content. These pin the shared reasoning-model
+// request shape and the digest wiring. Each FAILS against the old code: the
+// model/reasoning_effort assertions fail on the retired id + missing param, and
+// the LLM-004 assertion fails because the old catch only console.warn'd.
+describe('item categorizer uses the shared reasoning model (landmine guard)', () => {
+  const OLD_KEY = process.env.GROQ_API_KEY;
+  beforeEach(() => {
+    process.env.GROQ_API_KEY = 'test-key';
+    reportError.mockClear();
+    __resetGroqReports();
+  });
+  afterEach(() => {
+    if (OLD_KEY === undefined) delete process.env.GROQ_API_KEY;
+    else process.env.GROQ_API_KEY = OLD_KEY;
+    vi.restoreAllMocks();
+  });
+
+  it('sends GROQ_TEXT_MODEL with reasoning_effort:low — never the retired hardcoded id', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(groqOk([]));
+    await categorizeItemsBatch({ vendor: 'Costco', items: ['A'], categories: CATEGORIES, fetchImpl });
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body.model).toBe(GROQ_TEXT_MODEL);
+    expect(body.model).not.toBe(RETIRED_MODEL);
+    // gpt-oss-120b returns empty content without this — the naive-swap trap.
+    expect(body.reasoning_effort).toBe('low');
+    // Reasoning tokens count against the budget; a small base starved content.
+    expect(body.max_tokens ?? body.max_completion_tokens).toBeGreaterThanOrEqual(512);
+  });
+
+  it('reports a retired/unknown model to the digest as LLM-004 instead of failing silently', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({ error: { message: `The model \`${RETIRED_MODEL}\` does not exist`, code: 'model_not_found' } }),
+    });
+    const { results, reason } = await categorizeItemsBatch({ vendor: 'Costco', items: ['A'], categories: CATEGORIES, fetchImpl });
+    expect(results).toEqual([null]);
+    expect(reason).toBe('llm-error');
+    const calls = reportError.mock.calls.filter(c => c[0] === 'LLM-004');
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1].message).toContain(GROQ_TEXT_MODEL);
   });
 });
