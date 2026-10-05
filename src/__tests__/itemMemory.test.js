@@ -25,6 +25,22 @@ describe('normalizeItemName', () => {
     expect(normalizeItemName('OLIVE OIL 2 L')).toBe(normalizeItemName('OLIVE OIL'));
   });
 
+  it('keeps size/unit tokens rather than over-reduce a name to a <=2 char key', () => {
+    // Stripping brand "KS" + unit "2DZ" would leave a 2-char "fr" — a key a
+    // different short item could silently inherit the learned category of.
+    expect(normalizeItemName('KS FR 2DZ')).toBe('fr 2dz');
+    expect(normalizeItemName('KS FR 2DZ')).not.toBe('fr');
+    // Brand-strip still makes the branded and plain forms agree…
+    expect(normalizeItemName('KS FR 2DZ')).toBe(normalizeItemName('FR 2DZ'));
+    // …while genuinely different pack sizes stay distinct.
+    expect(normalizeItemName('FR 1DZ')).not.toBe(normalizeItemName('FR 2DZ'));
+  });
+
+  it('still collapses aggressively when the stripped key is long enough', () => {
+    expect(normalizeItemName('KS ORG PNT BTR 24OZ')).toBe('org pnt btr');
+    expect(normalizeItemName('KS ORG PNT BTR 24OZ')).toBe(normalizeItemName('ORG PNT BTR'));
+  });
+
   it('ignores punctuation and case', () => {
     expect(normalizeItemName('Ben & Jerry\'s')).toBe(normalizeItemName('BEN & JERRYS'));
     expect(normalizeItemName('  Milk  ')).toBe('milk');
