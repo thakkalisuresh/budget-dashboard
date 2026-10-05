@@ -5,6 +5,9 @@
 // on a timer so the dashboard stays roughly in sync with edits made in the sheet.
 // ════════════════════════════════════════════════════════════════════════════
 import { useState, useEffect, useCallback } from 'react';
+import { MOCK_503020 } from './mockData.js';
+
+const DEV_MOCK = import.meta.env.DEV && import.meta.env.VITE_DEV_MOCK === 'true';
 
 // Turn a raw spreadsheet cell into a clean value: empty → null; "$1,200" → 1200;
 // anything non-numeric is left as the original text.
@@ -22,6 +25,7 @@ export function use503020(sheetId, accessToken) {
   // useCallback memoizes this function so the effect below doesn't see a brand-new
   // function every render — it only changes when sheetId / accessToken change.
   const fetchData = useCallback(async () => {
+    if (DEV_MOCK) { setData(MOCK_503020); setLoading(false); return; }
     if (!sheetId) return;
     try {
       // Ask Google Sheets for cells A1:K20 of the tab literally named "50/30/20".
