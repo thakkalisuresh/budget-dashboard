@@ -4,6 +4,7 @@ import { updateVendorName, updateVendorAmounts, updateTransactionDate, unmarkNon
 import { CategoryPickerSheet } from './CategoryPickerSheet.jsx';
 import { findHighlightTarget, uuidSelector } from './txHighlight.js';
 import { txNoteKey } from './transactionNotes.js';
+import { relearnMovedSplit } from './sheetItemMemory.js';
 import { isRecurring } from './recurringExpenses.js';
 
 // ── Vendor logo helpers ───────────────────────────────────────────────────────
@@ -131,7 +132,7 @@ function VendorLogo({ name, size = 22, onEditDomain }) {
 /**
  * rows: Array of { rowIndex, description, amounts: number[] }
  */
-export function DetailPanel({ expense, rows, loading, onClose, accessToken, sheetId, onRefresh, currencySymbol = '$', onVendorRenamed, monthName, transactionNotes = {}, onUpdateNote, nonMonthlyVendors = [], onNonMonthlyChanged, onAddExpense, onAddForVendor, highlight = null, recurringExpenses = [], onToggleRecurring, cards = [] }) {
+export function DetailPanel({ expense, rows, loading, onClose, accessToken, sheetId, onRefresh, currencySymbol = '$', onVendorRenamed, monthName, transactionNotes = {}, onUpdateNote, nonMonthlyVendors = [], onNonMonthlyChanged, onAddExpense, onAddForVendor, highlight = null, recurringExpenses = [], onToggleRecurring, cards = [], userId = '' }) {
   const total = rows ? rows.reduce((s, r) => s + r.amounts.reduce((a, b) => a + b, 0), 0) : 0;
   // Scroll container, so the arrive-from-ledger highlight can find its row.
   const listRef = useRef(null);
@@ -374,8 +375,32 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
       for (const m of mv.members) {
         await moveTransactionCategory(expense, targetCategory, m, accessToken, sheetId, monthName, null);
       }
+      relearnMovedTransaction(mv, targetCategory);
       setMovingTx(null);
     });
+  };
+
+  // A moved transaction that came from a split receipt carries a splitId in its
+  // note. Re-teach every line item behind it, and carry the note across to the
+  // new category — the note is keyed by category, so leaving it behind would
+  // both lose the item list and orphan the splitId, making a second move
+  // unteachable. Best-effort throughout: the move itself has already succeeded.
+  const relearnMovedTransaction = (mv, targetCategory) => {
+    for (const m of mv.members) {
+      for (const amt of m.amounts) {
+        const oldKey = noteKeyFor(mv.vendor, amt);
+        const data = transactionNotes[oldKey];
+        if (!data?.splitId) continue;
+        relearnMovedSplit({
+          userId, accessToken,
+          splitId: data.splitId,
+          fromCategory: expense,
+          toCategory: targetCategory,
+        }).catch(() => {});
+        onUpdateNote?.(txNoteKey(sheetId, targetCategory, mv.vendor, amt), data);
+        onUpdateNote?.(oldKey, { note: '', tags: [] });
+      }
+    }
   };
 
   const openMoveFor = (members, vendor) => {

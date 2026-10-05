@@ -8,9 +8,14 @@ import {
 } from './receiptHelpers.js';
 import { startScanTiming } from './scanTiming.js';
 import { resolveMCC } from './vendorMCC.js';
-import { categorizeItems, matchesSplitVendor } from './itemCategorizer.js';
+import { matchesSplitVendor } from './itemCategorizer.js';
 import { buildCategoryItems, buildSplitNote } from './splitNotes.js';
 import { txNoteKey } from './transactionNotes.js';
+import { resolveKnownItems, pendingItems, applyLlmSuggestions, groupItems, foldRemainder } from './splitResolve.js';
+import { fetchItemMemory, appendItemMemory } from './sheetItemMemory.js';
+import { buildMemoryRows, learnedExamples, newSplitId } from './itemMemory.js';
+import { categorizeItemsWithLLM } from './itemCategorizeApi.js';
+import { CATEGORIES } from './sheetHelpers.js';
 
 // How many receipt/statement images to extract at once when several files are
 // selected. The Vision proxy allows 20 req/min per user, so 4 in flight stays
@@ -20,7 +25,7 @@ const EXTRACT_CONCURRENCY = 4;
 const CSR = 'Chase Sapphire Reserve';
 const TRAVEL_MCCS = new Set(['4511', '7011', 'CHASE_PORTAL']);
 
-export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, activeCategories = [], scanTriggerRef, smartRules = [], cards = [], cardRules = [], onSaveRecurring, onSaveTransactionNotes, splitReceiptVendors = [] }) {
+export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, activeCategories = [], scanTriggerRef, smartRules = [], cards = [], cardRules = [], onSaveRecurring, onSaveTransactionNotes, splitReceiptVendors = [], userId = '' }) {
   const [phase, setPhase]         = useState('idle');
   const [scanError, setScanError] = useState('');
   const [processingProgress, setProcessingProgress] = useState(null);
@@ -45,16 +50,27 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
   const [stmtTransactions, setStmtTransactions] = useState([]);
   const [stmtSavedCount, setStmtSavedCount]     = useState(0);
 
-  // Split-receipt state (Costco/Amazon → per-category split)
+  // Split-receipt state (Costco/Amazon → per-category split).
+  // ONE flat list holds every line item, whether learned history, the keyword
+  // tables, the LLM or the user decided it — and every one of them is editable
+  // on the review screen. Keeping the auto-sorted ones read-only (as this used
+  // to) meant a wrong keyword answer could never be corrected, so item memory
+  // would keep relearning the same mistake.
   const [splitVendor, setSplitVendor]       = useState('');
   const [splitTotal, setSplitTotal]         = useState(0);
   const [splitPaymentMethod, setSplitPaymentMethod] = useState('');
-  const [splitGroups, setSplitGroups]       = useState({});   // { category: subtotal } auto-sorted
-  const [splitItems, setSplitItems]         = useState([]);   // [{ name, amount, suggestion, category }]
-  // Line items behind each auto-categorized group, kept so the written
-  // transaction can carry a note saying what it was made of.
-  const [splitAutoGroups, setSplitAutoGroups] = useState([]); // [{ category, items, subtotal }]
+  const [splitItems, setSplitItems]         = useState([]);   // [{ name, amount, category, source, suggestion, confidence }]
+  const [splitAsking, setSplitAsking]       = useState(false); // batched LLM call in flight
   const [splitSavedSummary, setSplitSavedSummary] = useState(null);
+
+  // Item memory is loaded once per page load and reused across every receipt in
+  // the queue; the fetch is a round-trip and the log rarely changes mid-scan.
+  const memoryRef = useRef(null);
+  const loadMemory = useCallback(async () => {
+    if (memoryRef.current) return memoryRef.current;
+    memoryRef.current = await fetchItemMemory(userId, accessToken);
+    return memoryRef.current;
+  }, [userId, accessToken]);
 
   const [editingIndex, setEditingIndex]   = useState(null);
   const [editVendor, setEditVendor]       = useState('');
@@ -114,16 +130,38 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
       // Split-receipt vendor (Costco, Amazon…) with itemized lines → split by category
       if (matchesSplitVendor(result.vendor, splitReceiptVendors) &&
           Array.isArray(result.items) && result.items.length > 0 && result.amount != null) {
-        const { autoGrouped, uncategorized } = categorizeItems(result.items);
-        const groups = {};
-        for (const g of autoGrouped) groups[g.category] = g.subtotal;
-        setSplitAutoGroups(autoGrouped);
-        setSplitVendor(result.vendor);
+        const vendorName = result.vendor;
+        const memory = await loadMemory();
+
+        // Layers 1–2 are instant, so show the screen straight away rather than
+        // holding a fully-decided receipt behind a network call.
+        const resolved = resolveKnownItems(result.items, { memory, vendor: vendorName });
+        setSplitVendor(vendorName);
         setSplitTotal(result.amount);
-        setSplitPaymentMethod(resolveCard(result.paymentMethod, result.vendor, result.category || 'Misc'));
-        setSplitGroups(groups);
-        setSplitItems(uncategorized.map(u => ({ ...u, category: u.suggestion || '' })));
+        setSplitPaymentMethod(resolveCard(result.paymentMethod, vendorName, result.category || 'Misc'));
+        setSplitItems(resolved);
         setPhase('split-reviewing');
+
+        // Layer 3: one batched call for whatever is left, folded in when it
+        // lands. The user can start picking meanwhile — anything they have
+        // already answered is left alone.
+        const pending = pendingItems(resolved);
+        if (pending.length > 0) {
+          setSplitAsking(true);
+          try {
+            const results = await categorizeItemsWithLLM({
+              vendor: vendorName,
+              items: pending.map(p => p.item),
+              categories: CATEGORIES,
+              examples: learnedExamples(memory, vendorName),
+              accessToken,
+            });
+            // applyLlmSuggestions skips anything the user answered meanwhile.
+            setSplitItems(prev => applyLlmSuggestions(prev, pending, results));
+          } finally {
+            setSplitAsking(false);
+          }
+        }
         return;
       }
 
@@ -361,30 +399,16 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
   };
 
   // ── split helpers ────────────────────────────────────────────────────────
+  // A user edit marks the item 'user', which is what makes it a correction
+  // rather than a confirmation when it reaches item memory.
   const setSplitItemCategory = (i, category) =>
-    setSplitItems(prev => prev.map((it, j) => j === i ? { ...it, category } : it));
+    setSplitItems(prev => prev.map((it, j) => j === i ? { ...it, category, source: 'user', suggestion: null } : it));
 
-  // Final per-category totals = auto groups + user-assigned items, with the
-  // tax/fees/discount remainder folded into the largest group so it sums to total.
-  const computeSplitGroups = () => {
-    const groups = { ...splitGroups };
-    for (const it of splitItems) {
-      if (!it.category) continue;
-      groups[it.category] = Math.round(((groups[it.category] || 0) + it.amount) * 100) / 100;
-    }
-    const cats = Object.keys(groups);
-    if (cats.length === 0) return { groups, remainder: 0, remainderCategory: null };
-    const sum = Math.round(cats.reduce((s, c) => s + groups[c], 0) * 100) / 100;
-    const remainder = Math.round((splitTotal - sum) * 100) / 100;
-    let remainderCategory = null;
-    if (Math.abs(remainder) >= 0.01) {
-      remainderCategory = cats.reduce((a, b) => (groups[b] > groups[a] ? b : a), cats[0]);
-      groups[remainderCategory] = Math.round((groups[remainderCategory] + remainder) * 100) / 100;
-    }
-    return { groups, remainder, remainderCategory };
-  };
+  // Live per-category totals, tax/fees remainder folded into the largest group.
+  const splitGroups = groupItems(splitItems);
+  const computeSplitGroups = () => foldRemainder(splitGroups, splitTotal);
 
-  const splitReady = splitItems.every(it => !!it.category);
+  const splitReady = splitItems.length > 0 && splitItems.every(it => !!it.category);
 
   const handleSplitSave = async () => {
     setFormErr('');
@@ -392,8 +416,10 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     setPhase('split-saving');
     try {
       const { groups, remainder, remainderCategory } = computeSplitGroups();
-      const itemsByCategory = buildCategoryItems(splitAutoGroups, splitItems);
+      // Every item now lives in splitItems, so there are no separate auto groups.
+      const itemsByCategory = buildCategoryItems([], splitItems);
       const vendor = splitVendor.trim();
+      const splitId = newSplitId();
       const logged = [];
       const notes  = {};
       for (const [category, amount] of Object.entries(groups)) {
@@ -406,11 +432,27 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
         const note = buildSplitNote(itemsByCategory[category] || [], {
           remainder: category === remainderCategory ? remainder : 0,
         });
-        if (note) notes[txNoteKey(sheetId, category, vendor, amount)] = note;
+        // splitId ties this transaction back to its rows in the item-memory
+        // log, so moving it to another category later can re-teach every item
+        // it was made of. Cheap to store; the note text itself is capped and
+        // truncated, so it cannot be parsed back into a reliable item list.
+        if (note) notes[txNoteKey(sheetId, category, vendor, amount)] = { ...note, splitId };
       }
       // One settings write for the whole split: updateSettings is async and
       // batched, so calling it per category would queue N saves of the same blob.
       if (Object.keys(notes).length > 0) onSaveTransactionNotes?.(notes);
+
+      // Teach item memory what this receipt decided. Every item is recorded,
+      // not just the hand-picked ones: the user saw the whole list and pressed
+      // Save, which endorses the automatic answers too — and recording them
+      // makes memory, rather than the keyword table, the thing that answers
+      // next time. appendItemMemory never throws; a lost lesson costs a tap,
+      // and the expenses are already written by this point.
+      appendItemMemory(
+        buildMemoryRows({ userId, vendor, items: splitItems, splitId }),
+        accessToken
+      ).then(ok => { if (ok) memoryRef.current = null; });
+
       setSplitSavedSummary({ vendor: splitVendor, groups: logged });
       setSavedReceipts(prev => [...prev, ...logged.map(g => ({ vendor: splitVendor.trim(), amount: g.amount, category: g.category }))]);
       onSuccess?.();
@@ -448,8 +490,8 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     setSplitVendor('');
     setSplitTotal(0);
     setSplitPaymentMethod('');
-    setSplitGroups({});
     setSplitItems([]);
+    setSplitAsking(false);
     setSplitSavedSummary(null);
   };
 
@@ -488,7 +530,7 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
     savedReceipts, foreignCurrency, showCurrencyPrompt,
     stmtTransactions, setStmtTransactions, stmtSavedCount,
     // Split state
-    splitVendor, splitTotal, splitPaymentMethod, splitGroups, splitItems, splitReady, splitSavedSummary,
+    splitVendor, splitTotal, splitPaymentMethod, splitGroups, splitItems, splitReady, splitAsking, splitSavedSummary,
     editingIndex, setEditingIndex, editVendor, setEditVendor,
     editAmount, setEditAmount, editCategory, setEditCategory,
     editCard, setEditCard, editErr,
