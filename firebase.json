@@ -12,6 +12,7 @@
       { "source": "/api/push-alert", "function": "pushAlert" },
       { "source": "/api/mcp", "function": "mcp" },
       { "source": "/api/wallet", "function": "walletWebhook" },
+      { "source": "/api/item-categorize", "function": "itemCategorize" },
       {
         "source": "**",
         "destination": "/index.html"
