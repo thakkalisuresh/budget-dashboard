@@ -66,7 +66,7 @@ function buildUserPrompt(today = todayISO()) {
 
 Return EXACTLY this JSON structure:
 
-{"store_name":"Store Name","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":3.50,"currency":"USD","items":[{"name":"Item name","amount":5.99,"item_category":"Grocery"}],"reward_category":"Grocery","is_transfer":false,"payment_method":"Chase Sapphire Reserve"}
+{"store_name":"Store Name","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":3.50,"currency":"USD","items":[{"name":"Item name","amount":5.99,"item_category":"Grocery","code":"1234567"}],"discounts":[{"applies_to_code":"1234567","amount":4.00}],"reward_category":"Grocery","is_transfer":false,"payment_method":"Chase Sapphire Reserve"}
 
 Rules:
 - store_name: The merchant/vendor name (for transfers, use the recipient name)
@@ -75,8 +75,10 @@ ${dateRules(today)}
 - total_amount: Final total/charge amount. Must be a positive number, no currency symbol
 - tax_amount: Tax amount if shown, else null
 - currency: 3-letter ISO code visible (USD, INR, EUR, GBP, etc.). Default "USD" if not shown
-- items: Array of line items, each {name, amount, item_category}. Empty array [] for non-receipt images
+- items: Array of line items, each {name, amount, item_category, code}. amount is a POSITIVE price. Empty array [] for non-receipt images
 - item_category (per line item): your best guess of which budget category that single item belongs to, exactly one of: ${CATEGORIES.join(', ')}. Use it for receipts that mix categories (e.g. a Costco run with groceries + clothing + electronics). If you cannot tell for an item (e.g. ambiguous clothing/electronics), use null and the user will be asked.
+- code (per line item): the item/article number printed next to that line, as a string (Costco prints a 6-7 digit article number). Use null if the line has no number.
+- discounts: Array of coupon / instant-savings / manufacturer-discount lines, each {applies_to_code, amount}. On a Costco instant-savings line like "0000385751 / 1860911  -4.00", applies_to_code is the article number AFTER the "/" (here "1860911") — the item it reduces — and amount is the POSITIVE dollars saved (4.00). Put every discount here; NEVER list a discount as an item and NEVER give an item a negative amount. Empty array [] if there are no discounts.
 - reward_category: MUST be exactly one of: ${CATEGORIES.join(', ')}. Pick the closest match. Use "Misc" if none fit. For transfers (is_transfer=true), set to null (user will pick).
 - is_transfer: true if this is a peer-to-peer payment, money transfer, or sending money (Zelle, Venmo, PayPal P2P, bank transfer, "sent to" someone). false for purchases at merchants.
 - payment_method: The card or account name if visible. On Apple Pay / Google Pay / Samsung Pay wallet screenshots the card name appears prominently near the top (e.g. "Sapphire Reserve", "Blue Cash Preferred") — extract it exactly as shown. Use null if no card is visible.
@@ -250,14 +252,41 @@ export function sanitizeExtraction(data) {
     result.total_amount = Math.abs(result.total_amount);
   }
   if (Array.isArray(result.items)) {
-    result.items = result.items.map(item => ({
-      ...item,
-      name: typeof item.name === 'string' ? safeString(item.name) : item.name,
-      amount: typeof item.amount === 'number' ? Math.abs(item.amount) : item.amount,
-      // Per-item category hint: keep only if it's a known category, else null
-      // (the deterministic categorizer + user picker handle the rest).
-      item_category: CATEGORIES.includes(item.item_category) ? item.item_category : null,
-    }));
+    result.items = result.items.map(item => {
+      const out = {
+        ...item,
+        name: typeof item.name === 'string' ? safeString(item.name) : item.name,
+        // Item amounts keep their sign. Math.abs() used to run here and turned a
+        // −$4 Costco instant-savings line (misfiled by the model as an item) into
+        // a +$4 PHANTOM CHARGE. Discounts now travel in result.discounts, and a
+        // stray negative item is netted by applyDiscounts — neither wants abs.
+        amount: item.amount,
+        // Per-item category hint: keep only if it's a known category, else null
+        // (the deterministic categorizer + user picker handle the rest).
+        item_category: CATEGORIES.includes(item.item_category) ? item.item_category : null,
+      };
+      // Article/item number, used to net discounts onto the right line. Only
+      // set when present, so items that never carried a code stay unchanged.
+      if (item.code != null) {
+        const codeStr = String(item.code).trim();
+        out.code = codeStr ? safeString(codeStr) : null;
+      }
+      return out;
+    });
+  }
+  // Discount lines (coupons / instant savings) travel in their own array so a
+  // saving is never a line item. Keep only entries with a usable positive
+  // amount; the code they reference may be absent (an unmatched discount still
+  // folds into the remainder downstream rather than being dropped).
+  if (Array.isArray(result.discounts)) {
+    result.discounts = result.discounts
+      .map(d => (d && typeof d === 'object') ? {
+        applies_to_code: d.applies_to_code == null ? null : safeString(String(d.applies_to_code).trim()),
+        amount: typeof d.amount === 'number' ? Math.abs(d.amount) : Math.abs(Number(d.amount)),
+      } : null)
+      .filter(d => d && Number.isFinite(d.amount) && d.amount > 0);
+  } else if (result.discounts !== undefined) {
+    result.discounts = [];
   }
   if (typeof result.is_transfer !== 'boolean') {
     result.is_transfer = false;
@@ -525,7 +554,7 @@ function buildBatchUserPrompt(today = todayISO()) {
 
 Return EXACTLY this JSON structure — always a "transactions" array, even for a single transaction:
 
-{"transactions":[{"store_name":"Store Name","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":null,"currency":"USD","items":[{"name":"Item name","amount":5.99,"item_category":"Grocery"}],"reward_category":"Grocery","is_transfer":false,"payment_method":"Chase Sapphire Reserve"}]}
+{"transactions":[{"store_name":"Store Name","purchase_date":"YYYY-MM-DD","total_amount":45.23,"tax_amount":null,"currency":"USD","items":[{"name":"Item name","amount":5.99,"item_category":"Grocery","code":"1234567"}],"discounts":[{"applies_to_code":"1234567","amount":4.00}],"reward_category":"Grocery","is_transfer":false,"payment_method":"Chase Sapphire Reserve"}]}
 
 Rules for each transaction object in the array:
 - store_name: The merchant/vendor name (for transfers, use the recipient name)
@@ -534,8 +563,10 @@ ${dateRules(today)}
 - total_amount: Final charge/payment amount. Must be a positive number, no currency symbol
 - tax_amount: Tax amount if shown, else null
 - currency: 3-letter ISO code (USD, INR, EUR, GBP, etc.). Default "USD" if not shown
-- items: Array of line items, each {name, amount, item_category}. Use [] unless this is a physical receipt with itemized lines
+- items: Array of line items, each {name, amount, item_category, code}. amount is a POSITIVE price. Use [] unless this is a physical receipt with itemized lines
 - item_category (per line item): best guess of the budget category for that single item, exactly one of: ${CATEGORIES.join(', ')}, or null if ambiguous (e.g. clothing/electronics). Used to split mixed receipts.
+- code (per line item): the item/article number printed next to that line, as a string (Costco prints a 6-7 digit article number), or null if none.
+- discounts: Array of coupon / instant-savings / manufacturer-discount lines, each {applies_to_code, amount}. On a Costco instant-savings line like "0000385751 / 1860911  -4.00", applies_to_code is the article number AFTER the "/" ("1860911") and amount is the POSITIVE dollars saved (4.00). Put every discount here; NEVER list a discount as an item and NEVER give an item a negative amount. Empty array [] if none.
 - reward_category: MUST be exactly one of: ${CATEGORIES.join(', ')}. Pick the closest match. Use "Misc" if none fit. For transfers (is_transfer=true), set to null.
 - is_transfer: true if this is a peer-to-peer payment (Zelle, Venmo, PayPal P2P, bank transfer "sent to" someone). false for merchant purchases.
 - payment_method: Card or account name if visible, else null

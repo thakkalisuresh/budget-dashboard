@@ -241,7 +241,7 @@ export async function extractFromFile(file, accessToken, cards = []) {
 2. A BANK STATEMENT or transaction list — multiple rows of transactions from different merchants
 
 If it is a RECEIPT, return exactly this JSON:
-{"type":"receipt","vendor":"Store Name","amount":45.23,"category":"Grocery","currency":"USD","paymentMethod":"Chase Sapphire Reserve","items":[{"name":"Item name","amount":5.99,"item_category":"Grocery"}]}
+{"type":"receipt","vendor":"Store Name","amount":45.23,"category":"Grocery","currency":"USD","paymentMethod":"Chase Sapphire Reserve","items":[{"name":"Item name","amount":5.99,"item_category":"Grocery","code":"1234567"}],"discounts":[{"applies_to_code":"1234567","amount":4.00}]}
 
 If it is a BANK STATEMENT or transaction list, return exactly this JSON:
 {"type":"statement","paymentMethod":"Chase Sapphire Reserve","transactions":[
@@ -254,7 +254,8 @@ ${cardHint}
 
 Rules:
 - RECEIPT: amount is the final total including tax. currency is the 3-letter ISO code visible on the receipt (e.g. USD, CAD, EUR, GBP). Default to USD if not shown.
-- RECEIPT items: list each line item as {name, amount, item_category}. item_category is your best guess of that single item's budget category (one of the categories above), or null if ambiguous (e.g. clothing/electronics). Use [] if the receipt has no itemized lines. This lets mixed receipts (e.g. Costco) be split by category.
+- RECEIPT items: list each line item as {name, amount, item_category, code}. amount is a POSITIVE price. item_category is your best guess of that single item's budget category (one of the categories above), or null if ambiguous (e.g. clothing/electronics). code is the item/article number printed next to the line as a string (Costco prints a 6-7 digit number), or null if none. Use [] if the receipt has no itemized lines. This lets mixed receipts (e.g. Costco) be split by category.
+- RECEIPT discounts: list coupon / instant-savings / manufacturer-discount lines as {applies_to_code, amount} in the "discounts" array. On a Costco instant-savings line like "0000385751 / 1860911  -4.00", applies_to_code is the article number AFTER the "/" ("1860911") — the item it reduces — and amount is the POSITIVE dollars saved (4.00). NEVER list a discount as an item and NEVER give an item a negative amount. Use [] if there are no discounts.
 - STATEMENT: include ONLY debit/purchase transactions where money left the account. For each transaction set txType to "debit" or "credit".
 - CRITICAL: If a transaction has a negative amount, a minus sign, is shown in red, or is labeled as refund/credit/return/reversal/payment, set txType to "credit". Do NOT include credits in the results.
 - Clean up truncated bank merchant names (e.g. "SEATTLEYELLOWCA HOLD" → "Seattle Yellow Cab", "WF SUPERMARKET" → "Whole Foods")

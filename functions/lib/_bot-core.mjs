@@ -40,6 +40,7 @@ import { lookupLearned, learnedExamples, buildMemoryRows, newSplitId } from './_
 import { categorizeItemsBatch } from './_item-llm.mjs';
 import { buildSplitNote, buildCategoryItems } from './_split-notes.mjs';
 import { txNoteKey } from './_transaction-notes.mjs';
+import { applyDiscounts } from './_receipt-discounts.mjs';
 import { runToolLoop } from './_agent.mjs';
 
 const DAILY_LIMIT    = 50;
@@ -1115,24 +1116,28 @@ async function resolveSplitItems(rawItems, vendorName) {
   const autoItems = [];
   const pending = [];
 
-  const place = (name, amount, category, source) => {
+  const place = (name, amount, category, source, { discount, code } = {}) => {
     groups[category] = Math.round(((groups[category] || 0) + amount) * 100) / 100;
-    autoItems.push({ name, amount, category, source });
+    autoItems.push({ name, amount, category, source, ...(discount > 0 ? { discount } : {}), ...(code ? { code } : {}) });
   };
 
   for (const item of rawItems) {
     if (!item || typeof item.amount !== 'number') continue;
-    const learned = lookupLearned(memory, vendorName, item.name);
-    if (learned && CATEGORIES.includes(learned)) { place(item.name, item.amount, learned, 'learned'); continue; }
+    const learned = lookupLearned(memory, vendorName, item.name, item.code);
+    if (learned && CATEGORIES.includes(learned)) { place(item.name, item.amount, learned, 'learned', item); continue; }
 
     const keyword = categorizeItem(item);
-    if (keyword) { place(item.name, item.amount, keyword, 'keyword'); continue; }
+    if (keyword) { place(item.name, item.amount, keyword, 'keyword', item); continue; }
 
     pending.push({
       name: item.name,
       amount: item.amount,
       suggestion: typeof item.item_category === 'string' && item.item_category ? item.item_category : null,
       category: null,
+      // A netted coupon amount + the article code ride along: the coupon so the
+      // note can show "was $X", the code so the memory write keys on it too.
+      ...(item.discount > 0 ? { discount: item.discount } : {}),
+      ...(item.code ? { code: item.code } : {}),
     });
   }
 
@@ -1151,7 +1156,7 @@ async function resolveSplitItems(rawItems, vendorName) {
   pending.forEach((p, i) => {
     const r = results?.[i];
     if (r && r.confidence >= CONFIDENCE_THRESHOLD) {
-      place(p.name, p.amount, r.category, 'llm');
+      place(p.name, p.amount, r.category, 'llm', p);
       return;
     }
     // Not confident enough to file silently — ask, but offer the guess as the
@@ -1195,7 +1200,13 @@ async function handleSplitFlow(ctx, { data, year, month, conversionInfo, baseRec
   const { store, userId } = ctx;
 
   const vendorName = data.store_name || 'Unknown';
-  const { groups, autoItems, toAsk } = await resolveSplitItems(data.items || [], vendorName);
+  // Net instant-savings/coupon lines into the item they discount before the
+  // three-layer resolver sees them, so a −$4 saving reduces the right product
+  // instead of landing in a category as its own (positive) phantom line. The
+  // finalizeSplit remainder fold reconciles to the printed total, so unmatched
+  // discounts are absorbed there — use `.items` only here.
+  const { items: nettedItems } = applyDiscounts(data.items || [], data.discounts);
+  const { groups, autoItems, toAsk } = await resolveSplitItems(nettedItems, vendorName);
 
   const state = {
     id: baseReceiptId,
@@ -1495,6 +1506,10 @@ async function finalizeSplit(ctx, key, state) {
   const entries = [];
   const notes   = {};
   const splitId = newSplitId();
+  // How many categories this receipt split into — stamped on every row's note so
+  // the dashboard ledger can say "part of a $X.XX split (N categories)" and
+  // search can match the whole-receipt total.
+  const splitCount = Object.values(groups).filter(a => a > 0).length;
   // Every item on the receipt, however it was categorized.
   const allItems = [...(state.autoItems || []), ...state.items.filter(i => i.category)];
   const itemsByCategory = buildCategoryItems([], allItems);
@@ -1515,7 +1530,7 @@ async function finalizeSplit(ctx, key, state) {
       const note = buildSplitNote(itemsByCategory[category] || [], {
         remainder: category === remainderCategory ? remainder : 0,
       });
-      if (note) notes[txNoteKey(sheetId, category, state.vendor, amount)] = { ...note, splitId };
+      if (note) notes[txNoteKey(sheetId, category, state.vendor, amount)] = { ...note, splitId, receiptTotal: Number(state.totalAmount), splitCount };
     } catch (e) {
       await reportError('BOT-005', e, { category });
     }

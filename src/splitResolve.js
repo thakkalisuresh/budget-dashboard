@@ -40,23 +40,29 @@ export function resolveKnownItems(items = [], { memory, vendor } = {}) {
   for (const item of items) {
     if (!item || typeof item.amount !== 'number') continue;
     const name = item.name;
+    // A netted coupon amount + the article code ride along: the coupon so the
+    // note can show "was $X", the code so the memory write keys on it too.
+    const extra = {
+      ...(item.discount > 0 ? { discount: item.discount } : {}),
+      ...(item.code ? { code: item.code } : {}),
+    };
 
-    const learned = lookupLearned(memory, vendor, name);
+    const learned = lookupLearned(memory, vendor, name, item.code);
     if (learned) {
-      out.push({ name, amount: item.amount, category: learned, source: 'learned', suggestion: null, confidence: 1 });
+      out.push({ name, amount: item.amount, category: learned, source: 'learned', suggestion: null, confidence: 1, ...extra });
       continue;
     }
 
     const keyword = categorizeItem(item);
     if (keyword) {
-      out.push({ name, amount: item.amount, category: keyword, source: 'keyword', suggestion: null, confidence: 1 });
+      out.push({ name, amount: item.amount, category: keyword, source: 'keyword', suggestion: null, confidence: 1, ...extra });
       continue;
     }
 
     // The extractor's own per-item hint stays what it has always been: a
     // non-binding pre-selection, never an auto-assignment.
     const hint = typeof item.item_category === 'string' && item.item_category ? item.item_category : null;
-    out.push({ name, amount: item.amount, category: '', source: null, suggestion: hint, confidence: 0 });
+    out.push({ name, amount: item.amount, category: '', source: null, suggestion: hint, confidence: 0, ...extra });
   }
   return out;
 }

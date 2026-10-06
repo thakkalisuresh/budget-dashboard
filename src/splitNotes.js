@@ -34,14 +34,21 @@ export const SPLIT_TAG = 'split';
 export function buildCategoryItems(autoGrouped = [], assignedItems = []) {
   const byCategory = {};
 
+  const pick = (i) => {
+    const out = { name: i.name, amount: i.amount };
+    // A netted coupon line carries the saving so the note can show "was $X".
+    if (Number.isFinite(Number(i.discount)) && Number(i.discount) > 0) out.discount = i.discount;
+    return out;
+  };
+
   for (const g of autoGrouped) {
     if (!g?.category) continue;
-    byCategory[g.category] = [...(g.items || []).map(i => ({ name: i.name, amount: i.amount }))];
+    byCategory[g.category] = [...(g.items || []).map(pick)];
   }
 
   for (const item of assignedItems) {
     if (!item?.category) continue;   // still unassigned — the save is blocked anyway
-    (byCategory[item.category] ||= []).push({ name: item.name, amount: item.amount });
+    (byCategory[item.category] ||= []).push(pick(item));
   }
 
   return byCategory;
@@ -50,7 +57,15 @@ export function buildCategoryItems(autoGrouped = [], assignedItems = []) {
 function formatItem(item, currencySymbol) {
   const name = String(item?.name ?? '').trim() || 'Item';
   const amt  = Number(item?.amount);
-  return Number.isFinite(amt) ? `${name} ${currencySymbol}${amt.toFixed(2)}` : name;
+  if (!Number.isFinite(amt)) return name;
+  const disc = Number(item?.discount);
+  // Show a coupon/instant-savings line as the net price with its original
+  // alongside, so the note never hides that the receipt showed a higher sticker.
+  if (Number.isFinite(disc) && disc > 0) {
+    const orig = amt + disc;
+    return `${name} ${currencySymbol}${amt.toFixed(2)} (was ${currencySymbol}${orig.toFixed(2)}, -${currencySymbol}${disc.toFixed(2)} coupon)`;
+  }
+  return `${name} ${currencySymbol}${amt.toFixed(2)}`;
 }
 
 /**
