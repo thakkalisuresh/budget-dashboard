@@ -810,7 +810,7 @@ async function ensureMemorySheet() {
       method: 'POST',
       body: JSON.stringify({ requests: [{ addSheet: { properties: { title: MEMORY_SHEET } } }] }),
     });
-    const range = encodeURIComponent(`'${MEMORY_SHEET}'!A1:F1`);
+    const range = encodeURIComponent(`'${MEMORY_SHEET}'!A1:G1`);
     await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueInputOption=RAW`, {
       method: 'PUT',
       body: JSON.stringify({ values: [MEMORY_HEADER] }),
@@ -828,7 +828,7 @@ export async function fetchItemMemoryRows() {
   if (!TEMPLATE_ID) return [];
   try {
     await ensureMemorySheet();
-    const range = encodeURIComponent(`'${MEMORY_SHEET}'!A:F`);
+    const range = encodeURIComponent(`'${MEMORY_SHEET}'!A:G`);
     const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}`);
     return data.values || [];
   } catch (e) {
@@ -847,7 +847,7 @@ export async function appendItemMemory(rows) {
   if (!rows?.length || !TEMPLATE_ID) return false;
   try {
     await ensureMemorySheet();
-    const range = encodeURIComponent(`'${MEMORY_SHEET}'!A:F`);
+    const range = encodeURIComponent(`'${MEMORY_SHEET}'!A:G`);
     await sheetsRequest(
       TEMPLATE_ID,
       `/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,

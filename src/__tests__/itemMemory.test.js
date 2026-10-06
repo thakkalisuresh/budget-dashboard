@@ -126,6 +126,41 @@ describe('reduceMemoryRows + lookupLearned', () => {
   });
 });
 
+describe('lookupLearned — article-code key', () => {
+  // 7-column rows: the 7th cell is the article code.
+  const rowc = (user, vendor, item, category, at, splitId, code) => [user, vendor, item, category, at, splitId, code];
+
+  it('matches by code even when the name is truncated differently next time', () => {
+    const m = reduceMemoryRows([H, rowc('me@x.com', 'Costco', 'KS FRENCH ROAST 2DZ', 'Grocery', '2026-01-01', 'sp-1', '1860911')], 'me@x.com');
+    // A later receipt abbreviates the name to something the name key can't reach…
+    expect(lookupLearned(m, 'Costco', 'KS FR 2DZ')).toBeNull();
+    // …but the article code still finds it.
+    expect(lookupLearned(m, 'Costco', 'KS FR 2DZ', '1860911')).toBe('Grocery');
+    // Code comparison ignores leading zeros / punctuation.
+    expect(lookupLearned(m, 'Costco', 'anything', '0001860911')).toBe('Grocery');
+  });
+
+  it('still matches a code row by its name (both keys are written)', () => {
+    const m = reduceMemoryRows([H, rowc('me@x.com', 'Costco', 'SCOTCHNSODA', 'Misc', '2026-01-01', 'sp-1', '1860911')], 'me@x.com');
+    expect(lookupLearned(m, 'Costco', 'SCOTCHNSODA')).toBe('Misc');
+  });
+
+  it('REGRESSION: existing name-only rows (no code) still match by name', () => {
+    // The pre-upgrade sheet has 6-column rows. They must keep working, with or
+    // without a code on the query item.
+    const m = reduceMemoryRows([H, row('me@x.com', 'Costco', 'KS ORG PNT BTR', 'Grocery', '2026-01-01')], 'me@x.com');
+    expect(lookupLearned(m, 'Costco', 'ORG PNT BTR 16 oz')).toBe('Grocery');
+    // A code on the query doesn't exist in the (code-less) memory, so it falls
+    // through to the name key rather than returning null.
+    expect(lookupLearned(m, 'Costco', 'ORG PNT BTR 16 oz', '9999999')).toBe('Grocery');
+  });
+
+  it('keeps the code key scoped per vendor', () => {
+    const m = reduceMemoryRows([H, rowc('me@x.com', 'Costco', 'SCOTCHNSODA', 'Misc', '2026-01-01', 'sp-1', '1860911')], 'me@x.com');
+    expect(lookupLearned(m, 'Safeway', 'x', '1860911')).toBeNull();
+  });
+});
+
 describe('learnedExamples', () => {
   const rows = [
     H,
@@ -159,12 +194,20 @@ describe('buildMemoryRows', () => {
     { name: 'PAPER TOWELS', amount: 20, category: 'Misc' },
   ];
 
-  it('records one row per item in header order', () => {
+  it('records one row per item in header order (code column empty when absent)', () => {
     const rows = buildMemoryRows({ userId: 'me@x.com', vendor: 'Costco', items, splitId: 'sp-1', at: new Date('2026-03-01T00:00:00Z') });
     expect(rows).toEqual([
-      ['me@x.com', 'Costco', 'BANANAS', 'Grocery', '2026-03-01T00:00:00.000Z', 'sp-1'],
-      ['me@x.com', 'Costco', 'PAPER TOWELS', 'Misc', '2026-03-01T00:00:00.000Z', 'sp-1'],
+      ['me@x.com', 'Costco', 'BANANAS', 'Grocery', '2026-03-01T00:00:00.000Z', 'sp-1', ''],
+      ['me@x.com', 'Costco', 'PAPER TOWELS', 'Misc', '2026-03-01T00:00:00.000Z', 'sp-1', ''],
     ]);
+  });
+
+  it('writes the article code in the 7th column when the item carries one', () => {
+    const rows = buildMemoryRows({
+      userId: 'u', vendor: 'Costco', splitId: 'sp-9', at: new Date('2026-03-01T00:00:00Z'),
+      items: [{ name: 'SCOTCHNSODA', category: 'Misc', code: '1860911' }],
+    });
+    expect(rows).toEqual([['u', 'Costco', 'SCOTCHNSODA', 'Misc', '2026-03-01T00:00:00.000Z', 'sp-9', '1860911']]);
   });
 
   it('skips items with no category — an unanswered item teaches nothing', () => {
