@@ -100,12 +100,50 @@ describe('sanitizeExtraction', () => {
     expect(result.total_amount).toBe(25.50);
   });
 
-  it('forces item amounts to positive', () => {
+  // Item amounts keep their sign now. Math.abs() used to run here and turned a
+  // −$4 Costco instant-savings line into a +$4 phantom charge; applyDiscounts
+  // nets a stray negative instead.
+  it('preserves item amounts without flipping sign', () => {
     const result = sanitizeExtraction({
-      items: [{ name: 'Refund', amount: -10 }],
+      items: [{ name: 'INSTANT SAVINGS', amount: -4 }, { name: 'Milk', amount: 3.99 }],
       reward_category: 'Misc',
     });
-    expect(result.items[0].amount).toBe(10);
+    expect(result.items[0].amount).toBe(-4);
+    expect(result.items[1].amount).toBe(3.99);
+  });
+
+  it('keeps an item code when present and leaves code-less items unchanged', () => {
+    const result = sanitizeExtraction({
+      items: [
+        { name: 'SCOTCHNSODA', amount: 17.99, code: 1860911 },
+        { name: 'Milk', amount: 3.99 },
+      ],
+      reward_category: 'Grocery',
+    });
+    expect(result.items[0].code).toBe('1860911'); // coerced to string
+    expect('code' in result.items[1]).toBe(false); // untouched when absent
+  });
+
+  it('validates discounts: positive amount, drops junk, coerces code to string', () => {
+    const result = sanitizeExtraction({
+      items: [{ name: 'A', amount: 10 }],
+      discounts: [
+        { applies_to_code: 1860911, amount: -4 }, // sign dropped, code stringified
+        { applies_to_code: 'c2', amount: 0 },       // zero → dropped
+        { applies_to_code: 'c3' },                  // no amount → dropped
+        { amount: 2 },                              // no code → kept (unmatched later)
+        'garbage',                                  // not an object → dropped
+      ],
+      reward_category: 'Misc',
+    });
+    expect(result.discounts).toEqual([
+      { applies_to_code: '1860911', amount: 4 },
+      { applies_to_code: null, amount: 2 },
+    ]);
+  });
+
+  it('coerces a non-array discounts field to an empty array', () => {
+    expect(sanitizeExtraction({ discounts: null, reward_category: 'Misc' }).discounts).toEqual([]);
   });
 
   // Coercing to 'Misc' made a hallucinated category look like a real "Misc"
@@ -257,7 +295,8 @@ describe('extractReceipt', () => {
     expect(result.data.total_amount).toBe(50);
     expect(result.data.reward_category).toBeNull();
     expect(result.data.items[0].name).toBe("'+cmd");
-    expect(result.data.items[0].amount).toBe(10);
+    // Item amounts keep their sign now (abs removed — see sanitizeExtraction).
+    expect(result.data.items[0].amount).toBe(-10);
   });
 
   it('handles non-JSON responses from all models', async () => {

@@ -63,4 +63,25 @@ describe('itemMemory client/server parity', () => {
         .toBe(client.lookupLearned(c, 'Costco', name));
     }
   });
+
+  it('normalizes article codes identically', () => {
+    for (const code of ['1860911', '0001860911', ' 18-609/11 ', null, 42, '']) {
+      expect(server.normItemCode(code), String(code)).toBe(client.normItemCode(code));
+    }
+  });
+
+  it('agrees on code-keyed lookups (7-column rows), both surfaces', () => {
+    const rows = [
+      client.MEMORY_HEADER,
+      ['me@x.com', 'Costco', 'KS FRENCH ROAST 2DZ', 'Grocery', '2026-01-01', 'sp-1', '1860911'],
+      ['me@x.com', 'Costco', 'PAPER TOWELS', 'Misc', '2026-01-02', 'sp-1', ''], // name-only (old shape)
+    ];
+    const c = client.reduceMemoryRows(rows, 'me@x.com');
+    const s = server.reduceMemoryRows(rows, 'me@x.com');
+    const cases = [['KS FR 2DZ', '1860911'], ['KS FR 2DZ', undefined], ['Paper Towels', undefined], ['x', '0001860911']];
+    for (const [name, code] of cases) {
+      expect(server.lookupLearned(s, 'Costco', name, code), `${name}|${code}`)
+        .toBe(client.lookupLearned(c, 'Costco', name, code));
+    }
+  });
 });

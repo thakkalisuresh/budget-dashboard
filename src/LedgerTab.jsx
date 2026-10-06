@@ -12,6 +12,7 @@ import { CategoryPickerSheet } from './CategoryPickerSheet.jsx';
 import { userMessage } from './errorCodes.js';
 import { readMemoryCache, loadCachedLedger, storeLedger } from './ledgerCache.js';
 import { txNoteKey } from './transactionNotes.js';
+import { rowMatchesQuery } from './ledgerSearch.js';
 import { relearnMovedSplit } from './sheetItemMemory.js';
 import { WRITE_ACTIONS, METHOD_LABELS } from './historyActions.js';
 
@@ -272,11 +273,13 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
       if (filterMethods.length   && !filterMethods.includes(t.method))       return false;
       if (filterUsers.length     && !filterUsers.includes(t.user))           return false;
       if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        return (t.vendor || '').toLowerCase().includes(q) ||
-               (t.category || '').toLowerCase().includes(q) ||
-               t.amount.toFixed(2).includes(q) ||
-               String(Math.floor(t.amount)).includes(q);
+        // A split row's own amount is a category subtotal, never the receipt
+        // total — so searching "102.54" found nothing. Match the receiptTotal
+        // stamped on the row's note too (same partial-substring rule as amount),
+        // which surfaces every row of that split at once.
+        const note = transactionNotes[txNoteKey(sheetId, t.category, t.vendor, t.amount)];
+        const rt = note && typeof note.receiptTotal === 'number' ? note.receiptTotal : null;
+        return rowMatchesQuery(t, searchQuery, rt);
       }
       return true;
     });
@@ -291,7 +294,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
         default: return 0;
       }
     });
-  }, [transactions, sortBy, filterCategories, filterMethods, filterUsers, searchQuery]);
+  }, [transactions, sortBy, filterCategories, filterMethods, filterUsers, searchQuery, transactionNotes, sheetId]);
 
   // Move a single ledger transaction to another category (cross-tab move).
   // For multi-amount V1 rows only the tapped amount moves (amtIndex); a

@@ -12,6 +12,7 @@ import { matchesSplitVendor } from './itemCategorizer.js';
 import { buildCategoryItems, buildSplitNote } from './splitNotes.js';
 import { txNoteKey } from './transactionNotes.js';
 import { resolveKnownItems, pendingItems, applyLlmSuggestions, groupItems, foldRemainder } from './splitResolve.js';
+import { applyDiscounts } from './receiptDiscounts.js';
 import { fetchItemMemory, appendItemMemory } from './sheetItemMemory.js';
 import { buildMemoryRows, learnedExamples, newSplitId } from './itemMemory.js';
 import { categorizeItemsWithLLM } from './itemCategorizeApi.js';
@@ -133,9 +134,16 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
         const vendorName = result.vendor;
         const memory = await loadMemory();
 
+        // Net instant-savings/coupon lines into the item they discount BEFORE
+        // anything categorizes or groups them, so a −$4 saving reduces the right
+        // product instead of surfacing as its own line. The remainder fold below
+        // reconciles to the printed total, so unmatched discounts are absorbed
+        // there — use `.items` only here.
+        const { items: nettedItems } = applyDiscounts(result.items, result.discounts);
+
         // Layers 1–2 are instant, so show the screen straight away rather than
         // holding a fully-decided receipt behind a network call.
-        const resolved = resolveKnownItems(result.items, { memory, vendor: vendorName });
+        const resolved = resolveKnownItems(nettedItems, { memory, vendor: vendorName });
         setSplitVendor(vendorName);
         setSplitTotal(result.amount);
         setSplitPaymentMethod(resolveCard(result.paymentMethod, vendorName, result.category || 'Misc'));
@@ -420,6 +428,10 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
       const itemsByCategory = buildCategoryItems([], splitItems);
       const vendor = splitVendor.trim();
       const splitId = newSplitId();
+      // How many categories this receipt split into — stamped on every row's note
+      // so the ledger can say "part of a $X.XX split (N categories)" and search
+      // can match the whole-receipt total.
+      const splitCount = Object.values(groups).filter(a => a > 0).length;
       const logged = [];
       const notes  = {};
       for (const [category, amount] of Object.entries(groups)) {
@@ -436,7 +448,7 @@ export function useReceiptScanner({ accessToken, sheetId, monthName, onSuccess, 
         // log, so moving it to another category later can re-teach every item
         // it was made of. Cheap to store; the note text itself is capped and
         // truncated, so it cannot be parsed back into a reliable item list.
-        if (note) notes[txNoteKey(sheetId, category, vendor, amount)] = { ...note, splitId };
+        if (note) notes[txNoteKey(sheetId, category, vendor, amount)] = { ...note, splitId, receiptTotal: Number(splitTotal), splitCount };
       }
       // One settings write for the whole split: updateSettings is async and
       // batched, so calling it per category would queue N saves of the same blob.

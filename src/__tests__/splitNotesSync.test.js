@@ -51,6 +51,21 @@ describe('split-note client/server parity', () => {
     expect(serverSplit.buildSplitNote([], { remainder: 0 })).toBeNull();
   });
 
+  it('renders a netted coupon line as net price with its original, both surfaces', () => {
+    const items = [{ name: 'Scotch & Soda', amount: 13.99, discount: 4 }, { name: 'Milk', amount: 3.99 }];
+    const expected = '2 items: Scotch & Soda $13.99 (was $17.99, -$4.00 coupon), Milk $3.99';
+    expect(serverSplit.buildSplitNote(items, { remainder: 0 }).note).toBe(expected);
+    expect(clientSplit.buildSplitNote(items, { remainder: 0 }))
+      .toEqual(serverSplit.buildSplitNote(items, { remainder: 0 }));
+  });
+
+  it('carries the discount field through buildCategoryItems, both surfaces', () => {
+    const assigned = [{ name: 'Scotch & Soda', amount: 13.99, discount: 4, category: 'Misc' }];
+    const out = clientSplit.buildCategoryItems([], assigned);
+    expect(out.Misc).toEqual([{ name: 'Scotch & Soda', amount: 13.99, discount: 4 }]);
+    expect(serverSplit.buildCategoryItems([], assigned)).toEqual(out);
+  });
+
   it('groups items by category the same way', () => {
     const assigned = [
       { name: 'BANANAS', amount: 2, category: 'Grocery' },

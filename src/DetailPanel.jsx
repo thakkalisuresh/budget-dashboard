@@ -570,6 +570,19 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
             </>
           )}
         </div>
+        {/* Split provenance: a receipt split across categories stamps the whole
+            receipt total on each row's note, so a bare "Costco $13.99" can say
+            what larger receipt it came from. */}
+        {single && (() => {
+          const nd = transactionNotes[noteKeyFor(row.description, row.amounts[0])];
+          if (!nd || typeof nd.receiptTotal !== 'number') return null;
+          const n = nd.splitCount;
+          return (
+            <div className="px-4 pb-2 pl-10 text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
+              Part of a {currencySymbol}{nd.receiptTotal.toFixed(2)} split{n ? ` (${n} ${n === 1 ? 'category' : 'categories'})` : ''}
+            </div>
+          );
+        })()}
         {/* Defensive: members with >1 amount (rare) list each amount with actions */}
         {!single && row.amounts.map((amt, amtIndex) => (
           <div key={amtIndex} className="flex items-center gap-2 px-4 py-1.5 pl-10 group hover:bg-[var(--sur-5)] transition-colors">

@@ -38,7 +38,7 @@ async function ensureMemorySheet(accessToken) {
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ requests: [{ addSheet: { properties: { title: MEMORY_SHEET } } }] }),
     });
-    const range = encodeURIComponent(`'${MEMORY_SHEET}'!A1:F1`);
+    const range = encodeURIComponent(`'${MEMORY_SHEET}'!A1:G1`);
     await fetch(url(`/values/${range}?valueInputOption=RAW`), {
       method: 'PUT',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -58,7 +58,7 @@ export async function fetchItemMemoryRows(accessToken) {
   if (!accessToken || !TEMPLATE_ID) return [];
   try {
     await ensureMemorySheet(accessToken);
-    const range = encodeURIComponent(`'${MEMORY_SHEET}'!A:F`);
+    const range = encodeURIComponent(`'${MEMORY_SHEET}'!A:G`);
     const res = await fetch(url(`/values/${range}`), {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
@@ -85,7 +85,7 @@ export async function appendItemMemory(rows, accessToken) {
   if (!rows?.length || !accessToken || !TEMPLATE_ID) return false;
   try {
     await ensureMemorySheet(accessToken);
-    const range = encodeURIComponent(`'${MEMORY_SHEET}'!A:F`);
+    const range = encodeURIComponent(`'${MEMORY_SHEET}'!A:G`);
     await fetch(
       url(`/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`),
       {
