@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import { extractReceipt, extractReceiptBatch, extractTransactionText, todayISO, CATEGORIES } from './_extraction.mjs';
 import { uploadReceiptImage, moveFile, buildFolderPath } from './_drive.mjs';
 import {
-  getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID,
+  getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID, updateExpenseAmountByUUID,
   getTotals, getRecentExpenses, writeSalaryAmount, writeBudgetAmount,
   addCategory, checkMonthExists, getLatestMonthData, getUserSettings,
   createMonth, addSmartRule,
@@ -30,6 +30,7 @@ import {
   kbYesCancel, kbYesSkip, kbConfirmDelete, kbSplitCategory, kbCategoryConfirm, kbLogAnywayCancel,
   kbConfirmReceipt, kbLogAnywayReceipt, kbBatchReceipt, kbEditMenu, kbCategoryPicker, kbCardPicker,
   kbLoggedActions, kbEditLoggedMenu, kbMultiChoice, kbLearnOffer,
+  kbSplitFix, kbSplitFixItems, kbSplitFixCategory,
 } from './_telegram.mjs';
 import {
   looksLikeMultiExpense, parseMultiExpense, classifyMulti, distributeGap, MAX_ITEMS,
@@ -309,6 +310,17 @@ export async function handleTextReply(ctx, text) {
   // ── SPLITCAT callback (user picked a category for one split line item) ──
   if (text.startsWith('SPLITCAT:')) {
     return await handleSplitCategoryPick(ctx, text);
+  }
+
+  // ── SPLITFIX* callbacks (post-log item-level correction of a split) ──
+  if (text.startsWith('SPLITFIXITEM:')) {
+    return await handleSplitFixItem(ctx, text);
+  }
+  if (text.startsWith('SPLITFIXCAT:')) {
+    return await handleSplitFixCategory(ctx, text);
+  }
+  if (text.startsWith('SPLITFIX:')) {
+    return await handleSplitFixStart(ctx, text);
   }
 
   // ── CATFIX callback (user picked a category for an unconfident wallet charge) ──
@@ -1529,6 +1541,20 @@ export function buildSplitResultLines({ vendor, entries = [], allItems = [], rem
     }
   }
   if (sawGuess) lines.push('', '⚠️ = auto-sorted by AI — double-check these');
+
+  // Telegram caps a message at 4096 chars; the View Sheet / UNDO lines are
+  // appended after this. A pathological ~40-item receipt stays well under that,
+  // but guard it: if the per-item breakdown would blow the budget, fall back to
+  // category totals rather than risk a send failure (the write already landed).
+  if (lines.join('\n').length > 3800) {
+    return [
+      `✅ Logged ${vendor} split across ${entries.length} categor${entries.length === 1 ? 'y' : 'ies'}:`,
+      '',
+      ...entries.map(e => `  ${e.category} — $${Number(e.amount).toFixed(2)}`),
+      '',
+      '(too many items to list here — open the Sheet to review each)',
+    ];
+  }
   return lines;
 }
 
@@ -1628,6 +1654,17 @@ async function finalizeSplit(ctx, key, state) {
     driveFileId: state.driveFileId || null,
     driveShareLink: state.driveShareLink || null,
     loggedAt: new Date().toISOString(),
+    // Correction state for "✏️ Fix a category": the splitId ties a tap back to
+    // these exact rows, allItems is the per-item breakdown, and remainder lets
+    // a note rebuilt after a move re-add the Tax/fees line. txDate/paymentMethod
+    // are needed if a move creates a brand-new category row.
+    splitId,
+    allItems,
+    remainder,
+    remainderCategory,
+    receiptTotal: Number(state.totalAmount),
+    txDate: state.txDate || null,
+    paymentMethod: state.paymentMethod || '',
   });
 
   await store.delete(key);
@@ -1643,7 +1680,206 @@ async function finalizeSplit(ctx, key, state) {
     '',
     'UNDO to reverse the whole split',
   ];
-  return ctx.send(lines.join('\n'));
+  return ctx.send(lines.join('\n'), kbSplitFix(splitId));
+}
+
+/* ── Post-log item-level split correction ("✏️ Fix a category") ──────────────
+ *
+ * A split writes ONE aggregated row per category, not one row per item. So
+ * correcting a single mis-filed item (the live case: dish-soap tablets a
+ * confident LLM guess put in Grocery) is row-MATH, not a transaction move:
+ * shift the item's amount off the source category row and onto the target,
+ * rewrite both categories' item-list notes, and re-teach ItemMemory so the
+ * item lands right on every future receipt. Correction state lives in
+ * `lastlog:${userId}` — the same blob UNDO reads — so a correction and a later
+ * UNDO stay consistent, and only the most-recent split is inline-correctable.
+ */
+
+/** Clamp a button label to a Telegram-friendly length. */
+function truncateLabel(s, max = 48) {
+  const str = String(s);
+  return str.length > max ? `${str.slice(0, max - 1)}…` : str;
+}
+
+/**
+ * The inline Fix buttons live on the end-of-split message, which can scroll far
+ * up-thread. Only the most-recent split is correctable inline; once the user
+ * logs anything else, lastlog no longer points here. Returns the log or null.
+ */
+function activeSplitLog(lastlog, splitId) {
+  return lastlog && lastlog.split && lastlog.splitId === splitId ? lastlog : null;
+}
+
+const STALE_SPLIT_MSG =
+  'That split is no longer the most recent one — fix it from the dashboard instead.';
+
+/** "✏️ Fix a category" tapped → list the split's items as buttons. */
+async function handleSplitFixStart(ctx, text) {
+  const { store, userId } = ctx;
+  const splitId = text.slice('SPLITFIX:'.length);
+  const lastlog = await store.get(`lastlog:${userId}`, { type: 'json' }).catch(() => null);
+  const log = activeSplitLog(lastlog, splitId);
+  if (!log) return ctx.send(STALE_SPLIT_MSG);
+
+  const logged = new Set(log.entries.map(e => e.category));
+  const items = (log.allItems || [])
+    .map((it, idx) => ({ it, idx }))
+    .filter(({ it }) => it && it.category && logged.has(it.category))
+    .map(({ it, idx }) => ({
+      idx,
+      label: truncateLabel(`${it.name} ($${Number(it.amount).toFixed(2)} · ${it.category})`),
+    }));
+  if (items.length === 0) return ctx.send('No items to correct on this split.');
+
+  return ctx.send('Which item went to the wrong category?', kbSplitFixItems(splitId, items));
+}
+
+/** An item was picked → show the category picker for it. */
+async function handleSplitFixItem(ctx, text) {
+  const { store, userId } = ctx;
+  const m = text.match(/^SPLITFIXITEM:([^:]+):(\d+)$/);
+  if (!m) return ctx.send('That selection did not parse — tap "✏️ Fix a category" again.');
+  const splitId = m[1];
+  const idx = Number(m[2]);
+  const lastlog = await store.get(`lastlog:${userId}`, { type: 'json' }).catch(() => null);
+  const log = activeSplitLog(lastlog, splitId);
+  if (!log) return ctx.send(STALE_SPLIT_MSG);
+  const item = (log.allItems || [])[idx];
+  if (!item) return ctx.send('That item is no longer available. Tap "✏️ Fix a category" again.');
+
+  return ctx.send(
+    `Move "${item.name}" ($${Number(item.amount).toFixed(2)}) — currently ${item.category} — to:`,
+    kbSplitFixCategory(splitId, idx, CATEGORIES),
+  );
+}
+
+/**
+ * A new category was picked → move the item across the aggregated rows.
+ *
+ * Reconciliation invariant: shifting `amt` off the source and onto the target
+ * is net-zero, so the sum of category rows still equals the receipt total. The
+ * remainder-category row already carries the folded tax/fees, which makes the
+ * subtraction self-correcting (its note keeps the Tax/fees line on rebuild).
+ */
+async function handleSplitFixCategory(ctx, text) {
+  const { store, userId } = ctx;
+  const m = text.match(/^SPLITFIXCAT:([^:]+):(\d+):(.+)$/);
+  if (!m) return ctx.send('That choice did not parse — tap "✏️ Fix a category" again.');
+  const splitId = m[1];
+  const idx = Number(m[2]);
+  const toCategory = m[3];
+  if (!CATEGORIES.includes(toCategory)) {
+    return ctx.send(`Unknown category. Choose from:\n${CATEGORIES.join(', ')}`);
+  }
+
+  const lastlog = await store.get(`lastlog:${userId}`, { type: 'json' }).catch(() => null);
+  const log = activeSplitLog(lastlog, splitId);
+  if (!log) return ctx.send(STALE_SPLIT_MSG);
+
+  const item = (log.allItems || [])[idx];
+  if (!item) return ctx.send('That item is no longer available. Tap "✏️ Fix a category" again.');
+
+  const from = item.category;
+  if (from === toCategory) return ctx.send(`"${item.name}" is already in ${toCategory}.`);
+
+  const { sheetId, vendor } = log;
+  const amt = Math.round(Number(item.amount) * 100) / 100;
+
+  const srcEntry = log.entries.find(e => e.category === from);
+  let tgtEntry = log.entries.find(e => e.category === toCategory);
+  if (!srcEntry) return ctx.send('Could not find the source category row — fix it from the dashboard. [BOT-012]');
+
+  const oldSrcAmount = srcEntry.amount;
+  const oldTgtAmount = tgtEntry ? tgtEntry.amount : null;
+  const newSrcAmount = Math.round((srcEntry.amount - amt) * 100) / 100;
+
+  // ── Mutate the sheet rows (the only step that can fail the correction) ──
+  let sourceDeleted = false;
+  try {
+    if (newSrcAmount <= 0.005) {
+      // The item was the whole source category — remove its row entirely.
+      await deleteExpenseByUUID({ category: from, uuid: srcEntry.uuid, sheetId });
+      sourceDeleted = true;
+    } else {
+      await updateExpenseAmountByUUID({ category: from, uuid: srcEntry.uuid, sheetId, amount: newSrcAmount });
+    }
+
+    if (tgtEntry) {
+      const newTgtAmount = Math.round((tgtEntry.amount + amt) * 100) / 100;
+      await updateExpenseAmountByUUID({ category: toCategory, uuid: tgtEntry.uuid, sheetId, amount: newTgtAmount });
+      tgtEntry.amount = newTgtAmount;
+    } else {
+      // Target category had no row in this split — create one.
+      const res = await appendExpense({
+        category: toCategory, vendor, amount: amt,
+        txDate: log.txDate, sheetId, monthName: log.monthName,
+        paymentMethod: log.paymentMethod || '', channel: ctx.channel,
+      });
+      tgtEntry = { category: toCategory, uuid: res.uuid, sheetId, amount: amt };
+      log.entries.push(tgtEntry);
+    }
+  } catch (e) {
+    await reportError('BOT-012', e, { flow: 'split-fix', from, to: toCategory });
+    return ctx.send('Could not move that item on the sheet. Try again or use the dashboard. [BOT-012]');
+  }
+
+  // ── Update in-memory state ──────────────────────────────────────────────
+  item.category = toCategory;
+  // Once corrected it's user-confirmed, so it loses the "auto-sorted" ⚠️ flag.
+  item.source = 'corrected';
+  if (sourceDeleted) {
+    log.entries = log.entries.filter(e => e.uuid !== srcEntry.uuid);
+  } else {
+    srcEntry.amount = newSrcAmount;
+  }
+
+  // ── Rebuild the two touched categories' notes, keyed on their new amounts ─
+  const splitCount = log.entries.length;
+  const byCat = buildCategoryItems([], (log.allItems || []).filter(i => i.category));
+  const notes = {};
+  // Delete the stale amount-keyed notes (mergeTransactionNotes treats null as
+  // delete), or they orphan in the 50k settings cell.
+  notes[txNoteKey(sheetId, from, vendor, oldSrcAmount)] = null;
+  if (oldTgtAmount != null) notes[txNoteKey(sheetId, toCategory, vendor, oldTgtAmount)] = null;
+  for (const e of log.entries) {
+    if (e.category !== from && e.category !== toCategory) continue;
+    const note = buildSplitNote(byCat[e.category] || [], {
+      remainder: e.category === log.remainderCategory ? log.remainder : 0,
+    });
+    if (note) {
+      notes[txNoteKey(sheetId, e.category, vendor, e.amount)] = {
+        ...note, splitId, receiptTotal: log.receiptTotal, splitCount,
+      };
+    }
+  }
+  if (Object.keys(notes).length > 0) await mergeTransactionNotes(notes);
+
+  // Re-teach: this item now belongs to toCategory. Recency-wins overrides the
+  // earlier lesson; same splitId keeps a later whole-split move consistent.
+  // Best-effort — a failed lesson must never undo the sheet move just made.
+  appendItemMemory(buildMemoryRows({
+    userId: memoryUserId(), vendor,
+    items: [{ name: item.name, category: toCategory, ...(item.code ? { code: item.code } : {}) }],
+    splitId,
+  })).catch(() => {});
+
+  // Persist corrected state so UNDO removes the CORRECTED rows and a second
+  // correction starts from the new amounts.
+  log.amount = Math.round(log.entries.reduce((s, e) => s + e.amount, 0) * 100) / 100;
+  await store.setJSON(`lastlog:${userId}`, log);
+  console.log(`bot-core: split-fix ${item.name} ${from}→${toCategory} ($${amt}) for ${userId}`);
+
+  const lines = [
+    `✅ Moved ${item.name} → ${toCategory}. I'll remember that for next time.`,
+    '',
+    ...buildSplitResultLines({
+      vendor, entries: log.entries, allItems: log.allItems,
+      remainder: log.remainder, remainderCategory: log.remainderCategory,
+    }),
+    '',
+    'UNDO to reverse the whole split',
+  ];
+  return ctx.send(lines.join('\n'), kbSplitFix(splitId));
 }
 
 /** SKIP a wallet-triggered split — log the original charge as one expense. */

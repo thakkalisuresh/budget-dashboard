@@ -3,7 +3,7 @@
 > **Generated file — do not edit by hand.**
 > Source of truth: `functions/lib/_error-codes.mjs`. Regenerate with `npm run errdoc`.
 
-66 codes across 13 domains.
+67 codes across 13 domains.
 
 Codes appear wherever the failure surfaces: in the bot's reply, on the
 dashboard crash screen, in the wallet webhook response body, in Cloud Logging,
@@ -74,6 +74,7 @@ and in the daily Telegram digest.
 | [`BOT-010`](#bot-010) | degraded | Learned category rule could not be saved |
 | [`BOT-011`](#bot-011) | degraded | Recent-expense lookup failed |
 | [`BOT-008`](#bot-008) | fatal | Category move left a duplicate |
+| [`BOT-012`](#bot-012) | fatal | Split item correction failed |
 | [`WAL-001`](#wal-001) | fatal | Wallet request rejected as invalid |
 | [`WAL-002`](#wal-002) | fatal | Wallet transaction write failed |
 | [`WAL-003`](#wal-003) | degraded | Wallet text parse failed |
@@ -524,6 +525,14 @@ and in the daily Telegram digest.
 **Why it happens.** A weekly-audit recategorization added the row to its new category but could not remove the old one. The expense is now counted twice.
 
 **What to do.** Delete the old entry in the dashboard. The move deliberately appends before deleting, so a half-failure duplicates rather than destroys.
+
+### BOT-012
+
+**Split item correction failed** · `fatal`
+
+**Why it happens.** Moving one line item between a split's category rows failed partway — the source or target aggregated row could not be adjusted on the sheet.
+
+**What to do.** Check the sheet: the two category totals may no longer reconcile to the receipt. Fix the amounts by hand, or redo the move from the dashboard.
 
 ## WAL — Wallet webhook
 
