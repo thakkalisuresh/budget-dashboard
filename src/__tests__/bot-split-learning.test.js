@@ -87,7 +87,7 @@ vi.mock('../../functions/lib/_item-llm.mjs', () => ({
   },
 }));
 
-const { resolveSplitItems, handleTextReply } = await import('../../functions/lib/_bot-core.mjs');
+const { resolveSplitItems, handleTextReply, buildSplitResultLines } = await import('../../functions/lib/_bot-core.mjs');
 
 const USER = '123456789';
 const learnedRow = (item, category, at = '2026-01-01') => ['me@x.com', 'Costco', item, category, at, 'sp-old'];
@@ -265,5 +265,92 @@ describe('finalizeSplit — the bot teaches what the receipt decided', () => {
     // A lost lesson costs one tap next time; a lost expense costs the user money.
     expect(sheets.expenses).toHaveLength(2);
     expect(ctx.sent.some(m => /fail/i.test(m.text))).toBe(false);
+  });
+});
+
+describe('buildSplitResultLines — per-item confirmation breakdown', () => {
+  it('lists each item under the category it landed in, with its amount', () => {
+    const lines = buildSplitResultLines({
+      vendor: 'Costco',
+      entries: [{ category: 'Grocery', amount: 10.49 }, { category: 'Health', amount: 12.5 }],
+      allItems: [
+        { name: 'EGGS', amount: 5.99, category: 'Grocery', source: 'learned' },
+        { name: 'MILK', amount: 4.5, category: 'Grocery', source: 'keyword' },
+        { name: 'VITAMINS', amount: 12.5, category: 'Health', source: 'keyword' },
+      ],
+    });
+    const text = lines.join('\n');
+    expect(text).toContain('Grocery — $10.49');
+    expect(text).toContain('   • EGGS $5.99');
+    expect(text).toContain('   • MILK $4.50');
+    expect(text).toContain('Health — $12.50');
+    expect(text).toContain('   • VITAMINS $12.50');
+  });
+
+  it('renders a netted/discounted item with its original price and coupon', () => {
+    const lines = buildSplitResultLines({
+      vendor: 'Costco',
+      entries: [{ category: 'Misc', amount: 13.99 }],
+      allItems: [{ name: 'SCOTCHNSODA', amount: 13.99, category: 'Misc', discount: 4, source: 'keyword' }],
+    });
+    expect(lines.join('\n')).toContain('   • SCOTCHNSODA $13.99 (was $17.99, -$4.00 coupon)');
+  });
+
+  it('flags only LLM-guessed items with ⚠️ and shows the legend once', () => {
+    const lines = buildSplitResultLines({
+      vendor: 'Costco',
+      entries: [{ category: 'Grocery', amount: 30.98 }],
+      allItems: [
+        { name: 'BLULANDDISH', amount: 24.99, category: 'Grocery', source: 'llm' },
+        { name: 'EGGS', amount: 5.99, category: 'Grocery', source: 'learned' },
+      ],
+    });
+    const text = lines.join('\n');
+    expect(text).toContain('BLULANDDISH $24.99 ⚠️');
+    expect(text).toContain('EGGS $5.99');
+    expect(text).not.toContain('EGGS $5.99 ⚠️');
+    expect(text.match(/⚠️ = auto-sorted/g)).toHaveLength(1);
+  });
+
+  it('omits the legend when nothing was LLM-guessed', () => {
+    const lines = buildSplitResultLines({
+      vendor: 'Costco',
+      entries: [{ category: 'Grocery', amount: 5.99 }],
+      allItems: [{ name: 'EGGS', amount: 5.99, category: 'Grocery', source: 'keyword' }],
+    });
+    expect(lines.join('\n')).not.toContain('auto-sorted by AI');
+  });
+
+  it('shows the tax/fees remainder against the category that absorbed it so items reconcile', () => {
+    const lines = buildSplitResultLines({
+      vendor: 'Costco',
+      entries: [{ category: 'Grocery', amount: 8.29 }, { category: 'Health', amount: 12.5 }],
+      allItems: [
+        { name: 'EGGS', amount: 5.99, category: 'Grocery', source: 'keyword' },
+        { name: 'VITAMINS', amount: 12.5, category: 'Health', source: 'keyword' },
+      ],
+      remainder: 2.3,
+      remainderCategory: 'Grocery',
+    });
+    const text = lines.join('\n');
+    expect(text).toContain('   • Tax/fees +$2.30');
+    // The remainder line sits under Grocery, not Health.
+    const groceryIdx = text.indexOf('Grocery — $8.29');
+    const healthIdx = text.indexOf('Health — $12.50');
+    const taxIdx = text.indexOf('Tax/fees +$2.30');
+    expect(taxIdx).toBeGreaterThan(groceryIdx);
+    expect(taxIdx).toBeLessThan(healthIdx);
+  });
+
+  it('skips a category that is not in entries (e.g. its row write failed)', () => {
+    const lines = buildSplitResultLines({
+      vendor: 'Costco',
+      entries: [{ category: 'Grocery', amount: 5.99 }],
+      allItems: [
+        { name: 'EGGS', amount: 5.99, category: 'Grocery', source: 'keyword' },
+        { name: 'ORPHAN', amount: 9.99, category: 'Health', source: 'keyword' },
+      ],
+    });
+    expect(lines.join('\n')).not.toContain('ORPHAN');
   });
 });

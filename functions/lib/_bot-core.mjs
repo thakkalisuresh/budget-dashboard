@@ -1473,6 +1473,65 @@ async function handleSplitCategoryPick(ctx, text) {
   return await askNextSplitItem(ctx, key, state);
 }
 
+/**
+ * Format one split line item for the confirmation message, mirroring the note's
+ * discount wording so the chat shows the same netted price PR2 writes to the
+ * sheet: `Scotch & Soda $13.99 (was $17.99, -$4.00 coupon)`.
+ */
+function fmtSplitItem(item) {
+  const name = String(item?.name ?? '').trim() || 'Item';
+  const amt = Number(item?.amount);
+  if (!Number.isFinite(amt)) return name;
+  const disc = Number(item?.discount);
+  if (Number.isFinite(disc) && disc > 0) {
+    const orig = amt + disc;
+    return `${name} $${amt.toFixed(2)} (was $${orig.toFixed(2)}, -$${disc.toFixed(2)} coupon)`;
+  }
+  return `${name} $${amt.toFixed(2)}`;
+}
+
+/**
+ * Build the per-item breakdown for the split confirmation message: each item
+ * under the category it landed in, with its netted amount. Items a confident
+ * LLM guess placed (source 'llm') are flagged ⚠️ — those are the ones nobody
+ * confirmed, so they're the ones to eyeball (the live BLULANDDISH→Grocery
+ * misfile was exactly an unflagged llm guess). The tax/fees remainder is shown
+ * against the category that absorbed it so the listed items still reconcile to
+ * the category total.
+ *
+ * Built from `allItems` (not the note's itemsByCategory, which strips `source`),
+ * grouped in `entries` order and limited to categories that actually logged.
+ *
+ * Exported for tests.
+ */
+export function buildSplitResultLines({ vendor, entries = [], allItems = [], remainder = 0, remainderCategory = null }) {
+  const byCat = {};
+  for (const it of allItems) {
+    if (!it || !it.category) continue;
+    (byCat[it.category] ||= []).push(it);
+  }
+
+  const lines = [
+    `✅ Logged ${vendor} split across ${entries.length} categor${entries.length === 1 ? 'y' : 'ies'}:`,
+    '',
+  ];
+  let sawGuess = false;
+  for (const e of entries) {
+    lines.push(`${e.category} — $${Number(e.amount).toFixed(2)}`);
+    for (const it of byCat[e.category] || []) {
+      const guess = it.source === 'llm';
+      if (guess) sawGuess = true;
+      lines.push(`   • ${fmtSplitItem(it)}${guess ? ' ⚠️' : ''}`);
+    }
+    if (e.category === remainderCategory && Math.abs(Number(remainder)) >= 0.01) {
+      const r = Number(remainder);
+      lines.push(`   • Tax/fees ${r < 0 ? '-' : '+'}$${Math.abs(r).toFixed(2)}`);
+    }
+  }
+  if (sawGuess) lines.push('', '⚠️ = auto-sorted by AI — double-check these');
+  return lines;
+}
+
 /** Log every category group as its own expense row, linked for UNDO. */
 async function finalizeSplit(ctx, key, state) {
   const { store, userId } = ctx;
@@ -1575,8 +1634,10 @@ async function finalizeSplit(ctx, key, state) {
   console.log(`bot-core: split logged for ${userId} — ${state.vendor}, ${entries.length} categories`);
 
   const lines = [
-    `✅ Logged ${state.vendor} split across ${entries.length} categor${entries.length === 1 ? 'y' : 'ies'}:`,
-    ...entries.map(e => `  ${e.category}: $${e.amount.toFixed(2)}`),
+    ...buildSplitResultLines({
+      vendor: state.vendor, entries, allItems,
+      remainder, remainderCategory,
+    }),
     '',
     `View Sheet: ${sheetUrl(sheetId)}`,
     '',
