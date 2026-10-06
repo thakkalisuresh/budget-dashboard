@@ -362,6 +362,40 @@ export function kbSplitCategory(itemIndex, categories, suggestion = null) {
 }
 
 /**
+ * One button offering item-level correction of the just-logged split. The
+ * splitId ties the correction back to the exact rows this split wrote.
+ */
+export function kbSplitFix(splitId) {
+  return [[{ text: '✏️ Fix a category', callback_data: `SPLITFIX:${splitId}` }]];
+}
+
+/**
+ * List a split's line items as buttons so the user can pick the one that landed
+ * in the wrong category. `items` is [{ label, idx }] where idx is the position
+ * into the split's stored allItems. A ✅ Done row dismisses the picker.
+ */
+export function kbSplitFixItems(splitId, items) {
+  const rows = items.map(({ label, idx }) => [
+    { text: label, callback_data: `SPLITFIXITEM:${splitId}:${idx}` },
+  ]);
+  rows.push([{ text: '✅ Done', callback_data: 'CANCEL' }]);
+  return rows;
+}
+
+/** Category picker for moving one split item (idx) to a new category. */
+export function kbSplitFixCategory(splitId, idx, categories) {
+  const rows = [];
+  for (let i = 0; i < categories.length; i += 2) {
+    const row = categories.slice(i, i + 2).map(c => ({
+      text: c, callback_data: `SPLITFIXCAT:${splitId}:${idx}:${c}`,
+    }));
+    rows.push(row);
+  }
+  rows.push([{ text: '❌ CANCEL', callback_data: 'CANCEL' }]);
+  return rows;
+}
+
+/**
  * Resolve a user email → Telegram chat id via the TELEGRAM_EMAIL_MAP secret
  * ("email:chatId,email:chatId"). Returns null when the user has no mapping.
  * Shared by the wallet webhook and the scheduled jobs (category audit, error

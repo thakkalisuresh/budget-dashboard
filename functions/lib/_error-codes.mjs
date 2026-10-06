@@ -359,6 +359,13 @@ export const ERROR_CODES = {
     fix: 'Delete the old entry in the dashboard. The move deliberately appends before deleting, so a half-failure duplicates rather than destroys.',
   },
 
+  'BOT-012': {
+    title: 'Split item correction failed',
+    severity: 'fatal',
+    cause: 'Moving one line item between a split\'s category rows failed partway — the source or target aggregated row could not be adjusted on the sheet.',
+    fix: 'Check the sheet: the two category totals may no longer reconcile to the receipt. Fix the amounts by hand, or redo the move from the dashboard.',
+  },
+
   /* ── WAL: wallet webhook ──────────────────────────────────────────────── */
   'WAL-001': {
     title: 'Wallet request rejected as invalid',

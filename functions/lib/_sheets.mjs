@@ -296,16 +296,21 @@ async function findRowByUUID(sheetId, sheetTab, uuid) {
   return -1;
 }
 
-export async function deleteExpenseByUUID({ category, uuid, sheetId }) {
+/**
+ * Locate the row carrying `uuid`, trying the category's expected tab first and
+ * then every other tab — the dashboard's "move to category" keeps the UUID but
+ * relocates the row, so a bot-logged expense may live elsewhere by now.
+ *
+ * @returns { sheetTab, rowIndex } — rowIndex is 0-based into the tab's values
+ *          (sheet row = rowIndex + 1), or -1 when not found anywhere.
+ */
+async function locateExpenseRow({ category, uuid, sheetId }) {
   const config = SHEET_MAP[category];
   if (!config) throw new Error(`Unknown category: ${category}`);
 
-  // Expected tab first…
   let sheetTab = config.sheet;
   let rowIndex = await findRowByUUID(sheetId, sheetTab, uuid);
 
-  // …then every other tab: the dashboard's "move to category" keeps the UUID
-  // but relocates the row, so a bot-logged expense may live elsewhere by now.
   if (rowIndex === -1) {
     const otherTabs = [...new Set(Object.values(SHEET_MAP).map(c => c.sheet))]
       .filter(t => t !== config.sheet);
@@ -315,6 +320,32 @@ export async function deleteExpenseByUUID({ category, uuid, sheetId }) {
     }
   }
 
+  return { sheetTab, rowIndex };
+}
+
+/**
+ * Overwrite just the amount (column E) of an existing expense row, found by
+ * UUID. Used by the bot's item-level split correction, which shifts one line
+ * item's amount between two aggregated category rows without deleting/rewriting
+ * them — the UUIDs stay stable so UNDO still maps. Column E holds the amount in
+ * both the 7-col and the 8-col (Travel/Holiday) row variants.
+ */
+export async function updateExpenseAmountByUUID({ category, uuid, sheetId, amount }) {
+  const { sheetTab, rowIndex } = await locateExpenseRow({ category, uuid, sheetId });
+  if (rowIndex === -1) throw new Error(`Row with UUID ${uuid} not found`);
+
+  const range = encodeURIComponent(`'${sheetTab}'!E${rowIndex + 1}`);
+  // RAW, matching appendExpense — the amount is a number, no formula coercion.
+  await sheetsRequest(sheetId, `/values/${range}?valueInputOption=RAW`, {
+    method: 'PUT',
+    body: JSON.stringify({ values: [[amount]] }),
+  });
+  return { sheetTab, rowIndex };
+}
+
+export async function deleteExpenseByUUID({ category, uuid, sheetId }) {
+  // locateExpenseRow validates the category and finds the row across tabs.
+  const { sheetTab, rowIndex } = await locateExpenseRow({ category, uuid, sheetId });
   if (rowIndex === -1) throw new Error(`Row with UUID ${uuid} not found`);
 
   const meta = await sheetsRequest(sheetId, '?fields=sheets.properties');
@@ -883,7 +914,16 @@ export async function mergeTransactionNotes(notes) {
     if (rowIndex < 0) return false;
 
     const settings = JSON.parse(rows[rowIndex][1] || '{}');
-    settings.transactionNotes = { ...(settings.transactionNotes || {}), ...notes };
+    // Merge in new notes; a null value deletes that key. The bot's item-level
+    // split correction changes a row's amount, which changes its amount-based
+    // note key — without deletion the stale key would orphan and accrete in
+    // this single 50,000-char settings cell. No other caller passes null.
+    const merged = { ...(settings.transactionNotes || {}) };
+    for (const [k, v] of Object.entries(notes)) {
+      if (v === null) delete merged[k];
+      else merged[k] = v;
+    }
+    settings.transactionNotes = merged;
 
     const writeRange = encodeURIComponent(`'UserSettings'!B${rowIndex + 1}`);
     await sheetsRequest(TEMPLATE_ID, `/values/${writeRange}?valueInputOption=RAW`, {

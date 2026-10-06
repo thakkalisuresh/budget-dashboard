@@ -45,6 +45,8 @@ const sheets = {
   appended: [],
   notes: {},
   expenses: [],
+  deleted: [],
+  updated: [],
 };
 
 vi.mock('../../functions/lib/firestore.mjs', () => ({ getDb: () => ({}) }));
@@ -62,7 +64,8 @@ vi.mock('../../functions/lib/_sheets.mjs', async () => {
   return {
     getCurrentMonthSheetId: async () => 'sheet-may',
     appendExpense: async (e) => { sheets.expenses.push(e); return { uuid: `uuid-${sheets.expenses.length}` }; },
-    deleteExpenseByUUID: async () => ({}),
+    deleteExpenseByUUID: async ({ category, uuid }) => { sheets.deleted.push({ category, uuid }); return {}; },
+    updateExpenseAmountByUUID: async ({ category, uuid, amount }) => { sheets.updated.push({ category, uuid, amount }); return { sheetTab: category, rowIndex: 0 }; },
     getTotals: async () => ({ salary: 0, categories: {} }),
     getRecentExpenses: async () => [],
     writeSalaryAmount: async () => ({}),
@@ -74,7 +77,14 @@ vi.mock('../../functions/lib/_sheets.mjs', async () => {
     createMonth: async () => ({}),
     getItemMemory: async () => reduceMemoryRows(sheets.memoryRows, 'me@x.com'),
     appendItemMemory: async (rows) => { sheets.appended.push(...rows); return true; },
-    mergeTransactionNotes: async (n) => { Object.assign(sheets.notes, n); return true; },
+    mergeTransactionNotes: async (n) => {
+      // Mirror the real null-delete semantics so tests see stale keys removed.
+      for (const [k, v] of Object.entries(n)) {
+        if (v === null) delete sheets.notes[k];
+        else sheets.notes[k] = v;
+      }
+      return true;
+    },
     memoryUserId: () => 'me@x.com',
   };
 });
@@ -87,7 +97,7 @@ vi.mock('../../functions/lib/_item-llm.mjs', () => ({
   },
 }));
 
-const { resolveSplitItems, handleTextReply } = await import('../../functions/lib/_bot-core.mjs');
+const { resolveSplitItems, handleTextReply, buildSplitResultLines } = await import('../../functions/lib/_bot-core.mjs');
 
 const USER = '123456789';
 const learnedRow = (item, category, at = '2026-01-01') => ['me@x.com', 'Costco', item, category, at, 'sp-old'];
@@ -106,6 +116,8 @@ beforeEach(() => {
   sheets.appended = [];
   sheets.notes = {};
   sheets.expenses = [];
+  sheets.deleted = [];
+  sheets.updated = [];
   llm.results = null;
   llm.calls = 0;
 });
@@ -265,5 +277,242 @@ describe('finalizeSplit — the bot teaches what the receipt decided', () => {
     // A lost lesson costs one tap next time; a lost expense costs the user money.
     expect(sheets.expenses).toHaveLength(2);
     expect(ctx.sent.some(m => /fail/i.test(m.text))).toBe(false);
+  });
+});
+
+describe('buildSplitResultLines — per-item confirmation breakdown', () => {
+  it('lists each item under the category it landed in, with its amount', () => {
+    const lines = buildSplitResultLines({
+      vendor: 'Costco',
+      entries: [{ category: 'Grocery', amount: 10.49 }, { category: 'Health', amount: 12.5 }],
+      allItems: [
+        { name: 'EGGS', amount: 5.99, category: 'Grocery', source: 'learned' },
+        { name: 'MILK', amount: 4.5, category: 'Grocery', source: 'keyword' },
+        { name: 'VITAMINS', amount: 12.5, category: 'Health', source: 'keyword' },
+      ],
+    });
+    const text = lines.join('\n');
+    expect(text).toContain('Grocery — $10.49');
+    expect(text).toContain('   • EGGS $5.99');
+    expect(text).toContain('   • MILK $4.50');
+    expect(text).toContain('Health — $12.50');
+    expect(text).toContain('   • VITAMINS $12.50');
+  });
+
+  it('renders a netted/discounted item with its original price and coupon', () => {
+    const lines = buildSplitResultLines({
+      vendor: 'Costco',
+      entries: [{ category: 'Misc', amount: 13.99 }],
+      allItems: [{ name: 'SCOTCHNSODA', amount: 13.99, category: 'Misc', discount: 4, source: 'keyword' }],
+    });
+    expect(lines.join('\n')).toContain('   • SCOTCHNSODA $13.99 (was $17.99, -$4.00 coupon)');
+  });
+
+  it('flags only LLM-guessed items with ⚠️ and shows the legend once', () => {
+    const lines = buildSplitResultLines({
+      vendor: 'Costco',
+      entries: [{ category: 'Grocery', amount: 30.98 }],
+      allItems: [
+        { name: 'BLULANDDISH', amount: 24.99, category: 'Grocery', source: 'llm' },
+        { name: 'EGGS', amount: 5.99, category: 'Grocery', source: 'learned' },
+      ],
+    });
+    const text = lines.join('\n');
+    expect(text).toContain('BLULANDDISH $24.99 ⚠️');
+    expect(text).toContain('EGGS $5.99');
+    expect(text).not.toContain('EGGS $5.99 ⚠️');
+    expect(text.match(/⚠️ = auto-sorted/g)).toHaveLength(1);
+  });
+
+  it('omits the legend when nothing was LLM-guessed', () => {
+    const lines = buildSplitResultLines({
+      vendor: 'Costco',
+      entries: [{ category: 'Grocery', amount: 5.99 }],
+      allItems: [{ name: 'EGGS', amount: 5.99, category: 'Grocery', source: 'keyword' }],
+    });
+    expect(lines.join('\n')).not.toContain('auto-sorted by AI');
+  });
+
+  it('shows the tax/fees remainder against the category that absorbed it so items reconcile', () => {
+    const lines = buildSplitResultLines({
+      vendor: 'Costco',
+      entries: [{ category: 'Grocery', amount: 8.29 }, { category: 'Health', amount: 12.5 }],
+      allItems: [
+        { name: 'EGGS', amount: 5.99, category: 'Grocery', source: 'keyword' },
+        { name: 'VITAMINS', amount: 12.5, category: 'Health', source: 'keyword' },
+      ],
+      remainder: 2.3,
+      remainderCategory: 'Grocery',
+    });
+    const text = lines.join('\n');
+    expect(text).toContain('   • Tax/fees +$2.30');
+    // The remainder line sits under Grocery, not Health.
+    const groceryIdx = text.indexOf('Grocery — $8.29');
+    const healthIdx = text.indexOf('Health — $12.50');
+    const taxIdx = text.indexOf('Tax/fees +$2.30');
+    expect(taxIdx).toBeGreaterThan(groceryIdx);
+    expect(taxIdx).toBeLessThan(healthIdx);
+  });
+
+  it('skips a category that is not in entries (e.g. its row write failed)', () => {
+    const lines = buildSplitResultLines({
+      vendor: 'Costco',
+      entries: [{ category: 'Grocery', amount: 5.99 }],
+      allItems: [
+        { name: 'EGGS', amount: 5.99, category: 'Grocery', source: 'keyword' },
+        { name: 'ORPHAN', amount: 9.99, category: 'Health', source: 'keyword' },
+      ],
+    });
+    expect(lines.join('\n')).not.toContain('ORPHAN');
+  });
+});
+
+describe('split correction — "✏️ Fix a category" moves one item between rows', () => {
+  // A finished 2-category split: Grocery $10 (BANANAS), Misc $20 (PAPER TOWELS
+  // $5 + ZX9 $10 + $5 folded tax). receiptTotal 30; Misc is the remainder cat.
+  function seedTwoCat() {
+    mockStore.data.set(`split_confirm:${USER}:base_1`, {
+      id: 'base_1', phone: USER, vendor: 'Costco',
+      totalAmount: 30, txDate: '2026-05-10', year: 2026, month: 'May',
+      paymentMethod: '', conversionInfo: null,
+      driveFileId: null, driveFolderId: null, driveShareLink: null,
+      groups: { Grocery: 10, Misc: 15 },
+      autoItems: [
+        { name: 'BANANAS', amount: 10, category: 'Grocery', source: 'keyword' },
+        { name: 'PAPER TOWELS', amount: 5, category: 'Misc', source: 'learned' },
+      ],
+      items: [{ name: 'ZX9 WIDGET', amount: 10, suggestion: null, category: 'Misc' }],
+      currentIndex: 1,
+      receivedAt: new Date().toISOString(),
+    });
+  }
+
+  // A clean 3-category split, no remainder: Grocery 10, Misc 8, Health 12 = 30.
+  function seedThreeCat() {
+    mockStore.data.set(`split_confirm:${USER}:base_1`, {
+      id: 'base_1', phone: USER, vendor: 'Costco',
+      totalAmount: 30, txDate: '2026-05-10', year: 2026, month: 'May',
+      paymentMethod: '', conversionInfo: null,
+      driveFileId: null, driveFolderId: null, driveShareLink: null,
+      groups: { Grocery: 10, Misc: 8, Health: 12 },
+      autoItems: [
+        { name: 'BANANAS', amount: 10, category: 'Grocery', source: 'keyword' },
+        { name: 'SOAP', amount: 8, category: 'Misc', source: 'llm' },
+        { name: 'VITAMINS', amount: 12, category: 'Health', source: 'keyword' },
+      ],
+      items: [],
+      currentIndex: 0,
+      receivedAt: new Date().toISOString(),
+    });
+  }
+
+  async function finalize(seed) {
+    seed();
+    await handleTextReply(makeCtx(), 'YES');
+    return mockStore.data.get(`lastlog:${USER}`);
+  }
+
+  const sumRows = (log) => Math.round(log.entries.reduce((s, e) => s + e.amount, 0) * 100) / 100;
+
+  it('tapping Fix lists the split items as buttons', async () => {
+    const log = await finalize(seedTwoCat);
+    const ctx = makeCtx();
+    await handleTextReply(ctx, `SPLITFIX:${log.splitId}`);
+    const msg = ctx.sent.at(-1);
+    expect(msg.text).toMatch(/which item/i);
+    const labels = msg.keyboard.flat().map(b => b.text).join(' | ');
+    expect(labels).toContain('BANANAS');
+    expect(labels).toContain('PAPER TOWELS');
+  });
+
+  it('A→B move adjusts both rows, reconciles to the receipt total, and re-teaches', async () => {
+    const log = await finalize(seedTwoCat);
+    const before = sheets.appended.length;
+    const ctx = makeCtx();
+    // Move PAPER TOWELS (idx 1) from Misc to Grocery.
+    await handleTextReply(ctx, `SPLITFIXCAT:${log.splitId}:1:Grocery`);
+
+    const after = mockStore.data.get(`lastlog:${USER}`);
+    // Both rows updated in place (no delete, no append).
+    expect(sheets.updated).toEqual(expect.arrayContaining([
+      { category: 'Misc', uuid: 'uuid-2', amount: 15 },
+      { category: 'Grocery', uuid: 'uuid-1', amount: 15 },
+    ]));
+    expect(sheets.deleted).toHaveLength(0);
+    // RECONCILIATION INVARIANT: rows still sum to the receipt total.
+    expect(sumRows(after)).toBe(30);
+    expect(after.receiptTotal).toBe(30);
+    // The item moved in state and is now user-confirmed (loses the ⚠️ flag).
+    expect(after.allItems[1]).toMatchObject({ name: 'PAPER TOWELS', category: 'Grocery', source: 'corrected' });
+    // Exactly one re-teach row, item → new category, same splitId.
+    expect(sheets.appended).toHaveLength(before + 1);
+    const taught = sheets.appended.at(-1);
+    expect(taught[3]).toBe('Grocery');
+    expect(taught[5]).toBe(log.splitId);
+    expect(ctx.sent.at(-1).text).toMatch(/Moved .*Grocery/);
+  });
+
+  it('moving the only item out of a category deletes that row and still reconciles', async () => {
+    const log = await finalize(seedTwoCat);
+    const ctx = makeCtx();
+    // BANANAS (idx 0) is all of Grocery → Grocery row should be removed.
+    await handleTextReply(ctx, `SPLITFIXCAT:${log.splitId}:0:Misc`);
+
+    const after = mockStore.data.get(`lastlog:${USER}`);
+    expect(sheets.deleted).toEqual([{ category: 'Grocery', uuid: 'uuid-1' }]);
+    expect(sheets.updated).toEqual(expect.arrayContaining([{ category: 'Misc', uuid: 'uuid-2', amount: 30 }]));
+    expect(after.entries).toHaveLength(1);
+    expect(after.entries[0]).toMatchObject({ category: 'Misc', uuid: 'uuid-2', amount: 30 });
+    expect(sumRows(after)).toBe(30);
+    // The emptied category's stale note key is gone (null-delete).
+    expect(Object.keys(sheets.notes).some(k => k.includes('_Grocery_'))).toBe(false);
+  });
+
+  it('moving to a category with no row yet creates that row and reconciles', async () => {
+    const log = await finalize(seedTwoCat);
+    const expensesBefore = sheets.expenses.length;
+    const ctx = makeCtx();
+    // ZX9 (idx 2) Misc → Furniture (not in the split).
+    await handleTextReply(ctx, `SPLITFIXCAT:${log.splitId}:2:Furniture`);
+
+    const after = mockStore.data.get(`lastlog:${USER}`);
+    expect(sheets.expenses).toHaveLength(expensesBefore + 1);
+    expect(sheets.expenses.at(-1)).toMatchObject({ category: 'Furniture', amount: 10 });
+    expect(sheets.updated).toEqual(expect.arrayContaining([{ category: 'Misc', uuid: 'uuid-2', amount: 10 }]));
+    expect(after.entries.find(e => e.category === 'Furniture')).toMatchObject({ amount: 10, uuid: 'uuid-3' });
+    expect(sumRows(after)).toBe(30);
+  });
+
+  it('UNDO after a correction removes the CORRECTED rows, not the originals', async () => {
+    const log = await finalize(seedTwoCat);
+    await handleTextReply(makeCtx(), `SPLITFIXCAT:${log.splitId}:0:Misc`); // deletes Grocery, Misc→30
+    sheets.deleted = []; // isolate the UNDO deletes
+    await handleTextReply(makeCtx(), 'UNDO');
+    // Only the surviving (merged) Misc row remains to delete — the original
+    // Grocery uuid-1 is already gone, so UNDO must not try to re-delete it.
+    expect(sheets.deleted).toEqual([{ category: 'Misc', uuid: 'uuid-2' }]);
+    expect(mockStore.data.get(`lastlog:${USER}`)).toBeFalsy();
+  });
+
+  it('leaves unrelated categories in the same split untouched', async () => {
+    const log = await finalize(seedThreeCat); // Grocery 10, Misc 8, Health 12
+    const ctx = makeCtx();
+    // Move SOAP (idx 1) Misc → Grocery; Health must not be touched.
+    await handleTextReply(ctx, `SPLITFIXCAT:${log.splitId}:1:Grocery`);
+
+    const after = mockStore.data.get(`lastlog:${USER}`);
+    const touched = [...sheets.updated, ...sheets.deleted].map(x => x.category);
+    expect(touched).not.toContain('Health');
+    expect(after.entries.find(e => e.category === 'Health')).toMatchObject({ uuid: 'uuid-3', amount: 12 });
+    expect(sumRows(after)).toBe(30);
+  });
+
+  it('refuses to correct a split that is no longer the most recent', async () => {
+    await finalize(seedTwoCat);
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'SPLITFIX:sp-some-other-split');
+    expect(ctx.sent.at(-1).text).toMatch(/no longer the most recent/i);
+    expect(sheets.updated).toHaveLength(0);
+    expect(sheets.deleted).toHaveLength(0);
   });
 });
