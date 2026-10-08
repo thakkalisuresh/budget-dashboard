@@ -3,6 +3,7 @@ import {
   createInvestSheet, ensureInvestSheet, fetchAccounts, updateAccount,
   appendActivity, appendActivities, fetchActivities, fetchRateWatch,
   deleteActivityByUUID, INVEST_TABS,
+  appendRateHistory, fetchRateHistory, ensureRateHistoryTab, writeRateWatchDetails,
 } from '../sheetInvest.js';
 
 // Route-based fetch mock: each entry is [urlSubstring+method matcher, response]
@@ -183,7 +184,120 @@ describe('fetchRateWatch', () => {
       },
     });
     const rows = await fetchRateWatch('inv123', 'tok');
-    expect(rows[0]).toMatchObject({ scanDate: '2026-07-08', bestBank: 'Pibank', details: [] });
+    expect(rows[0]).toMatchObject({ scanDate: '2026-07-08', bestBank: 'Pibank', details: [], proposals: [] });
     expect(rows[1].details[0].bank).toBe('Openbank');
+  });
+
+  it('parses the { alternatives, proposals } object form and tags rowIndex', async () => {
+    routes.push({
+      match: "'RateWatch'!A2%3AF200", json: {
+        values: [
+          ['2026-10-01', 'Openbank', 4.75, 4.4, 0.35,
+            '{"alternatives":[{"bank":"Openbank","apy":4.75}],"proposals":[{"accountId":"amex-hysa","bank":"Amex","currentApy":3.7,"proposedApy":3.85,"effectiveDate":"2026-10-01"}]}'],
+        ],
+      },
+    });
+    const rows = await fetchRateWatch('inv123', 'tok');
+    expect(rows[0].rowIndex).toBe(2);
+    expect(rows[0].details[0].bank).toBe('Openbank');
+    expect(rows[0].proposals[0]).toMatchObject({ accountId: 'amex-hysa', proposedApy: 3.85 });
+  });
+});
+
+describe('writeRateWatchDetails', () => {
+  it('PUTs column F of the given row with the { alternatives, proposals } object', async () => {
+    await writeRateWatchDetails('inv123', 'tok', 5, { alternatives: [{ bank: 'X', apy: 5 }], proposals: [] });
+    const put = calls.find(c => c.method === 'PUT' && c.url.includes("'RateWatch'!F5"));
+    expect(put).toBeTruthy();
+    const payload = JSON.parse(put.body.values[0][0]);
+    expect(payload).toEqual({ alternatives: [{ bank: 'X', apy: 5 }], proposals: [] });
+  });
+});
+
+// RateHistory tab exists on the sheet, so ensureRateHistoryTab is a no-op and
+// each APY change produces a single clean append.
+function withRateHistoryTab() {
+  routes.push({ match: '?fields=sheets.properties', json: { sheets: [
+    { properties: { title: 'Accounts' } }, { properties: { title: 'RateHistory', sheetId: 9 } },
+  ] } });
+}
+
+describe('RateHistory on APY change', () => {
+  it('appends a manual-source row when the APY changes', async () => {
+    routes.push({ match: "'Accounts'!A2%3AH50", json: {
+      values: [['amex-hysa', 'Amex', 'hysa', 'Amex', 3.7, 28400, '', 250000]],
+    } });
+    withRateHistoryTab();
+    await updateAccount('inv123', 'tok', 'amex-hysa', { apy: 3.85 });
+
+    const hist = calls.find(c => c.url.includes('RateHistory') && c.url.includes(':append'));
+    expect(hist).toBeTruthy();
+    expect(hist.body.values[0]).toEqual(['amex-hysa', 3.85, expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), 'manual']);
+  });
+
+  it('does NOT append RateHistory when only the balance changes', async () => {
+    routes.push({ match: "'Accounts'!A2%3AH50", json: {
+      values: [['amex-hysa', 'Amex', 'hysa', 'Amex', 3.7, 28400, '', 250000]],
+    } });
+    withRateHistoryTab();
+    await updateAccount('inv123', 'tok', 'amex-hysa', { balance: 30000 });
+
+    expect(calls.find(c => c.url.includes('RateHistory'))).toBeUndefined();
+    expect(calls.find(c => c.url.includes('Snapshots'))).toBeTruthy();
+  });
+
+  it('honours an explicit rate-watch source (the confirmed-finding path)', async () => {
+    routes.push({ match: "'Accounts'!A2%3AH50", json: {
+      values: [['amex-hysa', 'Amex', 'hysa', 'Amex', 3.7, 28400, '', 250000]],
+    } });
+    withRateHistoryTab();
+    await updateAccount('inv123', 'tok', 'amex-hysa', { apy: 3.85, rateSource: 'rate-watch' });
+
+    const hist = calls.find(c => c.url.includes('RateHistory') && c.url.includes(':append'));
+    expect(hist.body.values[0][3]).toBe('rate-watch');
+  });
+});
+
+describe('ensureRateHistoryTab', () => {
+  it('is a no-op when the tab already exists', async () => {
+    withRateHistoryTab();
+    const created = await ensureRateHistoryTab('inv123', 'tok');
+    expect(created).toBe(false);
+    expect(calls.find(c => c.url.includes(':batchUpdate'))).toBeUndefined();
+  });
+
+  it('adds the tab and writes its header when missing', async () => {
+    routes.push({ match: '?fields=sheets.properties', json: { sheets: [{ properties: { title: 'Accounts' } }] } });
+    const created = await ensureRateHistoryTab('inv123', 'tok');
+    expect(created).toBe(true);
+    const add = calls.find(c => c.url.includes(':batchUpdate'));
+    expect(add.body.requests[0].addSheet.properties.title).toBe('RateHistory');
+    const header = calls.find(c => c.method === 'PUT' && c.url.includes("'RateHistory'!A1"));
+    expect(header.body.values[0]).toEqual(INVEST_TABS.RateHistory);
+  });
+});
+
+describe('fetchRateHistory', () => {
+  it('parses rows and skips blanks', async () => {
+    routes.push({ match: "'RateHistory'!A2%3AD500", json: {
+      values: [
+        ['amex-hysa', 4.4, '2026-07-08', 'manual'],
+        ['amex-hysa', 3.85, '2026-10-01', 'rate-watch'],
+        [],
+      ],
+    } });
+    const rows = await fetchRateHistory('inv123', 'tok');
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ accountId: 'amex-hysa', apy: 3.85, effectiveDate: '2026-10-01', source: 'rate-watch', rowIndex: 3 });
+  });
+});
+
+describe('appendRateHistory', () => {
+  it('defaults source to manual and date to today', async () => {
+    await appendRateHistory('inv123', 'tok', { accountId: 'happen-hysa', apy: 4.5 });
+    const hist = calls.find(c => c.url.includes('RateHistory') && c.url.includes(':append'));
+    expect(hist.body.values[0][0]).toBe('happen-hysa');
+    expect(hist.body.values[0][3]).toBe('manual');
+    expect(hist.body.values[0][2]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });

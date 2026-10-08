@@ -32,6 +32,7 @@ const DOMAIN_NAMES = {
   PUSH: 'Web push notifications',
   MCP:  'MCP server',
   WEB:  'Dashboard (frontend)',
+  INV:  'Investments & rate-watch',
 };
 
 const SEVERITY_NOTE = {

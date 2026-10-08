@@ -8,10 +8,11 @@
 // rate-watch function can find it.
 //
 // Tabs:
-//   Accounts   — id | name | type | institution | apy | balance | balanceAsOf | goal
-//   Activities — date | accountId | type | symbol | qty | price | amount | note | uuid
-//   Snapshots  — date | accountId | balance
-//   RateWatch  — scanDate | bestBank | bestApy | yourBestApy | delta | detailsJson
+//   Accounts    — id | name | type | institution | apy | balance | balanceAsOf | goal
+//   Activities  — date | accountId | type | symbol | qty | price | amount | note | uuid
+//   Snapshots   — date | accountId | balance
+//   RateWatch   — scanDate | bestBank | bestApy | yourBestApy | delta | detailsJson
+//   RateHistory — accountId | apy | effectiveDate | source   (source: manual|rate-watch)
 // ════════════════════════════════════════════════════════════════════════════
 import { apiFetch } from './sheetApi.js';
 import { safeText } from './sheetHelpers.js';
@@ -20,10 +21,14 @@ import { requestDriveToken } from './driveAuth.js';
 import { FDIC_MAX } from './investMath.js';
 
 export const INVEST_TABS = {
-  Accounts:   ['id', 'name', 'type', 'institution', 'apy', 'balance', 'balanceAsOf', 'goal'],
-  Activities: ['date', 'accountId', 'type', 'symbol', 'qty', 'price', 'amount', 'note', 'uuid'],
-  Snapshots:  ['date', 'accountId', 'balance'],
-  RateWatch:  ['scanDate', 'bestBank', 'bestApy', 'yourBestApy', 'delta', 'detailsJson'],
+  Accounts:    ['id', 'name', 'type', 'institution', 'apy', 'balance', 'balanceAsOf', 'goal'],
+  Activities:  ['date', 'accountId', 'type', 'symbol', 'qty', 'price', 'amount', 'note', 'uuid'],
+  Snapshots:   ['date', 'accountId', 'balance'],
+  RateWatch:   ['scanDate', 'bestBank', 'bestApy', 'yourBestApy', 'delta', 'detailsJson'],
+  // HYSA APY is variable: every change is appended here with its effective date
+  // (the old rate still governs interest accrued before it). source records how
+  // the change got in — a manual gauge edit, or a confirmed rate-watch finding.
+  RateHistory: ['accountId', 'apy', 'effectiveDate', 'source'],
 };
 
 export const ACTIVITY_TYPES = ['BUY', 'SELL', 'DIVIDEND', 'DEPOSIT', 'WITHDRAW', 'INTEREST', 'FEE'];
@@ -127,10 +132,15 @@ export async function fetchAccounts(sheetId, accessToken) {
 }
 
 /**
- * Update an account's balance and/or APY. A balance change also appends a
- * Snapshot row so history accrues for future charts.
+ * Update an account's balance and/or APY.
+ *   - a balance change appends a Snapshot row (balance history for charts)
+ *   - an APY change appends a RateHistory row (variable-rate audit trail),
+ *     tagged with `rateSource`: 'manual' for a gauge edit, 'rate-watch' for a
+ *     user-confirmed rate-watch finding.
+ * Both history appends are best-effort: the account write is what matters, so a
+ * history hiccup (e.g. a pre-RateHistory sheet) never fails the update.
  */
-export async function updateAccount(sheetId, accessToken, accountId, { balance, apy } = {}) {
+export async function updateAccount(sheetId, accessToken, accountId, { balance, apy, rateSource = 'manual' } = {}) {
   const accounts = await fetchAccounts(sheetId, accessToken);
   const acct = accounts.find(a => a.id === accountId);
   if (!acct) throw new Error(`Unknown account: ${accountId}`);
@@ -146,6 +156,14 @@ export async function updateAccount(sheetId, accessToken, accountId, { balance, 
 
   if (balance != null && balance !== acct.balance) {
     await appendSnapshot(sheetId, accessToken, { accountId, balance });
+  }
+  if (apy != null && apy !== acct.apy) {
+    try {
+      await ensureRateHistoryTab(sheetId, accessToken);
+      await appendRateHistory(sheetId, accessToken, { accountId, apy: newApy, source: rateSource });
+    } catch (e) {
+      console.warn('RateHistory append failed (non-fatal):', e?.message);
+    }
   }
   return { ...acct, apy: newApy, balance: newBalance, balanceAsOf: todayIso() };
 }
@@ -243,6 +261,62 @@ export async function appendSnapshot(sheetId, accessToken, { accountId, balance,
   });
 }
 
+// ── Rate history (every APY change, with its effective date) ────────────────
+
+/** Append one APY change to RateHistory. source: 'manual' | 'rate-watch'. */
+export async function appendRateHistory(sheetId, accessToken, { accountId, apy, effectiveDate, source = 'manual' }) {
+  const range = encodeURIComponent("'RateHistory'!A1");
+  await apiFetch(sheetId, `/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
+    method: 'POST',
+    headers: authJson(accessToken),
+    body: JSON.stringify({
+      values: [[String(accountId), Number(apy) || 0, effectiveDate || todayIso(), String(source || 'manual')]],
+    }),
+  });
+}
+
+export async function fetchRateHistory(sheetId, accessToken) {
+  const range = encodeURIComponent("'RateHistory'!A2:D500");
+  const json = await apiFetch(sheetId, `/values/${range}?valueRenderOption=UNFORMATTED_VALUE`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  return (json.values || [])
+    .map((r, i) => ({
+      rowIndex: i + 2,
+      accountId: String(r[0] || ''),
+      apy: Number(r[1]) || 0,
+      effectiveDate: String(r[2] || ''),
+      source: String(r[3] || 'manual'),
+    }))
+    .filter(r => r.accountId);
+}
+
+/**
+ * Idempotently make sure the RateHistory tab exists on an already-provisioned
+ * sheet (sheets created before this tab shipped have everything else but this).
+ * Fresh sheets get it from createInvestSheet. Returns true if it created it.
+ */
+export async function ensureRateHistoryTab(sheetId, accessToken) {
+  const meta = await apiFetch(sheetId, '?fields=sheets.properties', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const exists = (meta.sheets || []).some(s => s.properties?.title === 'RateHistory');
+  if (exists) return false;
+
+  await apiFetch(sheetId, ':batchUpdate', {
+    method: 'POST',
+    headers: authJson(accessToken),
+    body: JSON.stringify({ requests: [{ addSheet: { properties: { title: 'RateHistory' } } }] }),
+  });
+  const range = encodeURIComponent("'RateHistory'!A1");
+  await apiFetch(sheetId, `/values/${range}?valueInputOption=RAW`, {
+    method: 'PUT',
+    headers: authJson(accessToken),
+    body: JSON.stringify({ values: [INVEST_TABS.RateHistory] }),
+  });
+  return true;
+}
+
 // ── Rate watch (rows written by the scheduled function) ─────────────────────
 
 export async function fetchRateWatch(sheetId, accessToken, limit = 12) {
@@ -251,18 +325,45 @@ export async function fetchRateWatch(sheetId, accessToken, limit = 12) {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   const rows = (json.values || [])
-    .map(r => {
-      let details = [];
-      try { details = JSON.parse(r[5] || '[]'); } catch { /* keep [] */ }
+    .map((r, i) => {
+      // detailsJson is either the legacy bare array of alternative rates, or an
+      // object { alternatives, proposals } once the scan started recording
+      // held-bank advertised-rate change proposals. Tolerate both.
+      let details = [], proposals = [];
+      try {
+        const parsed = JSON.parse(r[5] || '[]');
+        if (Array.isArray(parsed)) {
+          details = parsed;
+        } else if (parsed && typeof parsed === 'object') {
+          details = parsed.alternatives || parsed.details || [];
+          proposals = parsed.proposals || [];
+        }
+      } catch { /* keep [] */ }
       return {
+        rowIndex: i + 2,
         scanDate: String(r[0] || ''),
         bestBank: String(r[1] || ''),
         bestApy: Number(r[2]) || 0,
         yourBestApy: Number(r[3]) || 0,
         delta: Number(r[4]) || 0,
         details,
+        proposals,
       };
     })
     .filter(r => r.scanDate);
   return rows.slice(-limit).reverse(); // newest first
+}
+
+/**
+ * Rewrite one RateWatch row's detailsJson (column F) — used to clear/dismiss a
+ * held-bank proposal after the user confirms or rejects it, so the nudge drops
+ * off the card. rowIndex comes from fetchRateWatch.
+ */
+export async function writeRateWatchDetails(sheetId, accessToken, rowIndex, { alternatives = [], proposals = [] } = {}) {
+  const range = encodeURIComponent(`'RateWatch'!F${rowIndex}`);
+  await apiFetch(sheetId, `/values/${range}?valueInputOption=RAW`, {
+    method: 'PUT',
+    headers: authJson(accessToken),
+    body: JSON.stringify({ values: [[JSON.stringify({ alternatives, proposals })]] }),
+  });
 }

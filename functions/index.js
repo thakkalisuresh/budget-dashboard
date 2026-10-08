@@ -36,3 +36,5 @@ export { categoryAudit } from './category-audit.mjs';
 export { errorDigest } from './error-digest.mjs';
 // Invest tab — Finnhub quotes proxy (key stays server-side).
 export { quotes } from './quotes.mjs';
+// Invest tab — bi-weekly HYSA rate watch (scheduled; 1st & 15th).
+export { rateWatch } from './rate-watch.mjs';

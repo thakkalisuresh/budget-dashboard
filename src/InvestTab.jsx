@@ -6,6 +6,7 @@ import { valuePortfolio, blendedApy } from './investMath.js';
 import { InvestOrbit } from './InvestOrbit.jsx';
 import { InvestTape, InvestSavingsCard, InvestAccountCard, RateWatchCard, InvestEquityRows, InvestSplitDonut } from './InvestParts.jsx';
 import { EditAccountDialog, AddActivityDialog, ImportCsvDialog } from './InvestDialogs.jsx';
+import { updateAccount, writeRateWatchDetails } from './sheetInvest.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // InvestTab — the approved hybrid layout: ticker tape → orbital hero →
@@ -53,6 +54,30 @@ export function InvestTab({ user, settings, updateSettings, settingsLoading, cur
   const [editAccount, setEditAccount] = useState(null);
   const [showAddActivity, setShowAddActivity] = useState(false);
   const [showImport, setShowImport] = useState(false);
+
+  // Rate-watch proposals: confirming writes the new APY (+ a RateHistory row
+  // tagged 'rate-watch'); either button clears the proposal off the latest
+  // scan row so the nudge drops. The scan only DETECTS — the tap is consent.
+  const canResolveProposal = !isReadOnly && !!sheetId && !!user?.accessToken;
+  const clearProposal = async (p) => {
+    const latest = rateWatch[0];
+    if (!latest?.rowIndex) return;
+    const remaining = (latest.proposals || []).filter(x => x.accountId !== p.accountId);
+    await writeRateWatchDetails(sheetId, user.accessToken, latest.rowIndex, {
+      alternatives: latest.details || [], proposals: remaining,
+    });
+  };
+  const resolveProposal = canResolveProposal ? {
+    onConfirmProposal: async (p) => {
+      await updateAccount(sheetId, user.accessToken, p.accountId, { apy: p.proposedApy, rateSource: 'rate-watch' });
+      await clearProposal(p);
+      refresh();
+    },
+    onDismissProposal: async (p) => {
+      await clearProposal(p);
+      refresh();
+    },
+  } : {};
 
   // ── Provisioning / hard-error states ──────────────────────────────────────
   if (provisioning || (!sheetId && !error)) {
@@ -172,7 +197,7 @@ export function InvestTab({ user, settings, updateSettings, settingsLoading, cur
 
       {/* Rate watch */}
       {hysaAccounts.length > 0 && (
-        <RateWatchCard rateWatch={rateWatch} hysaAccounts={hysaAccounts} currencySymbol={currencySymbol} />
+        <RateWatchCard rateWatch={rateWatch} hysaAccounts={hysaAccounts} currencySymbol={currencySymbol} {...resolveProposal} />
       )}
 
       {/* Equities */}

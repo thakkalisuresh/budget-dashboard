@@ -6,7 +6,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
-  ensureInvestSheet, fetchAccounts, fetchActivities, fetchRateWatch,
+  ensureInvestSheet, ensureRateHistoryTab, fetchAccounts, fetchActivities, fetchRateWatch,
 } from './sheetInvest.js';
 import { deriveHoldings } from './investMath.js';
 import { MOCK_INVEST } from './mockData.js';
@@ -35,6 +35,7 @@ export function useInvestData({ user, settings, updateSettings, settingsLoading 
   const [error, setError] = useState('');
   const [tick, setTick] = useState(0);
   const provisionOnce = useRef(false);
+  const ensuredHistoryFor = useRef(null);
 
   const sheetId = DEV_MOCK ? 'mock-invest' : (settings.investSheetId || null);
   const refresh = useCallback(() => setTick(t => t + 1), []);
@@ -61,6 +62,13 @@ export function useInvestData({ user, settings, updateSettings, settingsLoading 
     if (DEV_MOCK) return;
     if (!sheetId || !user?.accessToken) return;
     let cancelled = false;
+
+    // Self-heal sheets provisioned before RateHistory shipped: idempotent, once
+    // per sheet per session, fire-and-forget (a missing tab must not block load).
+    if (ensuredHistoryFor.current !== sheetId) {
+      ensuredHistoryFor.current = sheetId;
+      ensureRateHistoryTab(sheetId, user.accessToken).catch(() => {});
+    }
 
     const mem = investCache.get(sheetId);
     if (mem && Date.now() - mem.fetchedAt < CACHE_MS && tick === 0) {
