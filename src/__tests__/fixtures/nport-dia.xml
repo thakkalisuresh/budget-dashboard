@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TRIMMED N-PORT fixture for the EDGAR parser test. Derived from a real public
+  SEC filing: SPDR Dow Jones Industrial Average ETF Trust (DIA), CIK 1041130,
+  form NPORT-P, reporting period 2026-07-31. Reduced from 30 holdings to 7 and
+  otherwise byte-faithful to the real structure. One holding (Apple) has had a
+  <ticker> identifier injected — the real filing carries only ISIN/CUSIP — so
+  the parser's best-effort ticker path is exercised alongside the common
+  no-ticker case. NEVER fetched live in tests; this file is the source of truth.
+-->
+<edgarSubmission xmlns="http://www.sec.gov/edgar/nport" xmlns:com="http://www.sec.gov/edgar/common" xmlns:ncom="http://www.sec.gov/edgar/nportcommon" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.sec.gov/edgar/nport eis_NPORT_Filer.xsd">
+  <headerData>
+    <submissionType>NPORT-P</submissionType>
+    <isConfidential>false</isConfidential>
+    <filerInfo>
+      <filer>
+        <issuerCredentials>
+          <cik>0001041130</cik>
+          <ccc>XXXXXXXX</ccc>
+        </issuerCredentials>
+      </filer>
+    </filerInfo>
+  </headerData>
+  <formData>
+    <genInfo>
+      <regName>SPDR DOW JONES INDUSTRIAL AVERAGE ETF TRUST</regName>
+      <regFileNumber>811-09170</regFileNumber>
+      <regCik>0001041130</regCik>
+      <regLei>54930039F2SG3UG2OZ18</regLei>
+      <seriesName>N/A</seriesName>
+      <repPdEnd>2026-10-31</repPdEnd>
+      <repPdDate>2026-07-31</repPdDate>
+    </genInfo>
+    <invstOrSecs>
+      <invstOrSec>
+        <name>Alphabet Inc</name>
+        <lei>5493006MHB84DD0ZWV18</lei>
+        <title>Alphabet Inc</title>
+        <cusip>02079K305</cusip>
+        <identifiers>
+          <isin value="US02079K3059"/>
+        </identifiers>
+        <balance>5116762.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>1822232451.06000000</valUSD>
+        <pctVal>4.030787935790</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Amazon.com Inc</name>
+        <lei>ZXTILKJKG63JELOEG630</lei>
+        <title>Amazon.com Inc</title>
+        <cusip>023135106</cusip>
+        <identifiers>
+          <isin value="US0231351067"/>
+        </identifiers>
+        <balance>5116762.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>1389610223.96000000</valUSD>
+        <pctVal>3.073825253704</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+      </invstOrSec>
+      <invstOrSec>
+        <name>American Express Co</name>
+        <lei>JHE1DTVURP73MC1WBH05</lei>
+        <title>American Express Co</title>
+        <cusip>025816109</cusip>
+        <identifiers>
+          <isin value="US0258161092"/>
+        </identifiers>
+        <balance>5116762.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>1720655042.00000000</valUSD>
+        <pctVal>3.805780033722</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Amgen Inc</name>
+        <lei>62QBXGPJ8D8HRFYC6X33</lei>
+        <title>Amgen Inc</title>
+        <cusip>031162100</cusip>
+        <identifiers>
+          <isin value="US0311621009"/>
+        </identifiers>
+        <balance>5116762.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>1970878537.00000000</valUSD>
+        <pctVal>4.359358327995</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Apple Inc</name>
+        <lei>HWUPKR0MPOU8FGXBT394</lei>
+        <title>Apple Inc</title>
+        <cusip>037833100</cusip>
+        <identifiers>
+          <isin value="US0378331005"/>
+          <ticker value="AAPL"/>
+        </identifiers>
+        <balance>5116762.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>1580925431.00000000</valUSD>
+        <pctVal>3.496337576853</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Boeing Co/The</name>
+        <lei>LVF8W7MUXTHGNHDXTC89</lei>
+        <title>Boeing Co/The</title>
+        <cusip>097023105</cusip>
+        <identifiers>
+          <isin value="US0970231058"/>
+        </identifiers>
+        <balance>5116762.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>1106150000.00000000</valUSD>
+        <pctVal>2.446338428219</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Caterpillar Inc</name>
+        <lei>LHZMBEP7IN973HP5I234</lei>
+        <title>Caterpillar Inc</title>
+        <cusip>149123101</cusip>
+        <identifiers>
+          <isin value="US1491231015"/>
+        </identifiers>
+        <balance>5116762.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>4170000000.00000000</valUSD>
+        <pctVal>9.222268042459</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+      </invstOrSec>
+    </invstOrSecs>
+  </formData>
+</edgarSubmission>

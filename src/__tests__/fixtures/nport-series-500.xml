@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Synthetic multi-series N-PORT fixture: the target series (Vanguard 500 Index
+  Fund, seriesId S000002839 — VOO's series) inside a fund-family trust. Used to
+  test series-aware filing selection. Values are illustrative, not a real filing.
+-->
+<edgarSubmission xmlns="http://www.sec.gov/edgar/nport">
+  <headerData><submissionType>NPORT-P</submissionType></headerData>
+  <formData>
+    <genInfo>
+      <regName>VANGUARD INDEX FUNDS</regName>
+      <regCik>0000036405</regCik>
+      <seriesName>Vanguard 500 Index Fund</seriesName>
+      <seriesId>S000002839</seriesId>
+      <repPdDate>2026-06-30</repPdDate>
+    </genInfo>
+    <invstOrSecs>
+      <invstOrSec>
+        <name>Apple Inc</name>
+        <cusip>037833100</cusip>
+        <identifiers><isin value="US0378331005"/></identifiers>
+        <pctVal>7.00000000</pctVal>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Microsoft Corp</name>
+        <cusip>594918104</cusip>
+        <identifiers><isin value="US5949181045"/></identifiers>
+        <pctVal>6.00000000</pctVal>
+      </invstOrSec>
+      <invstOrSec>
+        <name>NVIDIA Corp</name>
+        <cusip>67066G104</cusip>
+        <identifiers><isin value="US67066G1040"/></identifiers>
+        <pctVal>7.00000000</pctVal>
+      </invstOrSec>
+    </invstOrSecs>
+  </formData>
+</edgarSubmission>

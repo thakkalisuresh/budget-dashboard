@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   createInvestSheet, ensureInvestSheet, fetchAccounts, updateAccount,
   appendActivity, appendActivities, fetchActivities, fetchRateWatch,
-  deleteActivityByUUID, INVEST_TABS,
+  deleteActivityByUUID, INVEST_TABS, ensureInvestTabs,
+  writeEtfHoldings, readEtfHoldings, quarterKey, currentQuarterKey, isHoldingsFresh,
 } from '../sheetInvest.js';
 
 // Route-based fetch mock: each entry is [urlSubstring+method matcher, response]
@@ -185,5 +186,86 @@ describe('fetchRateWatch', () => {
     const rows = await fetchRateWatch('inv123', 'tok');
     expect(rows[0]).toMatchObject({ scanDate: '2026-07-08', bestBank: 'Pibank', details: [] });
     expect(rows[1].details[0].bank).toBe('Openbank');
+  });
+});
+
+describe('ensureInvestTabs', () => {
+  it('adds only the missing tabs, each with its header row (idempotent backfill)', async () => {
+    // Existing sheet predates EtfHoldings — every other tab is already present.
+    routes.push({
+      match: '?fields=sheets.properties.title',
+      json: { sheets: ['Accounts', 'Activities', 'Snapshots', 'RateWatch'].map(t => ({ properties: { title: t } })) },
+    });
+    const added = await ensureInvestTabs('inv123', 'tok');
+    expect(added).toEqual(['EtfHoldings']);
+
+    const batch = calls.find(c => c.url.includes(':batchUpdate'));
+    expect(batch.body.requests).toEqual([{ addSheet: { properties: { title: 'EtfHoldings' } } }]);
+    const header = calls.find(c => c.method === 'PUT' && c.url.includes('EtfHoldings'));
+    expect(header.body.values[0]).toEqual(INVEST_TABS.EtfHoldings);
+  });
+
+  it('is a no-op when all tabs already exist', async () => {
+    routes.push({
+      match: '?fields=sheets.properties.title',
+      json: { sheets: Object.keys(INVEST_TABS).map(t => ({ properties: { title: t } })) },
+    });
+    expect(await ensureInvestTabs('inv123', 'tok')).toEqual([]);
+    expect(calls.find(c => c.url.includes(':batchUpdate'))).toBeUndefined();
+  });
+});
+
+describe('EtfHoldings cache round-trip', () => {
+  it('writes flat rows and reads them back, recency-wins by asOf', async () => {
+    const n = await writeEtfHoldings('inv123', 'tok', 'voo', {
+      asOf: '2026-09-30',
+      holdings: [
+        { cusip: '037833100', name: 'Apple Inc', ticker: 'AAPL', weight: 7.12 },
+        { cusip: '594918104', name: 'Microsoft Corp', ticker: '', weight: 6.5 },
+      ],
+    });
+    expect(n).toBe(2);
+    const append = calls.find(c => c.url.includes('EtfHoldings') && c.url.includes(':append'));
+    expect(append.url).toContain('valueInputOption=RAW');
+    expect(append.body.values[0]).toEqual(['VOO', '2026-09-30', '037833100', 'Apple Inc', 'AAPL', 7.12]);
+
+    mockFetch();
+    routes.push({
+      match: "'EtfHoldings'!A2", json: {
+        values: [
+          ['VOO', '2026-06-30', '037833100', 'Apple Inc', 'AAPL', 7.0],   // stale filing
+          ['VOO', '2026-09-30', '037833100', 'Apple Inc', 'AAPL', 7.12],  // latest
+          ['VOO', '2026-09-30', '594918104', 'Microsoft Corp', '', 6.5],
+          ['QQQ', '2026-09-30', '037833100', 'Apple Inc', 'AAPL', 9.0],   // other ticker
+        ],
+      },
+    });
+    const got = await readEtfHoldings('inv123', 'tok', 'voo');
+    expect(got.ticker).toBe('VOO');
+    expect(got.asOf).toBe('2026-09-30');       // newest only
+    expect(got.holdings).toHaveLength(2);       // no stale 2026-06-30 row, no QQQ
+    expect(got.holdings[0]).toMatchObject({ cusip: '037833100', ticker: 'AAPL', weight: 7.12 });
+  });
+
+  it('returns null for an uncached ticker', async () => {
+    routes.push({ match: "'EtfHoldings'!A2", json: { values: [['QQQ', '2026-09-30', 'x', 'y', '', 1]] } });
+    expect(await readEtfHoldings('inv123', 'tok', 'VTI')).toBeNull();
+  });
+});
+
+describe('holdings freshness (quarterly)', () => {
+  it('maps dates to calendar quarters', () => {
+    expect(quarterKey('2026-07-31')).toBe('2026-Q3');
+    expect(quarterKey('2026-10-01')).toBe('2026-Q4');
+    expect(quarterKey('2026-01-15')).toBe('2026-Q1');
+    expect(quarterKey('bad')).toBe('');
+    expect(currentQuarterKey(new Date('2026-10-07T00:00:00Z'))).toBe('2026-Q4');
+  });
+
+  it('is fresh only when asOf is in the current quarter', () => {
+    const now = new Date('2026-10-07T00:00:00Z'); // Q4
+    expect(isHoldingsFresh('2026-10-01', now)).toBe(true);
+    expect(isHoldingsFresh('2026-07-31', now)).toBe(false); // last quarter → refetch
+    expect(isHoldingsFresh('', now)).toBe(false);
   });
 });
