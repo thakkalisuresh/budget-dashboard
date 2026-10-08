@@ -81,6 +81,7 @@ export const DEFAULT_SETTINGS = {
     { pattern: 'happen',   accountId: 'happen-hysa' },
   ],
   investEtfSymbols:  [],   // extra symbols to treat as ETFs beyond the built-in set
+  itemizeDismissed:  [],   // brokerage DEPOSIT uuids the user chose not to itemize (nudge dismissed)
   preBuyThresholds:  { concentrationPct: 25, near52wkPct: 5 }, // pre-buy check flags (Phase 2)
   colorScheme:             'default',
   titleBarColor:           null,   // PWA/browser chrome <meta theme-color>; null = match app dark bg
@@ -179,6 +180,7 @@ export async function loadUserSettings(userId, accessToken) {
       smartRules:              parsed.smartRules              || [],
       cardRewardRates:         parsed.cardRewardRates         || null,
       messages:                parsed.messages                || [],
+      itemizeDismissed:        parsed.itemizeDismissed        || [],
       // Append any new default cards the user doesn't already have (preserves user order)
       cards: (() => {
         const saved = parsed.cards || DEFAULT_SETTINGS.cards;

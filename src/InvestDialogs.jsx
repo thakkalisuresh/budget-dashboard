@@ -3,11 +3,11 @@ import { X, Upload, Plus, Check } from 'lucide-react';
 import { updateAccount, appendActivity, appendActivities, ACTIVITY_TYPES } from './sheetInvest.js';
 import { parseFidelityCsv } from './fidelityCsvParser.js';
 
-const inputCls = 'w-full rounded-2xl px-4 py-3 text-sm outline-none transition-all';
-const inputStyle = { background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' };
+export const inputCls = 'w-full rounded-2xl px-4 py-3 text-sm outline-none transition-all';
+export const inputStyle = { background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' };
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
-function Sheet({ title, subtitle, onClose, children }) {
+export function Sheet({ title, subtitle, onClose, children }) {
   return (
     <>
       <div className="fixed inset-0 z-40 animate-overlay-in" style={{ background: 'oklch(0% 0 0 / 50%)', backdropFilter: 'blur(4px)' }} onClick={onClose} />
@@ -33,7 +33,7 @@ function Sheet({ title, subtitle, onClose, children }) {
   );
 }
 
-function Field({ label, children }) {
+export function Field({ label, children }) {
   return (
     <div className="space-y-1.5">
       <label className="text-[11px] font-black uppercase tracking-widest" style={{ color: 'var(--color-text-muted)' }}>{label}</label>
@@ -42,7 +42,7 @@ function Field({ label, children }) {
   );
 }
 
-function ErrorNote({ error }) {
+export function ErrorNote({ error }) {
   if (!error) return null;
   return (
     <p className="text-xs font-medium px-4 py-2.5 rounded-xl" style={{ color: 'var(--color-danger)', background: 'oklch(62% 0.22 25 / 10%)' }}>
@@ -51,7 +51,7 @@ function ErrorNote({ error }) {
   );
 }
 
-function SaveButton({ saving, onClick, children, icon: Icon = Check }) {
+export function SaveButton({ saving, onClick, children, icon: Icon = Check }) {
   return (
     <button onClick={onClick} disabled={saving}
       className="w-full py-3 rounded-2xl text-sm font-bold text-white transition-all active:scale-[0.98] disabled:opacity-60 flex items-center justify-center gap-2"
