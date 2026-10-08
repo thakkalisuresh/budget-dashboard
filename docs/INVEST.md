@@ -121,6 +121,21 @@ One deterministic module, two surfaces. No LLM verdicts anywhere.
      showing *which checks fired and why* (e.g. "3 of 5 flag caution: high overlap,
      over your 80% tech cap, near 52-wk high ✓ analyst trend improving ✓ valuation
      in-line"). The user owns every threshold; the dialog renders no verdict.
+- **Contribution itemization** (brokerage-only): the flow-through already routes a
+  vendor-matched *Investment* expense to an account and, for `type: 'hysa'` (Amex /
+  Happen), silently bumps the balance anchor (`investFlowThrough.js:44`). Add the
+  missing `else if (type === 'brokerage')` branch: the Fidelity contribution still
+  posts as a cash `DEPOSIT`, then queues a **dismissible "itemize" nudge** on the
+  Invest tab (badge/card — *not* a forced modal, since brokerage cash can sit in the
+  SPAXX sweep for days before a trade). Tapping it opens a pre-filled dialog (amount +
+  date, reusing the `AddActivityDialog` BUY form) where the user enters BUY lines
+  (ticker · shares · price) with a running remainder vs the deposit; leftover stays as
+  cash. The lines become `BUY` activities → holdings/FIFO lots derive automatically, so
+  overlap and concentration light up for that money. HYSA vs brokerage is **inferred
+  from the resolved account's `type`** — no per-transaction flag. Only requirement: a
+  vendor rule mapping Fidelity → the brokerage account (Settings → Investing); an
+  unmatched contribution mirrors nothing (current non-fatal behaviour).
+
 - **Rate-watch scheduled function** (`rate-watch.mjs`): Gemini + Google Search
   grounding, 1st & 15th, digest to Telegram + push, writes the `RateWatch` tab.
 
