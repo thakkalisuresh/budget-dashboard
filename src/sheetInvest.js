@@ -12,6 +12,9 @@
 //   Activities — date | accountId | type | symbol | qty | price | amount | note | uuid
 //   Snapshots  — date | accountId | balance
 //   RateWatch  — scanDate | bestBank | bestApy | yourBestApy | delta | detailsJson
+//   EtfHoldings — ticker | asOf | cusip | name | holdingTicker | weight
+//                 (flat EDGAR N-PORT look-through cache; append-only, recency-wins
+//                  by asOf per ticker; refreshed quarterly via /api/etf-holdings)
 // ════════════════════════════════════════════════════════════════════════════
 import { apiFetch } from './sheetApi.js';
 import { safeText } from './sheetHelpers.js';
@@ -24,6 +27,7 @@ export const INVEST_TABS = {
   Activities: ['date', 'accountId', 'type', 'symbol', 'qty', 'price', 'amount', 'note', 'uuid'],
   Snapshots:  ['date', 'accountId', 'balance'],
   RateWatch:  ['scanDate', 'bestBank', 'bestApy', 'yourBestApy', 'delta', 'detailsJson'],
+  EtfHoldings: ['ticker', 'asOf', 'cusip', 'name', 'holdingTicker', 'weight'],
 };
 
 export const ACTIVITY_TYPES = ['BUY', 'SELL', 'DIVIDEND', 'DEPOSIT', 'WITHDRAW', 'INTEREST', 'FEE'];
@@ -102,6 +106,41 @@ export async function ensureInvestSheet({ settings, updateSettings, accessToken,
   const id = await createInvestSheet(accessToken, allowedEmails);
   updateSettings(prev => ({ ...prev, investSheetId: id }));
   return id;
+}
+
+/**
+ * Idempotently ensure every INVEST_TABS tab exists on an already-provisioned
+ * sheet, creating any missing one with its header row. A no-op when all tabs are
+ * present. Fresh sheets get all tabs from createInvestSheet; this backfills tabs
+ * added after a sheet was created (e.g. EtfHoldings on a Phase-1 sheet) — the
+ * cache-write path calls it once before the first writeEtfHoldings.
+ */
+export async function ensureInvestTabs(sheetId, accessToken) {
+  const meta = await apiFetch(sheetId, '?fields=sheets.properties.title', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const existing = new Set((meta.sheets || []).map(s => s.properties?.title).filter(Boolean));
+  const missing = Object.keys(INVEST_TABS).filter(t => !existing.has(t));
+  if (missing.length === 0) return [];
+
+  await apiFetch(sheetId, ':batchUpdate', {
+    method: 'POST',
+    headers: authJson(accessToken),
+    body: JSON.stringify({
+      requests: missing.map(title => ({ addSheet: { properties: { title } } })),
+    }),
+  });
+
+  // Write each new tab's header row.
+  for (const title of missing) {
+    const range = encodeURIComponent(`'${title}'!A1`);
+    await apiFetch(sheetId, `/values/${range}?valueInputOption=RAW`, {
+      method: 'PUT',
+      headers: authJson(accessToken),
+      body: JSON.stringify({ values: [INVEST_TABS[title]] }),
+    });
+  }
+  return missing;
 }
 
 // ── Accounts ─────────────────────────────────────────────────────────────────
@@ -265,4 +304,77 @@ export async function fetchRateWatch(sheetId, accessToken, limit = 12) {
     })
     .filter(r => r.scanDate);
   return rows.slice(-limit).reverse(); // newest first
+}
+
+// ── ETF holdings cache (EDGAR N-PORT look-through) ──────────────────────────
+// Flat, append-only, recency-wins by asOf per ticker — mirroring Snapshots /
+// Activities. The server endpoint (/api/etf-holdings) does the SEC fetch; this
+// tab is the client-side cache so overlap/concentration don't re-hit EDGAR.
+
+/** Calendar-quarter key for a YYYY-MM-DD date, e.g. "2026-Q3". */
+export function quarterKey(dateStr) {
+  const d = String(dateStr || '').slice(0, 10);
+  const m = /^(\d{4})-(\d{2})/.exec(d);
+  if (!m) return '';
+  return `${m[1]}-Q${Math.floor((Number(m[2]) - 1) / 3) + 1}`;
+}
+
+/** The current calendar quarter, e.g. "2026-Q4". */
+export function currentQuarterKey(now = new Date()) {
+  return `${now.getUTCFullYear()}-Q${Math.floor(now.getUTCMonth() / 3) + 1}`;
+}
+
+/**
+ * Cached holdings are fresh when their filing's asOf falls in the current
+ * calendar quarter (N-PORT is filed quarterly). Stale → caller refetches.
+ */
+export function isHoldingsFresh(asOf, now = new Date()) {
+  return !!asOf && quarterKey(asOf) === currentQuarterKey(now);
+}
+
+/** Append one ticker's look-through holdings as flat rows (recency-wins on read). */
+export async function writeEtfHoldings(sheetId, accessToken, ticker, { asOf, holdings }) {
+  const sym = String(ticker || '').toUpperCase();
+  const rows = (holdings || []).map(h => [
+    sym,
+    String(asOf || ''),
+    String(h.cusip || ''),
+    safeText(String(h.name || '')),
+    String(h.ticker || ''),
+    Number(h.weight) || 0,
+  ]);
+  if (!rows.length) return 0;
+  const range = encodeURIComponent("'EtfHoldings'!A1");
+  await apiFetch(sheetId, `/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
+    method: 'POST',
+    headers: authJson(accessToken),
+    body: JSON.stringify({ values: rows }),
+  });
+  return rows.length;
+}
+
+/**
+ * Read one ticker's cached look-through, keeping only the most recent asOf.
+ * Returns { ticker, asOf, source: 'cache', holdings: [{ cusip, name, ticker, weight }] }
+ * or null when the ticker isn't cached.
+ */
+export async function readEtfHoldings(sheetId, accessToken, ticker) {
+  const sym = String(ticker || '').toUpperCase();
+  const range = encodeURIComponent("'EtfHoldings'!A2:F20000");
+  const json = await apiFetch(sheetId, `/values/${range}?valueRenderOption=UNFORMATTED_VALUE`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const rows = (json.values || []).filter(r => String(r[0] || '').toUpperCase() === sym && r[1]);
+  if (!rows.length) return null;
+  // Recency-wins: keep only rows at the latest asOf for this ticker.
+  const latestAsOf = rows.reduce((max, r) => (String(r[1]) > max ? String(r[1]) : max), '');
+  const holdings = rows
+    .filter(r => String(r[1]) === latestAsOf)
+    .map(r => ({
+      cusip: String(r[2] || ''),
+      name: String(r[3] || ''),
+      ticker: String(r[4] || ''),
+      weight: Number(r[5]) || 0,
+    }));
+  return { ticker: sym, asOf: latestAsOf, source: 'cache', holdings };
 }

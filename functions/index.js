@@ -36,3 +36,5 @@ export { categoryAudit } from './category-audit.mjs';
 export { errorDigest } from './error-digest.mjs';
 // Invest tab — Finnhub quotes proxy (key stays server-side).
 export { quotes } from './quotes.mjs';
+// Invest tab — EDGAR N-PORT holdings look-through (descriptive User-Agent stays server-side).
+export { etfHoldings } from './etf-holdings.mjs';

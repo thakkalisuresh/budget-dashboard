@@ -102,11 +102,42 @@ One deterministic module, two surfaces. No LLM verdicts anywhere.
 
 ### Phase 2 — EDGAR look-through + Candidate Check
 
-- **Full EDGAR N-PORT look-through** (`edgarService.mjs`, Cloud Function): resolve
-  ticker → CIK → latest `NPORT-P` filing via `data.sec.gov` full-text search, parse
-  the holdings XML, cache in a new **`EtfHoldings`** sheet tab (refresh on a cadence;
-  N-PORT is filed quarterly). Requires a descriptive `User-Agent` per SEC fair-access
-  rules. This is the accuracy foundation for *any* ETF overlap, not just known indexes.
+- **Full EDGAR N-PORT look-through** (`edgarService.mjs` + `etf-holdings.mjs` Cloud
+  Function, `/api/etf-holdings?ticker=…`): resolve ticker → CIK → latest `NPORT-P`
+  filing → parse the holdings XML
+  (`…/Archives/edgar/data/{cik}/{accession}/primary_doc.xml`, via `fast-xml-parser`),
+  cache in a new **`EtfHoldings`** sheet tab (refresh on a cadence; N-PORT is filed
+  quarterly — `isHoldingsFresh` serves cache while the cached `asOf` is in the current
+  quarter). This is the accuracy foundation for *any* ETF overlap, not just known indexes.
+  - **Ticker → fund resolution (two sources)**: `company_tickers.json` lists stocks
+    and *standalone-trust* ETFs (SPY, DIA) but **not multi-series ETFs** — VOO, QQQ,
+    VTI, IVV, SCHD and most Vanguard/iShares/Schwab funds are absent. Those resolve via
+    SEC's **Investment Company Series & Class dataset** (a yearly CSV), which maps a
+    class ticker → its trust CIK + `seriesId`. A standalone trust is one CIK = one fund,
+    so the latest `NPORT-P` is correct; a multi-series trust hosts many series under one
+    CIK, so the service **scans recent `NPORT-P` filings (cap `maxSeriesScan`, default
+    40, newest first) and matches `genInfo.seriesId`**, early-exiting on the hit. Each
+    scanned filing is one `primary_doc.xml` fetch (the target series is usually within
+    the first ~dozen); the 24h cache makes this a rare cost.
+  - **Identity keys**: N-PORT identifies a holding by name + CUSIP + LEI and **often has
+    no ticker**. The normalized shape (`{ name, cusip, ticker, weight }`, weight = percent,
+    renormalized to sum ~100) exposes both CUSIP and a best-effort ticker; overlap/
+    concentration key on **CUSIP → normalized ticker → normalized name** (see
+    `investInsights.holdingKey`). Weights renormalize against the actual `pctVal` column
+    sum, so partial filings are handled. Multi-series fund-family trusts: the latest
+    `NPORT-P` for a CIK may be a sibling series (single-series ETF trusts resolve exactly).
+  - **Descriptive User-Agent (SEC fair-access, non-negotiable)**: SEC EDGAR rejects
+    requests without a descriptive `User-Agent` and browsers forbid overriding it, which
+    is *why* the fetch lives in a Cloud Function. The UA comes from the **`EDGAR_USER_AGENT`**
+    param (a plain string param in `functions/lib/secrets.mjs`, **not** a secret), format
+    `"Name email@example.com"`. The owner sets the real contactable value at deploy:
+    add `EDGAR_USER_AGENT="Fundient <you@example.com>"` to `functions/.env` (or answer the
+    deploy prompt). The committed fallback (`Fundient/1.0 (contact via app owner)`) keeps
+    dev working but SEC may throttle a generic UA, so set a real one before relying on it.
+    **Verify in dev**: `firebase emulators:start --only functions` with `EDGAR_USER_AGENT`
+    set, then `GET http://localhost:5001/<project>/us-central1/etfHoldings?ticker=VOO` with a
+    valid Google bearer token and `sec-fetch-site: same-origin` — or just open the Invest
+    tab from `localhost:5173` (vite proxies `/api/*` to the deployed function).
 - **Candidate Check dialog** (`CandidateCheckDialog.jsx`): a modal (same pattern
   as `AddActivityDialog` / `ImportCsvDialog`), opened from a new **"Check"** button
   in the InvestTab header action row (beside Import / Activity); a secondary entry
