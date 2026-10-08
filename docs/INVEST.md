@@ -139,6 +139,25 @@ One deterministic module, two surfaces. No LLM verdicts anywhere.
 - **Rate-watch scheduled function** (`rate-watch.mjs`): Gemini + Google Search
   grounding, 1st & 15th, digest to Telegram + push, writes the `RateWatch` tab.
 
+- **HYSA rate history with effective dates**: HYSA APY is variable — the bank can
+  change it any time, and a new rate applies from its **effective date forward**
+  (interest accrued at the old rate is unaffected). Phase 1 stores only the current
+  `apy` on the Accounts row, overwritten on edit, with no history. Add a new
+  **`RateHistory`** tab (`accountId | apy | effectiveDate | source`) appended on
+  every rate change (same pattern as `Snapshots` for balance). Projections keep
+  using the current APY (good enough — they're estimates), but the history gives an
+  auditable "4.40% from 2026-07-08, 4.75% from 2026-10-01" trail for reconciliation
+  and a richer rate-watch digest.
+  - **Capture is semi-automatic, not silent.** The rate-watch scan already runs on a
+    cadence (1st & 15th); when it detects that a held bank's **advertised** APY moved,
+    it surfaces a one-tap nudge ("Amex now advertises 3.85%, up from your 3.70% —
+    update?") pre-filled with the rate and the effective date it found. The user
+    **confirms or corrects** before it writes to `RateHistory` + the account, because
+    the advertised new-customer rate is not guaranteed to equal *your* rate (promo
+    tiers, grandfathering). It is never auto-applied silently. Manual edit (tap the
+    gauge) stays available and also appends to `RateHistory`. Actual credited interest
+    still reconciles via dated `INTEREST` activities from the statement.
+
 ### Phase 3 — Portfolio Insights card + rebalancing
 
 - **Portfolio Insights card** (always-on, no ticker): a new card appended to the
