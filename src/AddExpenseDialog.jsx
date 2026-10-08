@@ -28,7 +28,7 @@ const VENDOR_EXAMPLES = {
   'Wi-Fi':         'e.g. Comcast, AT&T…',
 };
 
-export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess, categories: categoriesProp, onSaveRecurring, onSaveTransactionNote, smartRules = [], cardRules = [], cards = DEFAULT_SETTINGS.cards, prefillCategory = null, lockCategory = false, prefillVendor = '', prefillAmount = '', geoTagEnabled = false, geoPrivacyBlur = true }) {
+export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess, categories: categoriesProp, onSaveRecurring, onSaveTransactionNote, onInvestContribution, smartRules = [], cardRules = [], cards = DEFAULT_SETTINGS.cards, prefillCategory = null, lockCategory = false, prefillVendor = '', prefillAmount = '', geoTagEnabled = false, geoPrivacyBlur = true }) {
   // This dialog only exists while it's open, and everything in it is unsaved —
   // hold the update gate back so a deploy can't reload a half-typed expense away.
   useBusyWhile(true);
@@ -222,6 +222,8 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
       }
       if (isNonMonthly) await markNonMonthly(sheetId, accessToken, vendor.trim(), amt);
       if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
+      // Mirror Investment-category spend into the Invest tab (fire-and-forget)
+      if (category === 'Investment') onInvestContribution?.({ vendor: vendor.trim(), amount: amt, txDate });
       // Save transaction note/tags/location if provided
       if ((txNote.trim() || txTags.length > 0 || geoLocation) && onSaveTransactionNote) {
         const key = txNoteKey(sheetId, category, vendor, amt);
@@ -253,6 +255,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
       } else {
         if (isNonMonthly) await markNonMonthly(sheetId, accessToken, vendor.trim(), amt);
         if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
+        if (category === 'Investment') onInvestContribution?.({ vendor: vendor.trim(), amount: amt, txDate });
         // Save transaction note/tags/location if provided
         if ((txNote.trim() || txTags.length > 0 || geoLocation) && onSaveTransactionNote) {
           const key = txNoteKey(sheetId, category, vendor, amt);

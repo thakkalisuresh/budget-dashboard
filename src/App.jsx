@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef, lazy, Suspense } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { useSheetData } from './useSheetData.js';
 import { use503020 } from './use503020.js';
 import { getCurrencySymbol } from './currency.js';
@@ -21,6 +21,7 @@ import { useNonMonthlyExpenses } from './useNonMonthlyExpenses.js';
 import { useEscapeDismiss } from './useEscapeDismiss.js';
 import { useGlobalShortcuts } from './useGlobalShortcuts.js';
 import { SalaryEditDialog } from './SalaryEditDialog.jsx';
+import { mirrorInvestContribution } from './investFlowThrough.js';
 
 // Heavy components — loaded only when first rendered
 const SpendingHeatmap  = lazy(() => import('./SpendingHeatmap.jsx').then(m => ({ default: m.SpendingHeatmap })));
@@ -36,6 +37,7 @@ import { upsertRecurring, removeRecurring } from './recurringExpenses.js';
 const SettingsPanel    = lazy(() => import('./SettingsPanel.jsx').then(m => ({ default: m.SettingsPanel })));
 const CardsTab         = lazy(() => import('./CardsTab.jsx').then(m => ({ default: m.CardsTab })));
 const SplitTab         = lazy(() => import('./SplitTab.jsx').then(m => ({ default: m.SplitTab })));
+const InvestTab        = lazy(() => import('./InvestTab.jsx').then(m => ({ default: m.InvestTab })));
 const AddCategoryDialog    = lazy(() => import('./AddCategoryDialog.jsx').then(m => ({ default: m.AddCategoryDialog })));
 const ReconcileDialog      = lazy(() => import('./ReconcileDialog.jsx').then(m => ({ default: m.ReconcileDialog })));
 const BulkRecurringDialog  = lazy(() => import('./BulkRecurringDialog.jsx').then(m => ({ default: m.BulkRecurringDialog })));
@@ -291,6 +293,11 @@ function Dashboard({ auth }) {
   const { messages, unreadCount, markAllRead, dismissMessage, clearAll: clearMessages } =
     useMessages(settings, updateSettings, expenses, totalActual, salaryReceived, selectedMonth?.name);
 
+  // ── Invest flow-through: Investment-category expenses mirror as deposits ──────
+  const handleInvestContribution = useCallback(({ vendor, amount, txDate }) => {
+    mirrorInvestContribution({ settings, accessToken: user.accessToken, vendor, amount, txDate });
+  }, [settings, user.accessToken]);
+
   // ── Push notifications ────────────────────────────────────────────────────────
   const pushHook = usePush(user.email, settings.pushHour ?? 20, user.accessToken);
 
@@ -527,6 +534,20 @@ function Dashboard({ auth }) {
               accessToken={user.accessToken}
               currencySymbol={currencySymbol}
               settings={settings}
+            />
+          </Suspense>
+        )}
+
+        {/* Invest tab — HYSAs vs the $250k FDIC goal + Fidelity holdings */}
+        {activeTab === 'invest' && (
+          <Suspense fallback={null}>
+            <InvestTab
+              user={user}
+              settings={settings}
+              updateSettings={updateSettings}
+              settingsLoading={settingsLoading}
+              currencySymbol={currencySymbol}
+              isReadOnly={isReadOnly}
             />
           </Suspense>
         )}
@@ -857,6 +878,7 @@ function Dashboard({ auth }) {
           }))}
           geoTagEnabled={settings.geoTagEnabled || false}
           geoPrivacyBlur={settings.geoPrivacyBlur !== false}
+          onInvestContribution={handleInvestContribution}
         /></Suspense>
       )}
 
@@ -930,6 +952,7 @@ function Dashboard({ auth }) {
             ...prev,
             reconciledFingerprints: [...new Set([...(prev.reconciledFingerprints || []), ...fps])],
           }))}
+          onInvestContribution={handleInvestContribution}
         /></Suspense>
       )}
 

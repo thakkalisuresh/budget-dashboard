@@ -14,7 +14,7 @@
  * VITE_ prefix on VITE_TEMPLATE_SHEET_ID) so the lib modules stay byte-identical
  * to their source and behave the same.
  */
-import { defineSecret } from 'firebase-functions/params';
+import { defineSecret, defineString } from 'firebase-functions/params';
 
 // ── Google Sheets / Drive (OAuth refresh-token flow) ───────────────────────
 export const GOOGLE_CLIENT_ID         = defineSecret('GOOGLE_CLIENT_ID');
@@ -63,8 +63,32 @@ export const TELEGRAM_EMAIL_MAP      = defineSecret('TELEGRAM_EMAIL_MAP');
 // ── MCP server (bound in Phase 6) ──────────────────────────────────────────
 export const MCP_API_KEY = defineSecret('MCP_API_KEY');
 
+// ── Invest tab — Finnhub quotes proxy ──────────────────────────────────────
+// ⚠️ Same deploy-order rule as TELEGRAM_EMAIL_MAP: set the value BEFORE the
+// quotes function first deploys:  firebase functions:secrets:set FINNHUB_API_KEY
+export const FINNHUB_API_KEY = defineSecret('FINNHUB_API_KEY');
+
 // ── Wallet webhook (iOS Shortcuts / Android Automate) ──────────────────
 export const WALLET_WEBHOOK_SECRET = defineSecret('WALLET_WEBHOOK_SECRET');
+
+// ── Invest tab — EDGAR N-PORT look-through (etf-holdings function) ──────────
+// NOT a secret: a plain string param. SEC fair-access policy requires a
+// descriptive User-Agent ("Sample Company name admin@example.com"). The owner
+// sets the real "name email" value at deploy time (via .env or the deploy
+// prompt); the fallback below keeps dev working but SEC may throttle a generic
+// UA, so set a contactable one before relying on it. See docs/INVEST.md.
+export const EDGAR_USER_AGENT = defineString('EDGAR_USER_AGENT', {
+  default: 'Fundient/1.0 (contact via app owner)',
+});
+
+// ── Invest tab — OpenFIGI CUSIP↔ticker reconciliation (openfigi function) ───
+// NOT a secret: an OPTIONAL plain string param. OpenFIGI (Bloomberg-run) is free
+// and works WITHOUT a key (~25 req/min, 10 jobs/request); a free key lifts the
+// limit (250 req/min, 100 jobs/request). Leave it empty to run key-less; set a
+// real one via functions/.env or the deploy prompt to raise throughput. The
+// proxy lives server-side so any key stays off the client and the API's header
+// requirements are met (browsers can't set X-OPENFIGI-APIKEY cross-origin).
+export const OPENFIGI_API_KEY = defineString('OPENFIGI_API_KEY', { default: '' });
 
 /** Secrets needed by any function that touches the Sheets/Drive data layer. */
 export const SHEETS_DRIVE_SECRETS = [

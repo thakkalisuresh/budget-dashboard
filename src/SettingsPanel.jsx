@@ -10,6 +10,7 @@ import { detectRecurring, upsertRecurring } from './recurringExpenses.js';
 import { CATEGORIES, getAllCategoryNames } from './sheetsApi.js';
 import { newRuleId } from './smartRules.js';
 import { fetchHistory } from './sheetHistory.js';
+import { InvestSettingsSection } from './InvestSettings.jsx';
 import { schemeTableau10 } from 'd3-scale-chromatic';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -1713,6 +1714,9 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
               </button>
             </div>
           </div>
+
+          {/* ── Investing ───────────────────────────────────────────────── */}
+          <InvestSettingsSection settings={settings} updateSettings={updateSettings} />
 
           {/* ── Reward Rates ────────────────────────────────────────────── */}
           <div>

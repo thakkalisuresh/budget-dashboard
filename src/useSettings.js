@@ -73,6 +73,16 @@ export const DEFAULT_SETTINGS = {
   messages:                [],  // [{ id, type, title, body, timestamp, read }]
   pushHour:                20,  // preferred local hour for daily push (18-22)
   reconciledFingerprints:  [],  // ["vendor_amount", ...] — tracks imported reconciliation tx
+  // ── Invest tab ──
+  investSheetId:     null, // "Fundient Investments" spreadsheet id (provisioned on first open)
+  investAccountRules: [    // Investment-category expense vendor → invest account (flow-through)
+    { pattern: 'fidelity', accountId: 'fidelity' },
+    { pattern: 'amex',     accountId: 'amex-hysa' },
+    { pattern: 'happen',   accountId: 'happen-hysa' },
+  ],
+  investEtfSymbols:  [],   // extra symbols to treat as ETFs beyond the built-in set
+  itemizeDismissed:  [],   // brokerage DEPOSIT uuids the user chose not to itemize (nudge dismissed)
+  preBuyThresholds:  { concentrationPct: 25, near52wkPct: 5, overlapPct: 60, sectorCapPct: 80 }, // Candidate Check rule-check flags (Phase 2)
   colorScheme:             'default',
   titleBarColor:           null,   // PWA/browser chrome <meta theme-color>; null = match app dark bg
   hasSeenOnboarding:       false,
@@ -170,6 +180,10 @@ export async function loadUserSettings(userId, accessToken) {
       smartRules:              parsed.smartRules              || [],
       cardRewardRates:         parsed.cardRewardRates         || null,
       messages:                parsed.messages                || [],
+      itemizeDismissed:        parsed.itemizeDismissed        || [],
+      // Merge so a saved copy from before the Candidate Check keys shipped still
+      // gains overlapPct / sectorCapPct (saved partial overrides the defaults).
+      preBuyThresholds:        { ...DEFAULT_SETTINGS.preBuyThresholds, ...(parsed.preBuyThresholds || {}) },
       // Append any new default cards the user doesn't already have (preserves user order)
       cards: (() => {
         const saved = parsed.cards || DEFAULT_SETTINGS.cards;

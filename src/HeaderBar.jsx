@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
-import { RefreshCw, AlertCircle, Sun, Moon, ChevronDown, Settings as SettingsIcon, LogOut } from 'lucide-react';
+import { RefreshCw, AlertCircle, Sun, Moon, ChevronDown, Settings as SettingsIcon, LogOut, CreditCard } from 'lucide-react';
 import { ThemePicker } from './ThemePicker.jsx';
 import { StackMark } from './StackMark.jsx';
 
@@ -25,6 +25,7 @@ const TABS = [
   ['budget',  'Dashboard'],
   ['ledger',  'Ledger'],
   ['history', 'History'],
+  ['invest',  'Invest'],
   ['cards',   'Cards'],
   ['split',   'Split'],
 ];
@@ -93,7 +94,7 @@ function TabSwitcher({ activeTab, setActiveTab }) {
   );
 }
 
-function UserMenu({ user, signOut, setShowSettings, setShowReconcile, setShowUserMenu, showUserMenu, isMonthEnded, selectedMonth }) {
+function UserMenu({ user, signOut, setShowSettings, setShowReconcile, setShowUserMenu, showUserMenu, isMonthEnded, selectedMonth, setActiveTab }) {
   return (
     // data-user-menu marks "inside the menu" for App's outside-click handler.
     // Deliberately not a ref: this component is rendered twice (desktop +
@@ -132,6 +133,17 @@ function UserMenu({ user, signOut, setShowSettings, setShowReconcile, setShowUse
             <SettingsIcon className="w-4 h-4" style={{ color: 'var(--color-text-muted)' }} />
             Settings
           </button>
+          {/* Cards lost its BottomNav slot to Invest — mobile reaches it here */}
+          {setActiveTab && (
+            <button
+              onClick={() => { setShowUserMenu(false); setActiveTab('cards'); }}
+              className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold transition-colors duration-150 hover:bg-[var(--sur-5)] lg:hidden"
+              style={{ color: 'var(--color-text)' }}
+            >
+              <CreditCard className="w-4 h-4" style={{ color: 'var(--color-text-muted)' }} />
+              Cards
+            </button>
+          )}
           <div className="h-px" style={{ background: 'var(--sur-8)' }} />
           <button
             onClick={async () => {
@@ -191,7 +203,7 @@ export function HeaderBar({
   isMonthEnded, selectedMonth,
   activeTab, setActiveTab,
 }) {
-  const userMenuProps = { user, signOut, setShowSettings, setShowReconcile, setShowUserMenu, showUserMenu, isMonthEnded, selectedMonth };
+  const userMenuProps = { user, signOut, setShowSettings, setShowReconcile, setShowUserMenu, showUserMenu, isMonthEnded, selectedMonth, setActiveTab };
 
   return (
     <>

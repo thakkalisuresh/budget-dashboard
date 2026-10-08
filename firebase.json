@@ -13,6 +13,9 @@
       { "source": "/api/mcp", "function": "mcp" },
       { "source": "/api/wallet", "function": "walletWebhook" },
       { "source": "/api/item-categorize", "function": "itemCategorize" },
+      { "source": "/api/quotes", "function": "quotes" },
+      { "source": "/api/etf-holdings", "function": "etfHoldings" },
+      { "source": "/api/openfigi", "function": "openfigi" },
       {
         "source": "**",
         "destination": "/index.html"
