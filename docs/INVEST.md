@@ -65,11 +65,72 @@ the end of `index.css`).
 Nav: Invest took Split's BottomNav slot; Split remains a desktop tab and lives in
 the header user menu on mobile.
 
-## Phase roadmap
+## Phase roadmap (revised 2026-10-07)
 
-1. **Done** — everything above.
-2. Rate-watch scheduled function (Gemini + Google Search grounding, 1st & 15th,
-   digest to Telegram + push, writes `RateWatch`), pre-buy check dialog
-   (quote + 52-wk context + Finnhub analyst recommendation trends + rule-based
-   flags from `settings.preBuyThresholds` — data relay, never a verdict).
-3. ETF look-through overlap via SEC EDGAR N-PORT (cached in an `EtfHoldings` tab).
+Phase 1 (above) is **Done**. Phases 2–3 build a holdings-aware **recommendation
+engine** — a transparent, rule-based layer that never issues a buy/sell verdict.
+
+### Design sources & licensing
+
+The overlap, concentration, and rebalancing algorithms are ported (to JS) from
+two **MIT-licensed** reference projects; their copyright notices are preserved in
+`NOTICE`:
+
+| Source | License | What we take |
+|---|---|---|
+| [etfray](https://github.com/alwank/etfray) | MIT | `calculate_weight_overlap` (Σ min(wₐ,w_b)), `calculate_concentration` (HHI → effective-N → verdict), EDGAR N-PORT fetch approach |
+| [ws-rebalancer](https://github.com/EmilMaric/ws-rebalancer) | MIT | greedy buy-only rebalance: repeatedly buy one share of the most-under-target position (cheapest as tiebreak) until cash is spent |
+
+Only these two contribute code. [folioxtracker](https://github.com/chrishanfernando/folioxtracker)
+(no license = all rights reserved) and Ghostfolio / Wealthfolio (AGPL-3.0, a
+network-copyleft that would force open-sourcing all of Fundient) were evaluated
+and **rejected on license** — ideas aren't copyrightable, but their code is off
+limits, and neither offered a concept the two MIT sources don't already cover.
+
+### Core engine — `investInsights.js`
+
+One deterministic module, two surfaces. No LLM verdicts anywhere.
+
+- **Overlap** (etfray): normalize each holdings set to sum 100, then
+  `overlap = Σ min(weightₐ, weight_b)` over shared tickers. Handles partial
+  N-PORT filings by renormalizing against the actual column sum.
+- **Concentration** (etfray): HHI = Σ wᵢ²; effective-N = 1/HHI; verdict
+  `>100 broadly diversified · >30 moderately concentrated · else highly
+  concentrated`; plus top-1/5/10 weights and per-sector grouping.
+- **Rebalancing** (ws-rebalancer): greedy share-granular buys toward a target
+  allocation the user sets; buy-only (never suggests sells).
+
+### Phase 2 — EDGAR look-through + Candidate Check
+
+- **Full EDGAR N-PORT look-through** (`edgarService.mjs`, Cloud Function): resolve
+  ticker → CIK → latest `NPORT-P` filing via `data.sec.gov` full-text search, parse
+  the holdings XML, cache in a new **`EtfHoldings`** sheet tab (refresh on a cadence;
+  N-PORT is filed quarterly). Requires a descriptive `User-Agent` per SEC fair-access
+  rules. This is the accuracy foundation for *any* ETF overlap, not just known indexes.
+- **Candidate Check dialog** (`CandidateCheckDialog.jsx`): a modal (same pattern
+  as `AddActivityDialog` / `ImportCsvDialog`), opened from a new **"Check"** button
+  in the InvestTab header action row (beside Import / Activity); a secondary entry
+  point is a "+ add" affordance on the equity rows that opens it pre-filled. Type a ticker →
+  1. fetch its holdings (ETF → EDGAR look-through; stock → itself at 100%);
+  2. **overlap** vs the user's combined portfolio ("68% already owned via VOO + AAPL/MSFT/NVDA");
+  3. **concentration delta** — recompute HHI/sector with the hypothetical add
+     ("tech 72% → 81%");
+  4. **market factors** (data relay, Finnhub): 52-week position, analyst
+     recommendation trend, valuation vs sector — facts only;
+  5. **"Worth it?" rule-check** — transparent flags from `settings.candidateRules`
+     showing *which checks fired and why* (e.g. "3 of 5 flag caution: high overlap,
+     over your 80% tech cap, near 52-wk high ✓ analyst trend improving ✓ valuation
+     in-line"). The user owns every threshold; the dialog renders no verdict.
+- **Rate-watch scheduled function** (`rate-watch.mjs`): Gemini + Google Search
+  grounding, 1st & 15th, digest to Telegram + push, writes the `RateWatch` tab.
+
+### Phase 3 — Portfolio Insights card + rebalancing
+
+- **Portfolio Insights card** (always-on, no ticker): a new card appended to the
+  bottom of the InvestTab scroll, after `InvestSplitDonut` (holdings → visualization
+  → insights). Shows concentration verdict + top
+  holdings; rate-optimization (cash in the lower-APY HYSA); ETF-overlap map across
+  held funds (reuses the Phase 2 EDGAR cache).
+- **Rebalancing suggestion** (ws-rebalancer port): drift vs the user's target
+  allocation + the exact buy list to close it; buy-only, with a drift-threshold
+  alert.
