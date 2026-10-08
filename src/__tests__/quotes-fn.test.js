@@ -26,6 +26,9 @@ vi.stubGlobal('fetch', vi.fn(async (url) => {
     if (u.includes('/stock/recommendation')) {
       return { ok: true, status: 200, json: async () => ([{ buy: 12, hold: 4, sell: 1, strongBuy: 5, period: '2026-07-01' }]) };
     }
+    if (u.includes('/stock/metric')) {
+      return { ok: true, status: 200, json: async () => ({ metric: { '52WeekHigh': 540, '52WeekLow': 400, peTTM: 29.3, beta: 1.08 } }) };
+    }
   }
   throw new Error('unexpected fetch ' + u);
 }));
@@ -121,6 +124,13 @@ describe('quotes function — data & cache', () => {
     const { json } = await call(req({ body: { symbols: ['NVDA'], kind: 'recommendation' } }));
     expect(json.kind).toBe('recommendation');
     expect(json.data.NVDA[0]).toMatchObject({ buy: 12, hold: 4, sell: 1 });
+  });
+
+  it('passes the metric kind through untouched (52-wk / valuation / beta)', async () => {
+    const { json } = await call(req({ body: { symbols: ['AAPL'], kind: 'metric' } }));
+    expect(json.kind).toBe('metric');
+    expect(finnhubCalls.some(u => u.includes('/stock/metric') && u.includes('metric=all'))).toBe(true);
+    expect(json.data.AAPL.metric).toMatchObject({ '52WeekHigh': 540, peTTM: 29.3, beta: 1.08 });
   });
 
   it('503s when the key is missing', async () => {

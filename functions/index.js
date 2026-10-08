@@ -38,6 +38,8 @@ export { errorDigest } from './error-digest.mjs';
 export { quotes } from './quotes.mjs';
 // Invest tab — EDGAR N-PORT holdings look-through (descriptive User-Agent stays server-side).
 export { etfHoldings } from './etf-holdings.mjs';
+// Invest tab — CUSIP↔ticker reconciliation via OpenFIGI (optional key stays server-side).
+export { openfigi } from './openfigi.mjs';
 
 // Invest tab — bi-weekly HYSA rate watch (scheduled; 1st & 15th).
 export { rateWatch } from './rate-watch.mjs';
