@@ -63,7 +63,7 @@ export const TELEGRAM_EMAIL_MAP      = defineSecret('TELEGRAM_EMAIL_MAP');
 // ── MCP server (bound in Phase 6) ──────────────────────────────────────────
 export const MCP_API_KEY = defineSecret('MCP_API_KEY');
 
-// ── Wallet webhook (iOS Shortcuts / Android MacroDroid) ──────────────────
+// ── Wallet webhook (iOS Shortcuts / Android Automate) ──────────────────
 export const WALLET_WEBHOOK_SECRET = defineSecret('WALLET_WEBHOOK_SECRET');
 
 /** Secrets needed by any function that touches the Sheets/Drive data layer. */

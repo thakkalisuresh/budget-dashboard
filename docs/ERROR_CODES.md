@@ -3,7 +3,7 @@
 > **Generated file — do not edit by hand.**
 > Source of truth: `functions/lib/_error-codes.mjs`. Regenerate with `npm run errdoc`.
 
-61 codes across 13 domains.
+67 codes across 13 domains.
 
 Codes appear wherever the failure surfaces: in the bot's reply, on the
 dashboard crash screen, in the wallet webhook response body, in Cloud Logging,
@@ -57,6 +57,7 @@ and in the daily Telegram digest.
 | [`LLM-001`](#llm-001) | degraded | Groq API error |
 | [`LLM-002`](#llm-002) | fatal | Agent API error |
 | [`LLM-003`](#llm-003) | degraded | Category suggestion unusable |
+| [`LLM-004`](#llm-004) | degraded | Groq model unavailable |
 | [`PUSH-001`](#push-001) | degraded | Push subscription change failed |
 | [`PUSH-002`](#push-002) | degraded | Push notification send failed |
 | [`MCP-001`](#mcp-001) | fatal | MCP tool call failed |
@@ -73,10 +74,15 @@ and in the daily Telegram digest.
 | [`BOT-010`](#bot-010) | degraded | Learned category rule could not be saved |
 | [`BOT-011`](#bot-011) | degraded | Recent-expense lookup failed |
 | [`BOT-008`](#bot-008) | fatal | Category move left a duplicate |
+| [`BOT-012`](#bot-012) | fatal | Split item correction failed |
 | [`WAL-001`](#wal-001) | fatal | Wallet request rejected as invalid |
 | [`WAL-002`](#wal-002) | fatal | Wallet transaction write failed |
 | [`WAL-003`](#wal-003) | degraded | Wallet text parse failed |
 | [`WAL-004`](#wal-004) | degraded | Vendor skipped by user rule |
+| [`WAL-005`](#wal-005) | degraded | Duplicate guard unavailable |
+| [`WAL-006`](#wal-006) | degraded | Wallet heartbeat write failed |
+| [`WAL-007`](#wal-007) | degraded | Daily digest step failed |
+| [`WAL-008`](#wal-008) | degraded | Foreign-currency charge not converted |
 | [`FX-001`](#fx-001) | degraded | Currency conversion failed |
 | [`FX-002`](#fx-002) | degraded | Unknown currency |
 | [`WEB-001`](#web-001) | fatal | Dashboard render crashed |
@@ -364,7 +370,7 @@ and in the daily Telegram digest.
 
 **Agent API error** · `fatal`
 
-**Why it happens.** The conversational agent could not reach Claude.
+**Why it happens.** The conversational agent or an NL query got no answer from any provider (Groq, then Claude). Usually Claude is out of credit AND Groq failed, so check for an LLM-004 alongside.
 
 **What to do.** The bot cannot answer free-form questions until this clears. Structured commands still work.
 
@@ -375,6 +381,14 @@ and in the daily Telegram digest.
 **Why it happens.** The model returned a category that is not one of the sheet tabs, so it was discarded.
 
 **What to do.** Informational. Repeated hits mean the category list sent in the prompt is out of sync with the sheet.
+
+### LLM-004
+
+**Groq model unavailable** · `degraded`
+
+**Why it happens.** Groq rejected the request as an unknown or inaccessible model (model_not_found, 404, or a 400), so the hardcoded model id has been retired, is not on this account, or the request uses a parameter the model rejects.
+
+**What to do.** List models with GET https://api.groq.com/openai/v1/models, then update the model constants in functions/lib/_groq.mjs. Until then categorization silently uses the extractor (no confirm prompts), text extraction falls back to Gemini, and the bot agent and NL queries fall back to Claude.
 
 ## PUSH — Web push notifications
 
@@ -512,6 +526,14 @@ and in the daily Telegram digest.
 
 **What to do.** Delete the old entry in the dashboard. The move deliberately appends before deleting, so a half-failure duplicates rather than destroys.
 
+### BOT-012
+
+**Split item correction failed** · `fatal`
+
+**Why it happens.** Moving one line item between a split's category rows failed partway — the source or target aggregated row could not be adjusted on the sheet.
+
+**What to do.** Check the sheet: the two category totals may no longer reconcile to the receipt. Fix the amounts by hand, or redo the move from the dashboard.
+
 ## WAL — Wallet webhook
 
 ### WAL-001
@@ -545,6 +567,38 @@ and in the daily Telegram digest.
 **Why it happens.** The vendor matches a disabled-wallet-vendor rule and was intentionally not logged.
 
 **What to do.** Working as configured. Remove the rule in Settings if this vendor should be logged.
+
+### WAL-005
+
+**Duplicate guard unavailable** · `degraded`
+
+**Why it happens.** The wallet duplicate guard could not read or update its claim in Firestore. The charge was logged anyway (the guard fails open), so a duplicate source for it may also have been logged.
+
+**What to do.** Usually a transient Firestore blip. Check History → Duplicates for a doubled charge around the reported time.
+
+### WAL-006
+
+**Wallet heartbeat write failed** · `degraded`
+
+**Why it happens.** The webhook could not record that a phone was active in Firestore (wallet_activity). The charge itself was handled normally.
+
+**What to do.** Usually a transient Firestore blip. If it repeats, the "no wallet activity" alert may fire for a phone that is actually working.
+
+### WAL-007
+
+**Daily digest step failed** · `degraded`
+
+**Why it happens.** One of the 08:00 job's steps (error digest, parked-charge nudge or wallet heartbeat) threw. The other steps still ran.
+
+**What to do.** The context names the step. Check the function logs for errorDigest around 08:00 Pacific.
+
+### WAL-008
+
+**Foreign-currency charge not converted** · `degraded`
+
+**Why it happens.** A wallet notification in a non-USD currency (for example €16.00) arrived, but the exchange rate could not be looked up or the currency code is unknown. The charge was NOT logged and no duplicate-guard claim was taken; the phone banner and the household primary's Telegram both say so.
+
+**What to do.** Add the charge by hand (the card issuer's app notification, in USD, is the exact amount). If it repeats for a normal currency, check that open.er-api.com is reachable.
 
 ## FX — Currency conversion
 

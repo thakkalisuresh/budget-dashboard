@@ -10,15 +10,12 @@
 import { getCurrentMonthSheetId, getTotals, getRecentExpenses } from './_sheets.mjs';
 import { currentMonthName } from './_time.mjs';
 import { CATEGORIES } from './_extraction.mjs';
+import { GROQ_URL, GROQ_TEXT_MODEL, groqParams, groqContent, reportGroqFailure } from './_groq.mjs';
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const ANTHROPIC_URL     = 'https://api.anthropic.com/v1/messages';
 const HAIKU_MODEL       = 'claude-haiku-4-5';
 const SONNET_MODEL      = 'claude-sonnet-4-6';
-
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const GROQ_URL     = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL   = 'llama-3.3-70b-versatile';
 
 const QUERY_SYSTEM_PROMPT = `You are a budget assistant answering questions about the user's monthly expenses over WhatsApp.
 
@@ -146,17 +143,19 @@ async function tryDeterministic(cleaned, sheetId, monthName) {
 }
 
 async function callGroq(question, summary, monthName) {
-  if (!GROQ_API_KEY) throw new Error('GROQ_API_KEY not configured');
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) throw new Error('GROQ_API_KEY not configured');
 
   const res = await fetch(GROQ_URL, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${GROQ_API_KEY}`,
+      'Authorization': `Bearer ${apiKey}`,
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      model: GROQ_MODEL,
-      max_tokens: 400,
+      model: GROQ_TEXT_MODEL,
+      ...groqParams(GROQ_TEXT_MODEL),
+      max_tokens: 1024,   // reasoning tokens count too; the reply itself is short
       messages: [
         { role: 'system', content: QUERY_SYSTEM_PROMPT },
         { role: 'user', content: `Current month context (${monthName}):\n${summary}\n\nQuestion: ${question}` },
@@ -166,11 +165,11 @@ async function callGroq(question, summary, monthName) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    await reportGroqFailure(GROQ_TEXT_MODEL, res.status, err?.error);
     throw new Error(`Groq API: ${err?.error?.message || res.status}`);
   }
 
-  const data = await res.json();
-  return data.choices?.[0]?.message?.content?.trim() || '';
+  return groqContent(await res.json());
 }
 
 async function answerWithAI(question, sheetId, monthName) {
@@ -218,6 +217,7 @@ async function answerWithAI(question, sheetId, monthName) {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       console.error(`LLM-002 — Agent API error, query Claude (${model}):`, err?.error?.message || res.status);
+      await reportQueryFailure(new Error(`query Claude (${model}): ${err?.error?.message || res.status}`));
       return "Sorry, I couldn't answer that right now. Try a simpler query like '? budget' or '? total'.";
     }
 
@@ -226,8 +226,18 @@ async function answerWithAI(question, sheetId, monthName) {
     return answer.trim() || "I don't have enough data to answer that.";
   } catch (e) {
     console.error('LLM-002 — Agent API error (query):', e.message);
+    await reportQueryFailure(e);
     return "Sorry, I couldn't reach the AI. Try '? budget' or '? total'.";
   }
+}
+
+// Every provider failed: the user gets a plain reply, and the digest gets a row.
+// Loaded on demand — _error-log pulls in firebase-admin. Never throws.
+async function reportQueryFailure(error) {
+  try {
+    const { reportError } = await import('./_error-log.mjs');
+    await reportError('LLM-002', error, { flow: 'query' });
+  } catch { /* the reporter swallows its own failures; belt and braces */ }
 }
 
 async function buildMonthSummary(sheetId, monthName) {

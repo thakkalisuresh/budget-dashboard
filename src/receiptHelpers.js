@@ -138,9 +138,20 @@ export const CARD_ALIASES = {
   cfr: 'Chase Freedom Rise',
   c1quicksilver: 'Capital One Quicksilver',
   capitalonequicksilver: 'Capital One Quicksilver',
+  quicksilvercreditcard: 'Capital One Quicksilver',
   bilt: 'Bilt Blue Card',
   biltmastercard: 'Bilt Blue Card',
 };
+
+// MIRROR: keep in sync with MASKED_LAST4 / TRAILING_ELLIPSIS in functions/lib/_card-resolver.mjs.
+// Notification titles can end in a masked last four: "Quicksilver Credit
+// Card…1234", "… ending in 1234", "•••• 1234", "(…1234)", "x1234", "- 1234".
+// Strip only a SHORT (3-4 digit) tail behind an explicit mask/separator so
+// digits that belong to a card name are never eaten.
+const MASK = '(?:…|\\.{2,}|[*•·●]+|\\(\\s*(?:…|\\.{2,}|[*•·●]+|x)?|\\s(?:ending(?:\\s+in)?|x|[-–—]))';
+const MASKED_LAST4 = new RegExp(`\\s*${MASK}\\s*\\d{3,4}\\s*\\)?\\s*$`, 'i');
+// A title the iOS notification stack truncated: ends in an ellipsis, no digits.
+const TRAILING_ELLIPSIS = /\s*(?:…|\.{2,})\s*$/;
 
 // Fuzzy-match a raw card string from Vision against the known cards list.
 // Returns the canonical card name or '' if no confident match.
@@ -150,19 +161,50 @@ export function resolveCardName(raw, cards = []) {
   const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
   let r = norm(raw);
   if (!r) return '';
+  // A held name that already equals the raw text wins before any stripping, so
+  // a card legitimately named "Visa - 1234" is never mangled.
+  for (const c of cards) if (norm(c) === r) return c;
+  // Drop a masked last-four, then a trailing ellipsis (truncated title).
+  const noDigits = String(raw).replace(MASKED_LAST4, '');
+  const truncated = TRAILING_ELLIPSIS.test(noDigits);
+  r = norm(noDigits);
+  if (!r) return '';
   // Expand a known shorthand first, so "BCP" can reach a canonical name it
   // shares no usable substring with. An alias only rewrites the input — it
   // never invents a card the user doesn't hold.
   if (CARD_ALIASES[r]) r = norm(CARD_ALIASES[r]);
+  else if (truncated && r.length >= 5) {
+    // "Quicksilver Credit C…": expand only when exactly one canonical name's
+    // alias starts with the text; otherwise fall through to normal matching.
+    const targets = new Set(Object.entries(CARD_ALIASES)
+      .filter(([k]) => k.startsWith(r)).map(([, v]) => v));
+    if (targets.size === 1) r = norm([...targets][0]);
+  }
   // Exact normalized match first
   for (const c of cards) if (norm(c) === r) return c;
-  // Substring either direction (Vision may return "Sapphire Reserve" for "Chase Sapphire Reserve").
-  // Guard with a min length so short names like "Cash" don't match "...activecash".
+  // Substring either direction (Vision may return "Sapphire Reserve" for
+  // "Chase Sapphire Reserve"). Guard with a min length so short names like
+  // "Cash" don't match "...activecash".
+  //
+  // Never first-wins: two held cards that both fit ("Chase Debit" for
+  // "Chase Debit Card - A" and "- B") must not be settled by list order.
+  //   * text CONTAINS held card names: the longest unique one wins.
+  //   * held names CONTAIN the text: only when exactly one does.
+  // Anything ambiguous returns '' and the caller keeps the raw string.
+  const contained = [];
+  const containing = [];
   for (const c of cards) {
     const nc = norm(c);
-    if (nc.length >= 5 && r.length >= 5 && (nc.includes(r) || r.includes(nc))) return c;
+    if (nc.length < 5 || r.length < 5) continue;
+    if (r.includes(nc)) contained.push({ c, n: nc.length });
+    else if (nc.includes(r)) containing.push(c);
   }
-  return '';
+  if (contained.length) {
+    const max = Math.max(...contained.map(x => x.n));
+    const top = contained.filter(x => x.n === max);
+    return top.length === 1 ? top[0].c : '';
+  }
+  return containing.length === 1 ? containing[0] : '';
 }
 
 export async function extractFromFile(file, accessToken, cards = []) {
@@ -199,7 +241,7 @@ export async function extractFromFile(file, accessToken, cards = []) {
 2. A BANK STATEMENT or transaction list — multiple rows of transactions from different merchants
 
 If it is a RECEIPT, return exactly this JSON:
-{"type":"receipt","vendor":"Store Name","amount":45.23,"category":"Grocery","currency":"USD","paymentMethod":"Chase Sapphire Reserve","items":[{"name":"Item name","amount":5.99,"item_category":"Grocery"}]}
+{"type":"receipt","vendor":"Store Name","amount":45.23,"category":"Grocery","currency":"USD","paymentMethod":"Chase Sapphire Reserve","items":[{"name":"Item name","amount":5.99,"item_category":"Grocery","code":"1234567"}],"discounts":[{"applies_to_code":"1234567","amount":4.00}]}
 
 If it is a BANK STATEMENT or transaction list, return exactly this JSON:
 {"type":"statement","paymentMethod":"Chase Sapphire Reserve","transactions":[
@@ -212,7 +254,8 @@ ${cardHint}
 
 Rules:
 - RECEIPT: amount is the final total including tax. currency is the 3-letter ISO code visible on the receipt (e.g. USD, CAD, EUR, GBP). Default to USD if not shown.
-- RECEIPT items: list each line item as {name, amount, item_category}. item_category is your best guess of that single item's budget category (one of the categories above), or null if ambiguous (e.g. clothing/electronics). Use [] if the receipt has no itemized lines. This lets mixed receipts (e.g. Costco) be split by category.
+- RECEIPT items: list each line item as {name, amount, item_category, code}. amount is a POSITIVE price. item_category is your best guess of that single item's budget category (one of the categories above), or null if ambiguous (e.g. clothing/electronics). code is the item/article number printed next to the line as a string (Costco prints a 6-7 digit number), or null if none. Use [] if the receipt has no itemized lines. This lets mixed receipts (e.g. Costco) be split by category.
+- RECEIPT discounts: list coupon / instant-savings / manufacturer-discount lines as {applies_to_code, amount} in the "discounts" array. On a Costco instant-savings line like "0000385751 / 1860911  -4.00", applies_to_code is the article number AFTER the "/" ("1860911") — the item it reduces — and amount is the POSITIVE dollars saved (4.00). NEVER list a discount as an item and NEVER give an item a negative amount. Use [] if there are no discounts.
 - STATEMENT: include ONLY debit/purchase transactions where money left the account. For each transaction set txType to "debit" or "credit".
 - CRITICAL: If a transaction has a negative amount, a minus sign, is shown in red, or is labeled as refund/credit/return/reversal/payment, set txType to "credit". Do NOT include credits in the results.
 - Clean up truncated bank merchant names (e.g. "SEATTLEYELLOWCA HOLD" → "Seattle Yellow Cab", "WF SUPERMARKET" → "Whole Foods")

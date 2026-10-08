@@ -26,6 +26,9 @@ export { mcp } from './mcp-server.mjs';
 // Phase 7 — wallet webhook (iOS Shortcuts / Android MacroDroid).
 export { walletWebhook } from './wallet-webhook.mjs';
 
+// Batched LLM categorization of receipt line items (split-receipt screen).
+export { itemCategorize } from './item-categorize.mjs';
+
 // Weekly LLM category audit (scheduled).
 export { categoryAudit } from './category-audit.mjs';
 

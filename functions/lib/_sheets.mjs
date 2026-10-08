@@ -5,6 +5,7 @@
  */
 import { getAccessToken, copyFile, shareWithEmails } from './_drive.mjs';
 import { currentMonthName } from './_time.mjs';
+import { MEMORY_SHEET, MEMORY_HEADER, reduceMemoryRows } from './_item-memory.mjs';
 
 const SHEETS_API    = 'https://sheets.googleapis.com/v4/spreadsheets';
 const TEMPLATE_ID   = process.env.VITE_TEMPLATE_SHEET_ID;
@@ -295,16 +296,21 @@ async function findRowByUUID(sheetId, sheetTab, uuid) {
   return -1;
 }
 
-export async function deleteExpenseByUUID({ category, uuid, sheetId }) {
+/**
+ * Locate the row carrying `uuid`, trying the category's expected tab first and
+ * then every other tab — the dashboard's "move to category" keeps the UUID but
+ * relocates the row, so a bot-logged expense may live elsewhere by now.
+ *
+ * @returns { sheetTab, rowIndex } — rowIndex is 0-based into the tab's values
+ *          (sheet row = rowIndex + 1), or -1 when not found anywhere.
+ */
+async function locateExpenseRow({ category, uuid, sheetId }) {
   const config = SHEET_MAP[category];
   if (!config) throw new Error(`Unknown category: ${category}`);
 
-  // Expected tab first…
   let sheetTab = config.sheet;
   let rowIndex = await findRowByUUID(sheetId, sheetTab, uuid);
 
-  // …then every other tab: the dashboard's "move to category" keeps the UUID
-  // but relocates the row, so a bot-logged expense may live elsewhere by now.
   if (rowIndex === -1) {
     const otherTabs = [...new Set(Object.values(SHEET_MAP).map(c => c.sheet))]
       .filter(t => t !== config.sheet);
@@ -314,6 +320,32 @@ export async function deleteExpenseByUUID({ category, uuid, sheetId }) {
     }
   }
 
+  return { sheetTab, rowIndex };
+}
+
+/**
+ * Overwrite just the amount (column E) of an existing expense row, found by
+ * UUID. Used by the bot's item-level split correction, which shifts one line
+ * item's amount between two aggregated category rows without deleting/rewriting
+ * them — the UUIDs stay stable so UNDO still maps. Column E holds the amount in
+ * both the 7-col and the 8-col (Travel/Holiday) row variants.
+ */
+export async function updateExpenseAmountByUUID({ category, uuid, sheetId, amount }) {
+  const { sheetTab, rowIndex } = await locateExpenseRow({ category, uuid, sheetId });
+  if (rowIndex === -1) throw new Error(`Row with UUID ${uuid} not found`);
+
+  const range = encodeURIComponent(`'${sheetTab}'!E${rowIndex + 1}`);
+  // RAW, matching appendExpense — the amount is a number, no formula coercion.
+  await sheetsRequest(sheetId, `/values/${range}?valueInputOption=RAW`, {
+    method: 'PUT',
+    body: JSON.stringify({ values: [[amount]] }),
+  });
+  return { sheetTab, rowIndex };
+}
+
+export async function deleteExpenseByUUID({ category, uuid, sheetId }) {
+  // locateExpenseRow validates the category and finds the row across tabs.
+  const { sheetTab, rowIndex } = await locateExpenseRow({ category, uuid, sheetId });
   if (rowIndex === -1) throw new Error(`Row with UUID ${uuid} not found`);
 
   const meta = await sheetsRequest(sheetId, '?fields=sheets.properties');
@@ -779,5 +811,129 @@ async function addCategoryToUserSettings(categoryName) {
     });
   } catch (e) {
     console.warn('addCategoryToUserSettings failed (non-fatal):', e.message);
+  }
+}
+
+/* ── Item memory: the append-only line-item → category log ──────────────────
+   Server side of src/sheetItemMemory.js. Same tab in the same template
+   spreadsheet, so a lesson taught through Telegram is read back by the
+   dashboard and vice versa — that shared log is the entire point.
+
+   Keyed by ALLOWED_EMAILS[0], matching getUserSettings() and
+   addCategoryToUserSettings(): the bot has no per-message email, so it acts as
+   the primary household member. A second household member splitting via
+   Telegram teaches the primary's memory, which is the same assumption the
+   bot's settings already make. */
+
+/** The identity the bot writes memory under. Empty when unconfigured. */
+export function memoryUserId() {
+  return ALLOWED_EMAILS[0] || '';
+}
+
+let _memorySheetReady = false;
+
+async function ensureMemorySheet() {
+  if (_memorySheetReady) return;
+  const meta = await sheetsRequest(TEMPLATE_ID, '?fields=sheets.properties.title');
+  const exists = (meta.sheets || []).some(s => s.properties?.title === MEMORY_SHEET);
+  if (!exists) {
+    await sheetsRequest(TEMPLATE_ID, ':batchUpdate', {
+      method: 'POST',
+      body: JSON.stringify({ requests: [{ addSheet: { properties: { title: MEMORY_SHEET } } }] }),
+    });
+    const range = encodeURIComponent(`'${MEMORY_SHEET}'!A1:G1`);
+    await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueInputOption=RAW`, {
+      method: 'PUT',
+      body: JSON.stringify({ values: [MEMORY_HEADER] }),
+    });
+  }
+  _memorySheetReady = true;
+}
+
+/**
+ * Raw log rows, header included. Returns [] on any failure — a missing memory
+ * must degrade to "ask the user", never break a receipt the bot is mid-way
+ * through processing.
+ */
+export async function fetchItemMemoryRows() {
+  if (!TEMPLATE_ID) return [];
+  try {
+    await ensureMemorySheet();
+    const range = encodeURIComponent(`'${MEMORY_SHEET}'!A:G`);
+    const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}`);
+    return data.values || [];
+  } catch (e) {
+    console.warn('fetchItemMemoryRows failed (non-fatal):', e.message);
+    return [];
+  }
+}
+
+/** Rows collapsed to a newest-wins lookup map for the bot's user. */
+export async function getItemMemory() {
+  return reduceMemoryRows(await fetchItemMemoryRows(), memoryUserId());
+}
+
+/** Append rows to the log. Never throws — a lost lesson costs one tap later. */
+export async function appendItemMemory(rows) {
+  if (!rows?.length || !TEMPLATE_ID) return false;
+  try {
+    await ensureMemorySheet();
+    const range = encodeURIComponent(`'${MEMORY_SHEET}'!A:G`);
+    await sheetsRequest(
+      TEMPLATE_ID,
+      `/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+      { method: 'POST', body: JSON.stringify({ values: rows }) }
+    );
+    return true;
+  } catch (e) {
+    console.warn('appendItemMemory failed (non-fatal):', e.message);
+    return false;
+  }
+}
+
+/**
+ * Merge transaction notes into the settings blob (read-modify-write, same shape
+ * as addCategoryToUserSettings).
+ *
+ * The bot never wrote notes before, so a Telegram-split transaction showed up in
+ * the dashboard as a bare "Costco $84.12" with no record of what was in it. It
+ * also had no splitId, which is what lets a later category move re-teach the
+ * items — so bot splits were unteachable after the fact. Both are fixed by
+ * writing the same note shape the web split writes.
+ */
+export async function mergeTransactionNotes(notes) {
+  if (!TEMPLATE_ID || !notes || Object.keys(notes).length === 0) return false;
+  const userId = memoryUserId();
+  if (!userId) return false;
+
+  try {
+    const range = encodeURIComponent("'UserSettings'!A:B");
+    const data = await sheetsRequest(TEMPLATE_ID, `/values/${range}?valueRenderOption=FORMATTED_VALUE`);
+    const rows = data.values || [];
+    const rowIndex = rows.findIndex(r => r[0] === userId);
+    if (rowIndex < 0) return false;
+
+    const settings = JSON.parse(rows[rowIndex][1] || '{}');
+    // Merge in new notes; a null value deletes that key. The bot's item-level
+    // split correction changes a row's amount, which changes its amount-based
+    // note key — without deletion the stale key would orphan and accrete in
+    // this single 50,000-char settings cell. No other caller passes null.
+    const merged = { ...(settings.transactionNotes || {}) };
+    for (const [k, v] of Object.entries(notes)) {
+      if (v === null) delete merged[k];
+      else merged[k] = v;
+    }
+    settings.transactionNotes = merged;
+
+    const writeRange = encodeURIComponent(`'UserSettings'!B${rowIndex + 1}`);
+    await sheetsRequest(TEMPLATE_ID, `/values/${writeRange}?valueInputOption=RAW`, {
+      method: 'PUT',
+      body: JSON.stringify({ values: [[JSON.stringify(settings)]] }),
+    });
+    _settingsCache = null; // the blob just changed under the TTL cache
+    return true;
+  } catch (e) {
+    console.warn('mergeTransactionNotes failed (non-fatal):', e.message);
+    return false;
   }
 }

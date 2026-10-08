@@ -42,7 +42,11 @@ vi.mock('../../functions/lib/_telegram.mjs', () => ({
   resolveTelegramChatId: (email) => (email === 'me@example.com' ? '111' : null),
 }));
 vi.mock('firebase-functions/v2/scheduler', () => ({ onSchedule: (_o, fn) => fn }));
-vi.mock('../../functions/lib/secrets.mjs', () => ({ TELEGRAM_BOT_TOKEN: 'k', TELEGRAM_EMAIL_MAP: 'k', ALLOWED_EMAILS: 'k' }));
+vi.mock('../../functions/lib/secrets.mjs', () => ({ TELEGRAM_BOT_TOKEN: 'k', TELEGRAM_EMAIL_MAP: 'k', ALLOWED_EMAILS: 'k', SHEETS_DRIVE_SECRETS: [] }));
+// error-digest.mjs also imports the nudge and heartbeat; these tests only cover runErrorDigest.
+vi.mock('../../functions/lib/_parked-nudge.mjs', () => ({ runParkedNudge: vi.fn() }));
+vi.mock('../../functions/lib/_wallet-activity.mjs', () => ({ runHeartbeat: vi.fn() }));
+vi.mock('../../functions/lib/_household.mjs', () => ({ getPrimaryEmail: vi.fn(), resolvePromptChatId: vi.fn() }));
 
 const { reportError, fingerprint, groupErrors, buildDigest, sanitizeContext } =
   await import('../../functions/lib/_error-log.mjs');

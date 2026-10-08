@@ -237,7 +237,7 @@ export const ERROR_CODES = {
   'LLM-002': {
     title: 'Agent API error',
     severity: 'fatal',
-    cause: 'The conversational agent could not reach Claude.',
+    cause: 'The conversational agent or an NL query got no answer from any provider (Groq, then Claude). Usually Claude is out of credit AND Groq failed, so check for an LLM-004 alongside.',
     fix: 'The bot cannot answer free-form questions until this clears. Structured commands still work.',
   },
   'LLM-003': {
@@ -245,6 +245,12 @@ export const ERROR_CODES = {
     severity: 'degraded',
     cause: 'The model returned a category that is not one of the sheet tabs, so it was discarded.',
     fix: 'Informational. Repeated hits mean the category list sent in the prompt is out of sync with the sheet.',
+  },
+  'LLM-004': {
+    title: 'Groq model unavailable',
+    severity: 'degraded',
+    cause: 'Groq rejected the request as an unknown or inaccessible model (model_not_found, 404, or a 400), so the hardcoded model id has been retired, is not on this account, or the request uses a parameter the model rejects.',
+    fix: 'List models with GET https://api.groq.com/openai/v1/models, then update the model constants in functions/lib/_groq.mjs. Until then categorization silently uses the extractor (no confirm prompts), text extraction falls back to Gemini, and the bot agent and NL queries fall back to Claude.',
   },
 
   /* ── PUSH: web push notifications ─────────────────────────────────────── */
@@ -353,6 +359,13 @@ export const ERROR_CODES = {
     fix: 'Delete the old entry in the dashboard. The move deliberately appends before deleting, so a half-failure duplicates rather than destroys.',
   },
 
+  'BOT-012': {
+    title: 'Split item correction failed',
+    severity: 'fatal',
+    cause: 'Moving one line item between a split\'s category rows failed partway — the source or target aggregated row could not be adjusted on the sheet.',
+    fix: 'Check the sheet: the two category totals may no longer reconcile to the receipt. Fix the amounts by hand, or redo the move from the dashboard.',
+  },
+
   /* ── WAL: wallet webhook ──────────────────────────────────────────────── */
   'WAL-001': {
     title: 'Wallet request rejected as invalid',
@@ -377,6 +390,30 @@ export const ERROR_CODES = {
     severity: 'degraded',
     cause: 'The vendor matches a disabled-wallet-vendor rule and was intentionally not logged.',
     fix: 'Working as configured. Remove the rule in Settings if this vendor should be logged.',
+  },
+  'WAL-005': {
+    title: 'Duplicate guard unavailable',
+    severity: 'degraded',
+    cause: 'The wallet duplicate guard could not read or update its claim in Firestore. The charge was logged anyway (the guard fails open), so a duplicate source for it may also have been logged.',
+    fix: 'Usually a transient Firestore blip. Check History → Duplicates for a doubled charge around the reported time.',
+  },
+  'WAL-006': {
+    title: 'Wallet heartbeat write failed',
+    severity: 'degraded',
+    cause: 'The webhook could not record that a phone was active in Firestore (wallet_activity). The charge itself was handled normally.',
+    fix: 'Usually a transient Firestore blip. If it repeats, the "no wallet activity" alert may fire for a phone that is actually working.',
+  },
+  'WAL-007': {
+    title: 'Daily digest step failed',
+    severity: 'degraded',
+    cause: 'One of the 08:00 job\'s steps (error digest, parked-charge nudge or wallet heartbeat) threw. The other steps still ran.',
+    fix: 'The context names the step. Check the function logs for errorDigest around 08:00 Pacific.',
+  },
+  'WAL-008': {
+    title: 'Foreign-currency charge not converted',
+    severity: 'degraded',
+    cause: 'A wallet notification in a non-USD currency (for example €16.00) arrived, but the exchange rate could not be looked up or the currency code is unknown. The charge was NOT logged and no duplicate-guard claim was taken; the phone banner and the household primary\'s Telegram both say so.',
+    fix: 'Add the charge by hand (the card issuer\'s app notification, in USD, is the exact amount). If it repeats for a normal currency, check that open.er-api.com is reachable.',
   },
 
   /* ── FX: currency ─────────────────────────────────────────────────────── */

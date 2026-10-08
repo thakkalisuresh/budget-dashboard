@@ -63,6 +63,9 @@ vi.mock('../../functions/lib/_extraction.mjs', async (importOriginal) => {
   return { ...actual, extractTransactionText: (...a) => extractTransactionText(...a) };
 });
 
+const reportError = vi.fn(() => Promise.resolve());
+vi.mock('../../functions/lib/_error-log.mjs', () => ({ reportError: (...a) => reportError(...a) }));
+
 const mockFetch = vi.fn();
 globalThis.fetch = mockFetch;
 
@@ -228,6 +231,59 @@ describe('confirm-first add', () => {
     // No smart rule and no Groq key, so the category is the fallback — the point
     // is the user sees it before it is committed.
     expect(lastSent(ctx).text).toMatch(/Category: \w/);
+  });
+
+  it('flags an unfamiliar vendor when Groq only agrees with the Misc default at low confidence', async () => {
+    // The typed-add path passes no extracted category, so Misc is a default;
+    // Groq echoing it must not count as corroboration.
+    vi.stubEnv('GROQ_API_KEY', 'test-groq-key');
+    try {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          choices: [{ message: { content: '{"category":"Misc","confidence":0.3}' } }],
+        }),
+      });
+      const ctx = makeCtx();
+      await handleTextReply(ctx, 'Add zxqv holdings $53.11');
+      expect(lastSent(ctx).text).toContain('a guess');
+    } finally {
+      vi.unstubAllEnvs();
+      vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-bot-token');
+      vi.stubEnv('TELEGRAM_ALLOWED_USERS', '123456789');
+      vi.stubEnv('GEMINI_API_KEY', 'test-gemini-key');
+      vi.stubEnv('ANTHROPIC_API_KEY', 'sk-test');
+      vi.stubEnv('ALLOWED_EMAILS', 'nair.sabarish97@gmail.com');
+      vi.stubEnv('SITE_URL', 'https://test-dashboard.netlify.app');
+    }
+  });
+
+  it('files a repeat vendor under the category the user gave it before, without a guess flag', async () => {
+    vi.stubEnv('GROQ_API_KEY', 'test-groq-key');
+    try {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ choices: [{ message: { content: '{"category":"Travel","confidence":0.3}' } }] }),
+      });
+      getRecentExpenses.mockResolvedValue([
+        { vendor: 'Petrol', amount: 40, txDate: '2026-05-01', category: 'Health' },
+        { vendor: 'Petrol', amount: 35, txDate: '2026-05-08', category: 'Health' },
+      ]);
+      const ctx = makeCtx();
+      await handleTextReply(ctx, 'Add petrol $38.00');
+
+      expect(lastSent(ctx).text).toContain('Category: Health');
+      expect(lastSent(ctx).text).not.toContain('a guess');
+      expect(mockFetch).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+      vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-bot-token');
+      vi.stubEnv('TELEGRAM_ALLOWED_USERS', '123456789');
+      vi.stubEnv('GEMINI_API_KEY', 'test-gemini-key');
+      vi.stubEnv('ANTHROPIC_API_KEY', 'sk-test');
+      vi.stubEnv('ALLOWED_EMAILS', 'nair.sabarish97@gmail.com');
+      vi.stubEnv('SITE_URL', 'https://test-dashboard.netlify.app');
+    }
   });
 
   it('applies a card rule to the proposal', async () => {
@@ -486,5 +542,47 @@ describe('logged-expense edits', () => {
     expect(deleteExpenseByUUID).not.toHaveBeenCalled();
     expect(appendExpense).toHaveBeenCalledTimes(1);
     expect(lastSent(ctx).text).toContain('April 2026');
+  });
+});
+
+describe('when the AI agent has no working provider', () => {
+  it('tells the user plainly and reports the error instead of a bare help blurb', async () => {
+    reportError.mockClear();
+    mockFetch.mockResolvedValue({ ok: false, status: 400, json: () => Promise.resolve({ error: { message: 'credit balance is too low' } }) });
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'be my budgeting coach and suggest ideas');
+    expect(ctx.sent).toHaveLength(1);
+    expect(lastSent(ctx).text).toMatch(/AI assistant isn't available right now/i);
+    expect(lastSent(ctx).text).not.toMatch(/credit balance|Error:|at \S+:\d+/);
+    expect(reportError.mock.calls.map(c => c[0])).toContain('LLM-002');
+  });
+});
+
+describe('agent log_expense category', () => {
+  // Groq does not enforce a tool's enum, and gpt-oss answered in lowercase and
+  // plural ("groceries") in a live probe. The executor has to normalise or refuse, never
+  // hand an unknown tab name to the sheet writer.
+  const toolUse = (category) => ({ ok: true, status: 200, json: () => Promise.resolve({
+    stop_reason: 'tool_use',
+    content: [{ type: 'tool_use', id: 'tu_1', name: 'log_expense', input: { vendor: 'Walgreens', amount: 53.11, category } }],
+  }) });
+  const endTurn = (text) => ({ ok: true, status: 200, json: () => Promise.resolve({ stop_reason: 'end_turn', content: [{ type: 'text', text }] }) });
+  const toolResult = () => JSON.parse(mockFetch.mock.calls[1][1].body).messages.at(-1).content[0].content;
+
+  it("maps the model's lowercase category onto the canonical tab name", async () => {
+    mockFetch.mockResolvedValueOnce(toolUse('grocery')).mockResolvedValueOnce(endTurn(''));
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'be my budgeting coach and suggest ideas');
+    const proposal = ctx.sent.find(m => /Got it:/.test(m.text));
+    expect(proposal.text).toMatch(/Category: Grocery\b/);
+  });
+
+  it('rejects an unknown category back to the model instead of writing it', async () => {
+    mockFetch.mockResolvedValueOnce(toolUse('Spaceships')).mockResolvedValueOnce(endTurn('Which category?'));
+    const ctx = makeCtx();
+    await handleTextReply(ctx, 'be my budgeting coach and suggest ideas');
+    expect(toolResult()).toMatch(/unknown category/i);
+    expect(appendExpense).not.toHaveBeenCalled();
+    expect(ctx.sent.some(m => /Total: \$53\.11/.test(m.text))).toBe(false);
   });
 });

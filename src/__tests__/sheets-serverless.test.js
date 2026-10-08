@@ -8,7 +8,7 @@ vi.stubEnv('VITE_TEMPLATE_SHEET_ID', 'template-sheet-id');
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-const { getCurrentMonthSheetId, appendExpense, getRecentExpenses, deleteExpenseByUUID } = await import('../../functions/lib/_sheets.mjs');
+const { getCurrentMonthSheetId, appendExpense, getRecentExpenses, deleteExpenseByUUID, updateExpenseAmountByUUID } = await import('../../functions/lib/_sheets.mjs');
 
 function jsonResponse(data, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: () => Promise.resolve(data) };
@@ -415,5 +415,64 @@ describe('deleteExpenseByUUID', () => {
     await expect(
       deleteExpenseByUUID({ category: 'Misc', uuid: 'tx_500_ee', sheetId: 'sheet' })
     ).rejects.toThrow('Row with UUID tx_500_ee not found');
+  });
+});
+
+describe('updateExpenseAmountByUUID', () => {
+  // Same F:H locate as delete, then a single PUT overwriting col E (amount).
+  function routeUpdate({ uuid, uuidTab, col = 1, rowIdx = 3 }) {
+    const writes = [];
+    mockFetch.mockImplementation((url, options = {}) => {
+      if (url.includes('oauth2')) {
+        return Promise.resolve(jsonResponse({ access_token: 'test-token', expires_in: 3600 }));
+      }
+      const u = decodeURIComponent(url);
+      if (u.includes('!F:H')) {
+        const tab = u.match(/'([^']+)'!F:H/)?.[1];
+        if (tab === uuidTab) {
+          const rows = Array.from({ length: rowIdx + 1 }, () => ['', '', '']);
+          rows[rowIdx][col] = uuid;
+          return Promise.resolve(jsonResponse({ values: rows }));
+        }
+        return Promise.resolve(jsonResponse({ values: [['Payment Method', 'UUID', '']] }));
+      }
+      if (options.method === 'PUT') {
+        writes.push({ url: u, body: JSON.parse(options.body) });
+        return Promise.resolve(jsonResponse({}));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    return writes;
+  }
+
+  it('overwrites column E of the located row (current 7-col schema)', async () => {
+    const writes = routeUpdate({ uuid: 'tx_1', uuidTab: 'Misc', col: 1, rowIdx: 4 });
+    await updateExpenseAmountByUUID({ category: 'Misc', uuid: 'tx_1', sheetId: 'sheet', amount: 23.5 });
+    expect(writes).toHaveLength(1);
+    expect(writes[0].url).toContain("'Misc'!E5"); // rowIdx 4 → sheet row 5
+    expect(writes[0].url).toContain('valueInputOption=RAW');
+    expect(writes[0].body.values).toEqual([[23.5]]);
+  });
+
+  it('overwrites column E for a Travel (8-col) row too — amount is col E in both variants', async () => {
+    const writes = routeUpdate({ uuid: 'tx_2', uuidTab: 'Travel', col: 2, rowIdx: 3 });
+    await updateExpenseAmountByUUID({ category: 'Travel', uuid: 'tx_2', sheetId: 'sheet', amount: 99.99 });
+    expect(writes).toHaveLength(1);
+    expect(writes[0].url).toContain("'Travel'!E4");
+    expect(writes[0].body.values).toEqual([[99.99]]);
+  });
+
+  it('falls back to other tabs when the row was moved to a different category', async () => {
+    const writes = routeUpdate({ uuid: 'tx_3', uuidTab: 'Grocery', col: 1, rowIdx: 2 });
+    await updateExpenseAmountByUUID({ category: 'Misc', uuid: 'tx_3', sheetId: 'sheet', amount: 5 });
+    expect(writes).toHaveLength(1);
+    expect(writes[0].url).toContain("'Grocery'!E3");
+  });
+
+  it('throws when the uuid is nowhere', async () => {
+    routeUpdate({ uuid: 'tx_4', uuidTab: 'NONEXISTENT-TAB' });
+    await expect(
+      updateExpenseAmountByUUID({ category: 'Misc', uuid: 'tx_4', sheetId: 'sheet', amount: 1 })
+    ).rejects.toThrow('Row with UUID tx_4 not found');
   });
 });

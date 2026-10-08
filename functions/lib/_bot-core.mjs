@@ -11,10 +11,11 @@ import crypto from 'node:crypto';
 import { extractReceipt, extractReceiptBatch, extractTransactionText, todayISO, CATEGORIES } from './_extraction.mjs';
 import { uploadReceiptImage, moveFile, buildFolderPath } from './_drive.mjs';
 import {
-  getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID,
+  getCurrentMonthSheetId, appendExpense, deleteExpenseByUUID, updateExpenseAmountByUUID,
   getTotals, getRecentExpenses, writeSalaryAmount, writeBudgetAmount,
   addCategory, checkMonthExists, getLatestMonthData, getUserSettings,
   createMonth, addSmartRule,
+  getItemMemory, appendItemMemory, mergeTransactionNotes, memoryUserId,
 } from './_sheets.mjs';
 import { convertToUSD } from './_currency.mjs';
 import { reportError } from './_error-log.mjs';
@@ -23,18 +24,24 @@ import { findErrorCodeInText, explainErrorCode } from './_error-codes.mjs';
 import { looksLikeQuery, answerQuery } from './_query.mjs';
 import { buildRewardsLine, getEffectiveRates } from './_card-rewards.mjs';
 import { resolveCardName } from './_card-resolver.mjs';
-import { resolveCategory, applySmartRules } from './_categorize.mjs';
+import { resolveCategory, applySmartRules, CONFIDENCE_THRESHOLD } from './_categorize.mjs';
 import { findDuplicates, fuzzyNamesMatch } from './_duplicate-match.mjs';
 import {
   kbYesCancel, kbYesSkip, kbConfirmDelete, kbSplitCategory, kbCategoryConfirm, kbLogAnywayCancel,
   kbConfirmReceipt, kbLogAnywayReceipt, kbBatchReceipt, kbEditMenu, kbCategoryPicker, kbCardPicker,
   kbLoggedActions, kbEditLoggedMenu, kbMultiChoice, kbLearnOffer,
+  kbSplitFix, kbSplitFixItems, kbSplitFixCategory,
 } from './_telegram.mjs';
 import {
   looksLikeMultiExpense, parseMultiExpense, classifyMulti, distributeGap, MAX_ITEMS,
 } from './_multi-expense.mjs';
-import { categorizeItems, matchesSplitVendor } from './_item-categorizer.mjs';
+import { categorizeItem, matchesSplitVendor } from './_item-categorizer.mjs';
 import { currentMonthName, currentMonthYear, monthYearFromDateStr, localToday, resolveMonth } from './_time.mjs';
+import { lookupLearned, learnedExamples, buildMemoryRows, newSplitId } from './_item-memory.mjs';
+import { categorizeItemsBatch } from './_item-llm.mjs';
+import { buildSplitNote, buildCategoryItems } from './_split-notes.mjs';
+import { txNoteKey } from './_transaction-notes.mjs';
+import { applyDiscounts } from './_receipt-discounts.mjs';
 import { runToolLoop } from './_agent.mjs';
 
 const DAILY_LIMIT    = 50;
@@ -305,9 +312,25 @@ export async function handleTextReply(ctx, text) {
     return await handleSplitCategoryPick(ctx, text);
   }
 
+  // ── SPLITFIX* callbacks (post-log item-level correction of a split) ──
+  if (text.startsWith('SPLITFIXITEM:')) {
+    return await handleSplitFixItem(ctx, text);
+  }
+  if (text.startsWith('SPLITFIXCAT:')) {
+    return await handleSplitFixCategory(ctx, text);
+  }
+  if (text.startsWith('SPLITFIX:')) {
+    return await handleSplitFixStart(ctx, text);
+  }
+
   // ── CATFIX callback (user picked a category for an unconfident wallet charge) ──
   if (text.startsWith('CATFIX:')) {
     return await handleCategoryPick(ctx, text);
+  }
+
+  // ── DUPLOG callback ("Log it anyway" on a wallet charge the duplicate guard skipped) ──
+  if (text.startsWith('DUPLOG:')) {
+    return await handleDuplicateLog(ctx, text);
   }
 
   // ── AUDITFIX callback (user accepted a weekly-audit recategorization) ──
@@ -803,6 +826,11 @@ export async function handleTextReply(ctx, text) {
       if (await runBotAgent(ctx, text)) return;
     } catch (e) {
       console.warn('bot-core: agent fallback failed', e.message);
+      await reportError('LLM-002', e, { flow: 'agent' });
+      return ctx.send(
+        "The AI assistant isn't available right now, so I can't handle free-form messages. Structured commands still work.\n\n" +
+        'Send a receipt photo, bank screenshot, or paste a transaction SMS.\nManual: "Walmart 45.23 Grocery"\n\nType GUIDE for full command list.'
+      );
     }
     return ctx.send(
       'Send a receipt photo, bank screenshot, or paste a transaction SMS.\nManual: "Walmart 45.23 Grocery"\n\nType GUIDE for full command list.'
@@ -1071,6 +1099,87 @@ export async function handleAttachMedia(ctx, base64, mediaType, attachState) {
    ══════════════════════════════════════════════════════════════════════════════ */
 
 /**
+ * Decide a category for every line item, three layers deep — the same order the
+ * dashboard's split screen uses, so both surfaces answer a receipt identically:
+ *
+ *   1. learned  — what this household filed this exact item under at this
+ *                 vendor last time. Beats the keyword tables on purpose: a
+ *                 remembered decision is evidence about THIS shopper, the
+ *                 keyword table is a guess about shoppers in general.
+ *   2. keyword  — _item-categorizer.mjs, unchanged.
+ *   3. llm      — one batched Groq call for the rest, primed with this
+ *                 household's own past filings at this vendor. Only confident
+ *                 answers auto-assign; the unsure ones still get asked.
+ *
+ * Over Telegram, asking about all ~50 items of a Costco run would be
+ * unusable, so layers 1-3 auto-assign and only the leftovers become questions.
+ * The user still sees every auto-sorted total in the summary before confirming,
+ * and can correct any of it afterwards from the dashboard — which re-teaches
+ * the items (see relearnMovedSplit / the splitId on the note below).
+ *
+ * @returns { groups, autoItems, toAsk } — `autoItems` are the ones already
+ *          placed, kept so the memory write covers the whole receipt.
+ */
+async function resolveSplitItems(rawItems, vendorName) {
+  let memory = new Map();
+  try { memory = await getItemMemory(); } catch { /* degrade to keywords */ }
+
+  const groups = {};
+  const autoItems = [];
+  const pending = [];
+
+  const place = (name, amount, category, source, { discount, code } = {}) => {
+    groups[category] = Math.round(((groups[category] || 0) + amount) * 100) / 100;
+    autoItems.push({ name, amount, category, source, ...(discount > 0 ? { discount } : {}), ...(code ? { code } : {}) });
+  };
+
+  for (const item of rawItems) {
+    if (!item || typeof item.amount !== 'number') continue;
+    const learned = lookupLearned(memory, vendorName, item.name, item.code);
+    if (learned && CATEGORIES.includes(learned)) { place(item.name, item.amount, learned, 'learned', item); continue; }
+
+    const keyword = categorizeItem(item);
+    if (keyword) { place(item.name, item.amount, keyword, 'keyword', item); continue; }
+
+    pending.push({
+      name: item.name,
+      amount: item.amount,
+      suggestion: typeof item.item_category === 'string' && item.item_category ? item.item_category : null,
+      category: null,
+      // A netted coupon amount + the article code ride along: the coupon so the
+      // note can show "was $X", the code so the memory write keys on it too.
+      ...(item.discount > 0 ? { discount: item.discount } : {}),
+      ...(item.code ? { code: item.code } : {}),
+    });
+  }
+
+  if (pending.length === 0) return { groups, autoItems, toAsk: [] };
+
+  // Layer 3. categorizeItemsBatch never throws; with no key or a bad day at
+  // Groq every answer is null and the items simply become questions.
+  const { results } = await categorizeItemsBatch({
+    vendor: vendorName,
+    items: pending.map(p => p.name),
+    categories: CATEGORIES,
+    examples: learnedExamples(memory, vendorName),
+  });
+
+  const toAsk = [];
+  pending.forEach((p, i) => {
+    const r = results?.[i];
+    if (r && r.confidence >= CONFIDENCE_THRESHOLD) {
+      place(p.name, p.amount, r.category, 'llm', p);
+      return;
+    }
+    // Not confident enough to file silently — ask, but offer the guess as the
+    // pre-highlighted button.
+    toAsk.push({ ...p, suggestion: r?.category || p.suggestion });
+  });
+
+  return { groups, autoItems, toAsk };
+}
+
+/**
  * Start (or resume into) a split: classify line items, auto-group the confident
  * ones, and ask the user category-by-category for the rest. State lives in
  * `split_confirm:<userId>:<id>`.
@@ -1102,15 +1211,19 @@ export async function getActiveSplit(store, userId) {
 async function handleSplitFlow(ctx, { data, year, month, conversionInfo, baseReceiptId, driveResult, pendingKey }) {
   const { store, userId } = ctx;
 
-  const { autoGrouped, uncategorized } = categorizeItems(data.items || []);
-
-  const groups = {};
-  for (const g of autoGrouped) groups[g.category] = g.subtotal;
+  const vendorName = data.store_name || 'Unknown';
+  // Net instant-savings/coupon lines into the item they discount before the
+  // three-layer resolver sees them, so a −$4 saving reduces the right product
+  // instead of landing in a category as its own (positive) phantom line. The
+  // finalizeSplit remainder fold reconciles to the printed total, so unmatched
+  // discounts are absorbed there — use `.items` only here.
+  const { items: nettedItems } = applyDiscounts(data.items || [], data.discounts);
+  const { groups, autoItems, toAsk } = await resolveSplitItems(nettedItems, vendorName);
 
   const state = {
     id: baseReceiptId,
     phone: userId,
-    vendor: data.store_name || 'Unknown',
+    vendor: vendorName,
     totalAmount: data.total_amount,
     txDate: data.purchase_date || null,
     year, month,
@@ -1120,7 +1233,11 @@ async function handleSplitFlow(ctx, { data, year, month, conversionInfo, baseRec
     driveFolderId: driveResult?.folderId || null,
     driveShareLink: driveResult?.shareLink || null,
     groups,
-    items: uncategorized.map(u => ({ name: u.name, amount: u.amount, suggestion: u.suggestion, category: null })),
+    // Items already placed by memory / keywords / a confident LLM answer. Kept
+    // so the memory write and the note at the end cover the WHOLE receipt, not
+    // just the ones the user was asked about.
+    autoItems,
+    items: toAsk,
     currentIndex: 0,
     receivedAt: new Date().toISOString(),
   };
@@ -1130,7 +1247,7 @@ async function handleSplitFlow(ctx, { data, year, month, conversionInfo, baseRec
 
   const key = `split_confirm:${userId}:${baseReceiptId}`;
   await store.setJSON(key, state);
-  console.log(`bot-core: split started for ${userId} — ${state.vendor} $${state.totalAmount} (${autoGrouped.length} auto, ${uncategorized.length} to ask)`);
+  console.log(`bot-core: split started for ${userId} — ${state.vendor} $${state.totalAmount} (${autoItems.length} auto, ${toAsk.length} to ask)`);
 
   return await askNextSplitItem(ctx, key, state);
 }
@@ -1201,6 +1318,73 @@ async function handleCategoryPick(ctx, text) {
     // Leave the pending blob in place so the charge isn't lost — the user can
     // tap again once whatever broke is back.
     return ctx.send(`Couldn't log that: ${e.message}. Tap a category again to retry. [BOT-007]`);
+  }
+}
+
+// A tap-claim held this long without settling is an abandoned attempt.
+const DUPLOG_TAKEOVER_MS = 30 * 1000;
+
+/**
+ * Handle a `DUPLOG:<id>` tap: the user says a charge the wallet duplicate guard
+ * skipped was really a separate purchase, so write it now.
+ *
+ * Appends directly (channel 'wallet') — it must NOT go back through the guard,
+ * which would skip it again. The blob is the only record of the charge, so it
+ * is deleted only after the write lands; a per-id tap-claim keeps two rapid taps
+ * from both writing, and is released on failure so the user can tap again.
+ */
+async function handleDuplicateLog(ctx, text) {
+  const { store, userId } = ctx;
+  const m = text.match(/^DUPLOG:([^:]+)$/);
+  if (!m) return; // malformed — ignore
+
+  const key = `dup_skipped:${userId}:${m[1]}`;
+  const pending = await store.get(key, { type: 'json' }).catch(() => null);
+  if (!pending) {
+    return ctx.send('That charge is no longer waiting — it may have been logged already.');
+  }
+  if (pending.expiresAt && new Date(pending.expiresAt) <= new Date()) {
+    await store.delete(key).catch(() => {});
+    return ctx.send("That charge is too old to log from here — please add it by hand.");
+  }
+
+  const claimKey = `wdup-log:${m[1]}`;
+  let claim;
+  try {
+    claim = await store.claimWindow(claimKey, { windowMs: 60 * 1000, takeoverMs: DUPLOG_TAKEOVER_MS, vendor: pending.vendor });
+  } catch (e) {
+    await reportError('WAL-005', e, { step: 'duplog-claim', userId });
+    claim = { claimed: true, token: null }; // fail open: the blob delete still guards a sequential retap
+  }
+  if (!claim.claimed) {
+    return ctx.send('That charge is already being logged.');
+  }
+
+  try {
+    const { uuid } = await appendExpense({
+      category: pending.category,
+      vendor: pending.vendor,
+      amount: pending.amount,
+      txDate: pending.txDate,
+      sheetId: pending.sheetId,
+      monthName: pending.monthName,
+      paymentMethod: pending.paymentMethod || '',
+      channel: 'wallet',
+    });
+    await store.delete(key);
+    if (claim.token) await store.settleClaim(claimKey, claim.token).catch(() => {});
+    await store.setJSON(`lastlog:${userId}`, {
+      uuid, category: pending.category, vendor: pending.vendor, amount: pending.amount,
+      sheetId: pending.sheetId, monthName: pending.monthName,
+      loggedAt: new Date().toISOString(),
+    });
+    console.log(`bot-core: DUPLOG logged ${pending.vendor} $${pending.amount} as ${pending.category} for ${userId}`);
+    return ctx.send(`Logged ${pending.vendor} · $${Number(pending.amount).toFixed(2)} as ${pending.category}.`);
+  } catch (e) {
+    if (claim.token) await store.releaseClaim(claimKey, claim.token).catch(() => {});
+    await reportError('BOT-007', e, { userId, vendor: pending?.vendor, flow: 'duplog' });
+    // Blob stays: it is the only record of the charge, so tapping again retries.
+    return ctx.send(`Couldn't log that: ${e.message}. Tap "Log it anyway" again to retry. [BOT-007]`);
   }
 }
 
@@ -1301,6 +1485,79 @@ async function handleSplitCategoryPick(ctx, text) {
   return await askNextSplitItem(ctx, key, state);
 }
 
+/**
+ * Format one split line item for the confirmation message, mirroring the note's
+ * discount wording so the chat shows the same netted price PR2 writes to the
+ * sheet: `Scotch & Soda $13.99 (was $17.99, -$4.00 coupon)`.
+ */
+function fmtSplitItem(item) {
+  const name = String(item?.name ?? '').trim() || 'Item';
+  const amt = Number(item?.amount);
+  if (!Number.isFinite(amt)) return name;
+  const disc = Number(item?.discount);
+  if (Number.isFinite(disc) && disc > 0) {
+    const orig = amt + disc;
+    return `${name} $${amt.toFixed(2)} (was $${orig.toFixed(2)}, -$${disc.toFixed(2)} coupon)`;
+  }
+  return `${name} $${amt.toFixed(2)}`;
+}
+
+/**
+ * Build the per-item breakdown for the split confirmation message: each item
+ * under the category it landed in, with its netted amount. Items a confident
+ * LLM guess placed (source 'llm') are flagged ⚠️ — those are the ones nobody
+ * confirmed, so they're the ones to eyeball (the live BLULANDDISH→Grocery
+ * misfile was exactly an unflagged llm guess). The tax/fees remainder is shown
+ * against the category that absorbed it so the listed items still reconcile to
+ * the category total.
+ *
+ * Built from `allItems` (not the note's itemsByCategory, which strips `source`),
+ * grouped in `entries` order and limited to categories that actually logged.
+ *
+ * Exported for tests.
+ */
+export function buildSplitResultLines({ vendor, entries = [], allItems = [], remainder = 0, remainderCategory = null }) {
+  const byCat = {};
+  for (const it of allItems) {
+    if (!it || !it.category) continue;
+    (byCat[it.category] ||= []).push(it);
+  }
+
+  const lines = [
+    `✅ Logged ${vendor} split across ${entries.length} categor${entries.length === 1 ? 'y' : 'ies'}:`,
+    '',
+  ];
+  let sawGuess = false;
+  for (const e of entries) {
+    lines.push(`${e.category} — $${Number(e.amount).toFixed(2)}`);
+    for (const it of byCat[e.category] || []) {
+      const guess = it.source === 'llm';
+      if (guess) sawGuess = true;
+      lines.push(`   • ${fmtSplitItem(it)}${guess ? ' ⚠️' : ''}`);
+    }
+    if (e.category === remainderCategory && Math.abs(Number(remainder)) >= 0.01) {
+      const r = Number(remainder);
+      lines.push(`   • Tax/fees ${r < 0 ? '-' : '+'}$${Math.abs(r).toFixed(2)}`);
+    }
+  }
+  if (sawGuess) lines.push('', '⚠️ = auto-sorted by AI — double-check these');
+
+  // Telegram caps a message at 4096 chars; the View Sheet / UNDO lines are
+  // appended after this. A pathological ~40-item receipt stays well under that,
+  // but guard it: if the per-item breakdown would blow the budget, fall back to
+  // category totals rather than risk a send failure (the write already landed).
+  if (lines.join('\n').length > 3800) {
+    return [
+      `✅ Logged ${vendor} split across ${entries.length} categor${entries.length === 1 ? 'y' : 'ies'}:`,
+      '',
+      ...entries.map(e => `  ${e.category} — $${Number(e.amount).toFixed(2)}`),
+      '',
+      '(too many items to list here — open the Sheet to review each)',
+    ];
+  }
+  return lines;
+}
+
 /** Log every category group as its own expense row, linked for UNDO. */
 async function finalizeSplit(ctx, key, state) {
   const { store, userId } = ctx;
@@ -1323,12 +1580,25 @@ async function finalizeSplit(ctx, key, state) {
   }
   const groupSum = Math.round(cats.reduce((s, c) => s + groups[c], 0) * 100) / 100;
   const remainder = Math.round((Number(state.totalAmount) - groupSum) * 100) / 100;
+  // Remembered so the note can label the tax/fees against the group that
+  // absorbed it, rather than letting it silently inflate an item's price.
+  let remainderCategory = null;
   if (Math.abs(remainder) >= 0.01) {
-    const largest = cats.reduce((a, b) => (groups[b] > groups[a] ? b : a), cats[0]);
-    groups[largest] = Math.round((groups[largest] + remainder) * 100) / 100;
+    remainderCategory = cats.reduce((a, b) => (groups[b] > groups[a] ? b : a), cats[0]);
+    groups[remainderCategory] = Math.round((groups[remainderCategory] + remainder) * 100) / 100;
   }
 
   const entries = [];
+  const notes   = {};
+  const splitId = newSplitId();
+  // How many categories this receipt split into — stamped on every row's note so
+  // the dashboard ledger can say "part of a $X.XX split (N categories)" and
+  // search can match the whole-receipt total.
+  const splitCount = Object.values(groups).filter(a => a > 0).length;
+  // Every item on the receipt, however it was categorized.
+  const allItems = [...(state.autoItems || []), ...state.items.filter(i => i.category)];
+  const itemsByCategory = buildCategoryItems([], allItems);
+
   for (const category of Object.keys(groups)) {
     const amount = groups[category];
     if (amount <= 0) continue;
@@ -1339,6 +1609,13 @@ async function finalizeSplit(ctx, key, state) {
         paymentMethod: state.paymentMethod || '', channel: ctx.channel,
       });
       entries.push({ category, uuid: result.uuid, sheetId, amount });
+
+      // Key off the amount actually written (remainder already folded in), or
+      // the dashboard reads back a key that was never used.
+      const note = buildSplitNote(itemsByCategory[category] || [], {
+        remainder: category === remainderCategory ? remainder : 0,
+      });
+      if (note) notes[txNoteKey(sheetId, category, state.vendor, amount)] = { ...note, splitId, receiptTotal: Number(state.totalAmount), splitCount };
     } catch (e) {
       await reportError('BOT-005', e, { category });
     }
@@ -1347,6 +1624,15 @@ async function finalizeSplit(ctx, key, state) {
   if (entries.length === 0) {
     return ctx.send('Failed to log the split to the spreadsheet. Try again or use the dashboard. [BOT-005]');
   }
+
+  // Teach item memory what this receipt decided, and leave the same note the
+  // web split leaves — item list plus the splitId that lets a later category
+  // move re-teach every item behind the transaction. Both are best-effort and
+  // deliberately not awaited into the reply path: the expenses are already
+  // written, and a lost lesson costs one tap next time.
+  appendItemMemory(buildMemoryRows({ userId: memoryUserId(), vendor: state.vendor, items: allItems, splitId }))
+    .catch(() => {});
+  if (Object.keys(notes).length > 0) mergeTransactionNotes(notes).catch(() => {});
 
   // Move the receipt into the largest group's Drive folder (best-effort).
   if (state.driveFileId) {
@@ -1368,20 +1654,232 @@ async function finalizeSplit(ctx, key, state) {
     driveFileId: state.driveFileId || null,
     driveShareLink: state.driveShareLink || null,
     loggedAt: new Date().toISOString(),
+    // Correction state for "✏️ Fix a category": the splitId ties a tap back to
+    // these exact rows, allItems is the per-item breakdown, and remainder lets
+    // a note rebuilt after a move re-add the Tax/fees line. txDate/paymentMethod
+    // are needed if a move creates a brand-new category row.
+    splitId,
+    allItems,
+    remainder,
+    remainderCategory,
+    receiptTotal: Number(state.totalAmount),
+    txDate: state.txDate || null,
+    paymentMethod: state.paymentMethod || '',
   });
 
   await store.delete(key);
   console.log(`bot-core: split logged for ${userId} — ${state.vendor}, ${entries.length} categories`);
 
   const lines = [
-    `✅ Logged ${state.vendor} split across ${entries.length} categor${entries.length === 1 ? 'y' : 'ies'}:`,
-    ...entries.map(e => `  ${e.category}: $${e.amount.toFixed(2)}`),
+    ...buildSplitResultLines({
+      vendor: state.vendor, entries, allItems,
+      remainder, remainderCategory,
+    }),
     '',
     `View Sheet: ${sheetUrl(sheetId)}`,
     '',
     'UNDO to reverse the whole split',
   ];
-  return ctx.send(lines.join('\n'));
+  return ctx.send(lines.join('\n'), kbSplitFix(splitId));
+}
+
+/* ── Post-log item-level split correction ("✏️ Fix a category") ──────────────
+ *
+ * A split writes ONE aggregated row per category, not one row per item. So
+ * correcting a single mis-filed item (the live case: dish-soap tablets a
+ * confident LLM guess put in Grocery) is row-MATH, not a transaction move:
+ * shift the item's amount off the source category row and onto the target,
+ * rewrite both categories' item-list notes, and re-teach ItemMemory so the
+ * item lands right on every future receipt. Correction state lives in
+ * `lastlog:${userId}` — the same blob UNDO reads — so a correction and a later
+ * UNDO stay consistent, and only the most-recent split is inline-correctable.
+ */
+
+/** Clamp a button label to a Telegram-friendly length. */
+function truncateLabel(s, max = 48) {
+  const str = String(s);
+  return str.length > max ? `${str.slice(0, max - 1)}…` : str;
+}
+
+/**
+ * The inline Fix buttons live on the end-of-split message, which can scroll far
+ * up-thread. Only the most-recent split is correctable inline; once the user
+ * logs anything else, lastlog no longer points here. Returns the log or null.
+ */
+function activeSplitLog(lastlog, splitId) {
+  return lastlog && lastlog.split && lastlog.splitId === splitId ? lastlog : null;
+}
+
+const STALE_SPLIT_MSG =
+  'That split is no longer the most recent one — fix it from the dashboard instead.';
+
+/** "✏️ Fix a category" tapped → list the split's items as buttons. */
+async function handleSplitFixStart(ctx, text) {
+  const { store, userId } = ctx;
+  const splitId = text.slice('SPLITFIX:'.length);
+  const lastlog = await store.get(`lastlog:${userId}`, { type: 'json' }).catch(() => null);
+  const log = activeSplitLog(lastlog, splitId);
+  if (!log) return ctx.send(STALE_SPLIT_MSG);
+
+  const logged = new Set(log.entries.map(e => e.category));
+  const items = (log.allItems || [])
+    .map((it, idx) => ({ it, idx }))
+    .filter(({ it }) => it && it.category && logged.has(it.category))
+    .map(({ it, idx }) => ({
+      idx,
+      label: truncateLabel(`${it.name} ($${Number(it.amount).toFixed(2)} · ${it.category})`),
+    }));
+  if (items.length === 0) return ctx.send('No items to correct on this split.');
+
+  return ctx.send('Which item went to the wrong category?', kbSplitFixItems(splitId, items));
+}
+
+/** An item was picked → show the category picker for it. */
+async function handleSplitFixItem(ctx, text) {
+  const { store, userId } = ctx;
+  const m = text.match(/^SPLITFIXITEM:([^:]+):(\d+)$/);
+  if (!m) return ctx.send('That selection did not parse — tap "✏️ Fix a category" again.');
+  const splitId = m[1];
+  const idx = Number(m[2]);
+  const lastlog = await store.get(`lastlog:${userId}`, { type: 'json' }).catch(() => null);
+  const log = activeSplitLog(lastlog, splitId);
+  if (!log) return ctx.send(STALE_SPLIT_MSG);
+  const item = (log.allItems || [])[idx];
+  if (!item) return ctx.send('That item is no longer available. Tap "✏️ Fix a category" again.');
+
+  return ctx.send(
+    `Move "${item.name}" ($${Number(item.amount).toFixed(2)}) — currently ${item.category} — to:`,
+    kbSplitFixCategory(splitId, idx, CATEGORIES),
+  );
+}
+
+/**
+ * A new category was picked → move the item across the aggregated rows.
+ *
+ * Reconciliation invariant: shifting `amt` off the source and onto the target
+ * is net-zero, so the sum of category rows still equals the receipt total. The
+ * remainder-category row already carries the folded tax/fees, which makes the
+ * subtraction self-correcting (its note keeps the Tax/fees line on rebuild).
+ */
+async function handleSplitFixCategory(ctx, text) {
+  const { store, userId } = ctx;
+  const m = text.match(/^SPLITFIXCAT:([^:]+):(\d+):(.+)$/);
+  if (!m) return ctx.send('That choice did not parse — tap "✏️ Fix a category" again.');
+  const splitId = m[1];
+  const idx = Number(m[2]);
+  const toCategory = m[3];
+  if (!CATEGORIES.includes(toCategory)) {
+    return ctx.send(`Unknown category. Choose from:\n${CATEGORIES.join(', ')}`);
+  }
+
+  const lastlog = await store.get(`lastlog:${userId}`, { type: 'json' }).catch(() => null);
+  const log = activeSplitLog(lastlog, splitId);
+  if (!log) return ctx.send(STALE_SPLIT_MSG);
+
+  const item = (log.allItems || [])[idx];
+  if (!item) return ctx.send('That item is no longer available. Tap "✏️ Fix a category" again.');
+
+  const from = item.category;
+  if (from === toCategory) return ctx.send(`"${item.name}" is already in ${toCategory}.`);
+
+  const { sheetId, vendor } = log;
+  const amt = Math.round(Number(item.amount) * 100) / 100;
+
+  const srcEntry = log.entries.find(e => e.category === from);
+  let tgtEntry = log.entries.find(e => e.category === toCategory);
+  if (!srcEntry) return ctx.send('Could not find the source category row — fix it from the dashboard. [BOT-012]');
+
+  const oldSrcAmount = srcEntry.amount;
+  const oldTgtAmount = tgtEntry ? tgtEntry.amount : null;
+  const newSrcAmount = Math.round((srcEntry.amount - amt) * 100) / 100;
+
+  // ── Mutate the sheet rows (the only step that can fail the correction) ──
+  let sourceDeleted = false;
+  try {
+    if (newSrcAmount <= 0.005) {
+      // The item was the whole source category — remove its row entirely.
+      await deleteExpenseByUUID({ category: from, uuid: srcEntry.uuid, sheetId });
+      sourceDeleted = true;
+    } else {
+      await updateExpenseAmountByUUID({ category: from, uuid: srcEntry.uuid, sheetId, amount: newSrcAmount });
+    }
+
+    if (tgtEntry) {
+      const newTgtAmount = Math.round((tgtEntry.amount + amt) * 100) / 100;
+      await updateExpenseAmountByUUID({ category: toCategory, uuid: tgtEntry.uuid, sheetId, amount: newTgtAmount });
+      tgtEntry.amount = newTgtAmount;
+    } else {
+      // Target category had no row in this split — create one.
+      const res = await appendExpense({
+        category: toCategory, vendor, amount: amt,
+        txDate: log.txDate, sheetId, monthName: log.monthName,
+        paymentMethod: log.paymentMethod || '', channel: ctx.channel,
+      });
+      tgtEntry = { category: toCategory, uuid: res.uuid, sheetId, amount: amt };
+      log.entries.push(tgtEntry);
+    }
+  } catch (e) {
+    await reportError('BOT-012', e, { flow: 'split-fix', from, to: toCategory });
+    return ctx.send('Could not move that item on the sheet. Try again or use the dashboard. [BOT-012]');
+  }
+
+  // ── Update in-memory state ──────────────────────────────────────────────
+  item.category = toCategory;
+  // Once corrected it's user-confirmed, so it loses the "auto-sorted" ⚠️ flag.
+  item.source = 'corrected';
+  if (sourceDeleted) {
+    log.entries = log.entries.filter(e => e.uuid !== srcEntry.uuid);
+  } else {
+    srcEntry.amount = newSrcAmount;
+  }
+
+  // ── Rebuild the two touched categories' notes, keyed on their new amounts ─
+  const splitCount = log.entries.length;
+  const byCat = buildCategoryItems([], (log.allItems || []).filter(i => i.category));
+  const notes = {};
+  // Delete the stale amount-keyed notes (mergeTransactionNotes treats null as
+  // delete), or they orphan in the 50k settings cell.
+  notes[txNoteKey(sheetId, from, vendor, oldSrcAmount)] = null;
+  if (oldTgtAmount != null) notes[txNoteKey(sheetId, toCategory, vendor, oldTgtAmount)] = null;
+  for (const e of log.entries) {
+    if (e.category !== from && e.category !== toCategory) continue;
+    const note = buildSplitNote(byCat[e.category] || [], {
+      remainder: e.category === log.remainderCategory ? log.remainder : 0,
+    });
+    if (note) {
+      notes[txNoteKey(sheetId, e.category, vendor, e.amount)] = {
+        ...note, splitId, receiptTotal: log.receiptTotal, splitCount,
+      };
+    }
+  }
+  if (Object.keys(notes).length > 0) await mergeTransactionNotes(notes);
+
+  // Re-teach: this item now belongs to toCategory. Recency-wins overrides the
+  // earlier lesson; same splitId keeps a later whole-split move consistent.
+  // Best-effort — a failed lesson must never undo the sheet move just made.
+  appendItemMemory(buildMemoryRows({
+    userId: memoryUserId(), vendor,
+    items: [{ name: item.name, category: toCategory, ...(item.code ? { code: item.code } : {}) }],
+    splitId,
+  })).catch(() => {});
+
+  // Persist corrected state so UNDO removes the CORRECTED rows and a second
+  // correction starts from the new amounts.
+  log.amount = Math.round(log.entries.reduce((s, e) => s + e.amount, 0) * 100) / 100;
+  await store.setJSON(`lastlog:${userId}`, log);
+  console.log(`bot-core: split-fix ${item.name} ${from}→${toCategory} ($${amt}) for ${userId}`);
+
+  const lines = [
+    `✅ Moved ${item.name} → ${toCategory}. I'll remember that for next time.`,
+    '',
+    ...buildSplitResultLines({
+      vendor, entries: log.entries, allItems: log.allItems,
+      remainder: log.remainder, remainderCategory: log.remainderCategory,
+    }),
+    '',
+    'UNDO to reverse the whole split',
+  ];
+  return ctx.send(lines.join('\n'), kbSplitFix(splitId));
 }
 
 /** SKIP a wallet-triggered split — log the original charge as one expense. */
@@ -2373,21 +2871,16 @@ async function prepareExpense(ctx, input) {
   const history = vendorHistory(recent, vendor);
 
   // An explicitly named category is the user's own words — never second-guessed.
-  // Otherwise: smart rules → Groq → 'Misc', with needsConfirm below 0.75.
+  // Otherwise: smart rules → the user's own past filings of this vendor → Groq →
+  // 'Misc', with needsConfirm below CONFIDENCE_THRESHOLD.
   let resolvedCategory = CATEGORIES.find(c => c.toLowerCase() === String(category || '').toLowerCase()) || null;
   let needsConfirm = false;
   if (!resolvedCategory) {
     const decision = await resolveCategory({
-      vendor, amount, extractedCategory: null, categories: CATEGORIES, settings,
+      vendor, amount, extractedCategory: null, categories: CATEGORIES, settings, history: recent,
     });
     resolvedCategory = decision.category;
     needsConfirm = decision.needsConfirm;
-    // Past rows for this vendor are the user's own filing decision — better
-    // evidence than an LLM guess, so they settle a shaky one.
-    if (needsConfirm && history?.category) {
-      resolvedCategory = history.category;
-      needsConfirm = false;
-    }
   }
 
   // Rules first (explicit intent), then what the card history shows.
@@ -3358,10 +3851,21 @@ async function runBotAgent(ctx, text) {
       // Same path as the typed fast path: category is resolved server-side
       // (smart rules → Groq) unless the user named one, and the user gets the
       // same confirmation before anything is written.
+      // Groq does not enforce the tool's enum (it has answered "groceries" for
+      // "Grocery"). prepareExpense matches case-insensitively, but it would
+      // quietly re-categorise an unknown name — send that back to the model.
+      let category = null;
+      if (input.category) {
+        const wanted = String(input.category).trim().toLowerCase();
+        category = CATEGORIES.find(c => c.toLowerCase() === wanted) || null;
+        if (!category) {
+          return `Unknown category "${input.category}". Valid categories: ${CATEGORIES.join(', ')}. Ask the user which one, or omit category.`;
+        }
+      }
       const explicitDate = /^\d{4}-\d{2}-\d{2}$/.test(String(input.date || ''));
       await addExpenseFromText(ctx, {
         vendor, amount,
-        category: input.category || null,
+        category,
         card: input.card || null,
         date: explicitDate ? input.date : null,
         explicitDate,
@@ -3428,4 +3932,7 @@ async function rememberTurn(ctx, role, content) {
   }
 }
 
-export { CATEGORIES, DAILY_LIMIT, getRateCount };
+// resolveSplitItems is exported for tests: it holds the three-layer decision
+// that used to be one keyword call, and the split flow that reaches it starts
+// from an image extraction, which is a very expensive way to assert a rule.
+export { CATEGORIES, DAILY_LIMIT, getRateCount, resolveSplitItems };

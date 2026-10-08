@@ -499,6 +499,7 @@ function Dashboard({ auth }) {
               ...prev,
               transactionNotes: { ...(prev.transactionNotes || {}), [key]: data },
             }))}
+            userId={user.email}
             refreshKey={refreshKey}
             months={months}
             onOpen={t => handleExpenseClick(t.category, { uuid: t.uuid, vendor: t.vendor, amount: t.amount })}
@@ -691,6 +692,7 @@ function Dashboard({ auth }) {
                 cards={settings.cards || []}
                 cardRules={cardRules}
                 splitReceiptVendors={splitReceiptVendors}
+                userId={user.email}
                 // Split receipts write one note per resulting transaction, all
                 // in a single settings save — see splitNotes.js.
                 onSaveTransactionNotes={notes => updateSettings(prev => ({
@@ -787,6 +789,7 @@ function Dashboard({ auth }) {
             ...prev,
             transactionNotes: { ...(prev.transactionNotes || {}), [key]: data },
           }))}
+          userId={user.email}
           nonMonthlyVendors={nonMonthlyItems.map(i => i.vendor.toLowerCase())}
           onNonMonthlyChanged={refreshNonMonthly}
           onAddExpense={!isReadOnly ? () => { setShowAddDialog({ prefillCategory: detail.expense }); setDetail(null); } : undefined}

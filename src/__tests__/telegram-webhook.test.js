@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import { createFakeDb } from './helpers/fake-firestore.js';
 
 // Pin the clock so "current month" is deterministically May 2026 (matches the
 // 'May 2026' sheet fixtures below). Without this, tests that call
@@ -6,6 +7,12 @@ import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vites
 // setTimeout/setInterval real.
 beforeAll(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-05-15T12:00:00Z')); });
 afterAll(() => { vi.useRealTimers(); });
+
+// firebase-admin is only installed under functions/; the store just needs these two symbols.
+vi.mock('firebase-admin/firestore', () => ({
+  FieldPath: { documentId: () => '__name__' },
+  Timestamp: { fromMillis: (ms) => ({ ms }) },
+}));
 
 vi.stubEnv('TELEGRAM_BOT_TOKEN', 'test-bot-token');
 vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'test-webhook-secret');
@@ -51,6 +58,15 @@ const mockStore = {
 // both for the in-memory mockStore (same Blobs-shaped API the bot code expects).
 vi.mock('../../functions/lib/firestore.mjs', () => ({ getDb: () => ({}) }));
 vi.mock('../../functions/lib/bot-store.mjs', () => ({ createBotStore: () => mockStore }));
+
+// The duplicate-log tap takes a transactional claim; run the REAL claim code over
+// an in-memory Firestore double (the rest of mockStore stays a plain Map).
+const { createBotStore: realCreateBotStore } = await vi.importActual('../../functions/lib/bot-store.mjs');
+const claimDb = createFakeDb();
+const realClaims = realCreateBotStore(claimDb);
+mockStore.claimWindow = (...a) => realClaims.claimWindow(...a);
+mockStore.settleClaim = (...a) => realClaims.settleClaim(...a);
+mockStore.releaseClaim = (...a) => realClaims.releaseClaim(...a);
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -991,6 +1007,117 @@ describe('telegram webhook — CATFIX category pick', () => {
     mockStore.data.set(pendingKey, { ...pending });
     await handler(buildRequest(textMessage('CANCEL')));
     expect(mockStore.data.has(pendingKey)).toBe(false);
+  });
+});
+
+/* ── DUPLOG: "Log it anyway" for a charge the wallet duplicate guard skipped ── */
+
+describe('telegram webhook — DUPLOG log-it-anyway', () => {
+  const userId = '123456789';
+  const key = `dup_skipped:${userId}:abc12345`;
+  const blob = () => ({
+    id: 'abc12345', vendor: 'Safeway', amount: 11.46, category: 'Grocery', txDate: '2026-05-14',
+    monthName: 'May 2026', sheetId: 'sheet-may', paymentMethod: 'Amex BCP',
+    email: 'nair.sabarish97@gmail.com', source: 'sms',
+    createdAt: '2026-05-15T11:59:00.000Z', expiresAt: '2026-05-16T11:59:00.000Z',
+  });
+  let appendFails;
+
+  function mockSheets() {
+    mockFetch.mockImplementation((url, opts) => {
+      if (url.includes('/sendMessage') || url.includes('/answerCallbackQuery')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
+      }
+      if (url.includes('oauth2.googleapis.com/token')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ access_token: 'tok', expires_in: 3600 }) });
+      }
+      if (url.includes('sheets.googleapis.com') && url.includes('Months')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ values: [['May 2026', 'sheet-may']] }) });
+      }
+      if (appendFails && opts?.method === 'PUT') {
+        return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: { message: 'sheet locked' } }) });
+      }
+      if (url.includes('sheets.googleapis.com')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ updates: { updatedRows: 1 }, values: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+  }
+  const expenseWrites = () => mockFetch.mock.calls.filter(c => c[1]?.method === 'PUT').length;
+  const lastSend = () => {
+    const calls = mockFetch.mock.calls.filter(c => c[0]?.includes?.('/sendMessage'));
+    return JSON.parse(calls[calls.length - 1][1].body).text;
+  };
+
+  beforeEach(() => {
+    mockStore.data.clear();
+    claimDb.docs.clear();
+    appendFails = false;
+    mockFetch.mockReset();
+    mockSheets();
+  });
+
+  it('writes the skipped charge once with its own category, clears the blob', async () => {
+    mockStore.data.set(key, blob());
+    await handler(buildRequest(callbackQuery('DUPLOG:abc12345')));
+    expect(expenseWrites()).toBe(1);
+    expect(lastSend()).toBe('Logged Safeway · $11.46 as Grocery.');
+    expect(mockStore.data.has(key)).toBe(false);
+    expect(mockStore.data.get(`lastlog:${userId}`)).toMatchObject({ vendor: 'Safeway', category: 'Grocery' });
+  });
+
+  it('is not blocked by a live cross-phone card claim for the same charge', async () => {
+    mockStore.data.set(key, blob());
+    claimDb.docs.set('wdup-card:amexbcp:1146', { v: { ts: Date.now(), status: 'done', vendor: 'Safeway', token: 't' } });
+    await handler(buildRequest(callbackQuery('DUPLOG:abc12345')));
+    expect(expenseWrites()).toBe(1);
+    expect(lastSend()).toBe('Logged Safeway · $11.46 as Grocery.');
+  });
+
+  it('a double tap writes once; the second says it is no longer waiting', async () => {
+    mockStore.data.set(key, blob());
+    await handler(buildRequest(callbackQuery('DUPLOG:abc12345')));
+    await handler(buildRequest(callbackQuery('DUPLOG:abc12345')));
+    expect(expenseWrites()).toBe(1);
+    expect(lastSend()).toContain('no longer waiting');
+  });
+
+  it('two simultaneous taps write once', async () => {
+    mockStore.data.set(key, blob());
+    await Promise.all([
+      handler(buildRequest(callbackQuery('DUPLOG:abc12345'))),
+      handler(buildRequest(callbackQuery('DUPLOG:abc12345'))),
+    ]);
+    expect(expenseWrites()).toBe(1);
+  });
+
+  it('an expired blob is refused with a plain too-old message and removed', async () => {
+    mockStore.data.set(key, { ...blob(), expiresAt: '2026-05-15T11:00:00.000Z' });
+    await handler(buildRequest(callbackQuery('DUPLOG:abc12345')));
+    expect(expenseWrites()).toBe(0);
+    expect(lastSend()).toMatch(/too old.*by hand/i);
+    expect(mockStore.data.has(key)).toBe(false);
+  });
+
+  it('keeps the blob when the write fails and a second tap can retry', async () => {
+    appendFails = true;
+    mockSheets();
+    mockStore.data.set(key, blob());
+    await handler(buildRequest(callbackQuery('DUPLOG:abc12345')));
+    expect(mockStore.data.has(key)).toBe(true);
+    expect(lastSend()).toMatch(/Couldn't log|Tap again/i);
+
+    appendFails = false;
+    mockSheets();
+    await handler(buildRequest(callbackQuery('DUPLOG:abc12345')));
+    expect(lastSend()).toContain('Logged Safeway');
+    expect(mockStore.data.has(key)).toBe(false);
+  });
+
+  it('a stray CANCEL does not destroy the recovery button', async () => {
+    mockStore.data.set(key, blob());
+    await handler(buildRequest(textMessage('CANCEL')));
+    expect(mockStore.data.has(key)).toBe(true);
   });
 });
 
