@@ -305,16 +305,19 @@ describe('appendRateHistory', () => {
 
 describe('ensureInvestTabs', () => {
   it('adds only the missing tabs, each with its header row (idempotent backfill)', async () => {
-    // Existing sheet predates EtfHoldings — every other tab is already present.
+    // Existing sheet predates EtfHoldings + RateHistory — every older tab present.
     routes.push({
       match: '?fields=sheets.properties.title',
       json: { sheets: ['Accounts', 'Activities', 'Snapshots', 'RateWatch'].map(t => ({ properties: { title: t } })) },
     });
     const added = await ensureInvestTabs('inv123', 'tok');
-    expect(added).toEqual(['EtfHoldings']);
+    expect(added).toEqual(['EtfHoldings', 'RateHistory']);
 
     const batch = calls.find(c => c.url.includes(':batchUpdate'));
-    expect(batch.body.requests).toEqual([{ addSheet: { properties: { title: 'EtfHoldings' } } }]);
+    expect(batch.body.requests).toEqual([
+      { addSheet: { properties: { title: 'EtfHoldings' } } },
+      { addSheet: { properties: { title: 'RateHistory' } } },
+    ]);
     const header = calls.find(c => c.method === 'PUT' && c.url.includes('EtfHoldings'));
     expect(header.body.values[0]).toEqual(INVEST_TABS.EtfHoldings);
   });
