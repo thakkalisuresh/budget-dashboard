@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Pencil } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Pencil, ListPlus, X } from 'lucide-react';
 import { goalPct, monthlyInterest, monthsToGoal, horizonLabel, futureValue, FDIC_MAX } from './investMath.js';
 
 // Validated categorical palette (dark surface, CVD ΔE ≥ 12) — fixed order.
@@ -280,6 +280,64 @@ export function RateWatchCard({ rateWatch, hysaAccounts, currencySymbol }) {
           The bi-weekly APY scan hasn't run yet — first digest lands on the next 1st or 15th, on Telegram and push.
         </p>
       )}
+    </div>
+  );
+}
+
+// ── Itemize-contribution nudge ───────────────────────────────────────────────
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// Format an ISO (YYYY-MM-DD) date as "Oct 7" without timezone drift.
+function fmtShortDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return '';
+  return `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}`;
+}
+
+/**
+ * Dismissible card prompting the user to say what a brokerage cash deposit
+ * bought. Presentational — state lives in InvestTab. Renders nothing when there
+ * are no pending itemizations.
+ */
+export function ItemizeNudgeCard({ pending, currencySymbol = '$', onItemize, onDismiss }) {
+  if (!pending?.length) return null;
+  return (
+    <div className="glass-heavy" style={{ border: '1px solid var(--color-accent-border)', borderRadius: 26, padding: 18, marginBottom: 14 }}>
+      <div className="flex items-center gap-2" style={{ marginBottom: 10 }}>
+        <ListPlus className="w-4 h-4" style={{ color: 'var(--color-accent-text)' }} />
+        <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--color-accent-text)' }}>
+          {pending.length} contribution{pending.length !== 1 ? 's' : ''} to itemize
+        </p>
+      </div>
+      <div className="space-y-2">
+        {pending.map(p => (
+          <div key={p.uuid} className="flex items-center gap-2">
+            <button
+              onClick={() => onItemize?.(p)}
+              className="flex-1 text-left rounded-2xl px-4 py-3 transition-all active:scale-[0.99]"
+              style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-10)' }}
+            >
+              <span className="text-sm font-black tabular-nums" style={{ color: 'var(--color-text)' }}>
+                {fmtMoney(p.amount, currencySymbol)}
+              </span>
+              <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                {' '}to {p.accountName}{p.date ? ` · ${fmtShortDate(p.date)}` : ''}
+              </span>
+              <span className="block text-[11px] mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
+                Tap to record what you bought
+              </span>
+            </button>
+            <button
+              onClick={() => onDismiss?.(p.uuid)}
+              className="p-2.5 rounded-xl transition-colors hover:bg-[var(--sur-5)]"
+              style={{ color: 'var(--color-text-muted)' }}
+              aria-label="Dismiss"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

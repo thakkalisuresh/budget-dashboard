@@ -4,8 +4,10 @@ import { useInvestData } from './useInvestData.js';
 import { useQuotes } from './useQuotes.js';
 import { valuePortfolio, blendedApy } from './investMath.js';
 import { InvestOrbit } from './InvestOrbit.jsx';
-import { InvestTape, InvestSavingsCard, InvestAccountCard, RateWatchCard, InvestEquityRows, InvestSplitDonut } from './InvestParts.jsx';
+import { InvestTape, InvestSavingsCard, InvestAccountCard, RateWatchCard, InvestEquityRows, InvestSplitDonut, ItemizeNudgeCard } from './InvestParts.jsx';
 import { EditAccountDialog, AddActivityDialog, ImportCsvDialog } from './InvestDialogs.jsx';
+import { ItemizeContributionDialog } from './ItemizeContributionDialog.jsx';
+import { pendingItemizations } from './investItemize.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // InvestTab — the approved hybrid layout: ticker tape → orbital hero →
@@ -50,9 +52,22 @@ export function InvestTab({ user, settings, updateSettings, settingsLoading, cur
   const savingsPct = grandTotal > 0 ? (savingsTotal / grandTotal) * 100 : 0;
   const apyBlend = blendedApy(hysaAccounts);
 
+  // Brokerage cash deposits still awaiting itemization (not yet bought-into, not dismissed).
+  const pendingItemize = useMemo(
+    () => pendingItemizations(activities, accounts, settings.itemizeDismissed || []),
+    [activities, accounts, settings.itemizeDismissed]
+  );
+
   const [editAccount, setEditAccount] = useState(null);
   const [showAddActivity, setShowAddActivity] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [itemizeTarget, setItemizeTarget] = useState(null);
+
+  const dismissItemize = (uuid) =>
+    updateSettings(prev => ({
+      ...prev,
+      itemizeDismissed: [...(prev.itemizeDismissed || []), uuid],
+    }));
 
   // ── Provisioning / hard-error states ──────────────────────────────────────
   if (provisioning || (!sheetId && !error)) {
@@ -175,6 +190,16 @@ export function InvestTab({ user, settings, updateSettings, settingsLoading, cur
         <RateWatchCard rateWatch={rateWatch} hysaAccounts={hysaAccounts} currencySymbol={currencySymbol} />
       )}
 
+      {/* Itemize-contribution nudge (brokerage cash awaiting buys) */}
+      {!isReadOnly && (
+        <ItemizeNudgeCard
+          pending={pendingItemize}
+          currencySymbol={currencySymbol}
+          onItemize={setItemizeTarget}
+          onDismiss={dismissItemize}
+        />
+      )}
+
       {/* Equities */}
       <InvestEquityRows positions={positions} currencySymbol={currencySymbol} lastUpdated={lastUpdated} quotesStale={quotesStale} />
 
@@ -205,6 +230,16 @@ export function InvestTab({ user, settings, updateSettings, settingsLoading, cur
           sheetId={sheetId}
           accessToken={user.accessToken}
           onClose={() => setShowImport(false)}
+          onSaved={refresh}
+        />
+      )}
+      {itemizeTarget && !isReadOnly && (
+        <ItemizeContributionDialog
+          pending={itemizeTarget}
+          sheetId={sheetId}
+          accessToken={user.accessToken}
+          currencySymbol={currencySymbol}
+          onClose={() => setItemizeTarget(null)}
           onSaved={refresh}
         />
       )}
