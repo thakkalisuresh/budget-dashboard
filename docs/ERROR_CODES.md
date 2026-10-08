@@ -3,7 +3,7 @@
 > **Generated file — do not edit by hand.**
 > Source of truth: `functions/lib/_error-codes.mjs`. Regenerate with `npm run errdoc`.
 
-67 codes across 13 domains.
+68 codes across 14 domains.
 
 Codes appear wherever the failure surfaces: in the bot's reply, on the
 dashboard crash screen, in the wallet webhook response body, in Cloud Logging,
@@ -89,6 +89,7 @@ and in the daily Telegram digest.
 | [`WEB-002`](#web-002) | degraded | Unhandled promise rejection in the dashboard |
 | [`WEB-003`](#web-003) | degraded | Offline — write refused |
 | [`WEB-004`](#web-004) | fatal | Receipt file rejected |
+| [`INV-001`](#inv-001) | degraded | Rate-watch scan failed |
 
 ## CFG — Configuration & secrets
 
@@ -651,6 +652,16 @@ and in the daily Telegram digest.
 **Why it happens.** Unsupported file type, or a PDF over the size limit.
 
 **What to do.** Expected user error. Send an image, or a screenshot instead of a large PDF.
+
+## INV — Investments & rate-watch
+
+### INV-001
+
+**Rate-watch scan failed** · `degraded`
+
+**Why it happens.** The bi-weekly HYSA rate-watch could not reach Gemini, parse its result, or write the RateWatch tab, so no rate digest went out this cycle.
+
+**What to do.** Usually transient — the next run (1st or 15th) retries. If it persists, check GEMINI_API_KEY and that the Invest sheet is reachable by the functions service account.
 
 ---
 

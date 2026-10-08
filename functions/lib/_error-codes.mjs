@@ -12,7 +12,7 @@
  *   EXTR  receipt & text extraction      LLM   other AI (Groq, agent)
  *   TG    Telegram transport             BOT   bot conversation flows
  *   WAL   wallet webhook                 FX    currency conversion
- *   WEB   frontend / dashboard
+ *   WEB   frontend / dashboard           INV   investments & rate-watch
  *
  * Numbers are permanent. Retire a code rather than reuse it — a stale code in
  * an old log should still resolve to what it meant at the time.
@@ -454,6 +454,14 @@ export const ERROR_CODES = {
     severity: 'fatal',
     cause: 'Unsupported file type, or a PDF over the size limit.',
     fix: 'Expected user error. Send an image, or a screenshot instead of a large PDF.',
+  },
+
+  /* ── INV: Investments & rate-watch ────────────────────────────────────── */
+  'INV-001': {
+    title: 'Rate-watch scan failed',
+    severity: 'degraded',
+    cause: 'The bi-weekly HYSA rate-watch could not reach Gemini, parse its result, or write the RateWatch tab, so no rate digest went out this cycle.',
+    fix: 'Usually transient — the next run (1st or 15th) retries. If it persists, check GEMINI_API_KEY and that the Invest sheet is reachable by the functions service account.',
   },
 };
 

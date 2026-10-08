@@ -250,9 +250,19 @@ export function InvestAccountCard({ hysaAccounts, currencySymbol, rateWatch, onE
 
 // ── Rate watch card ──────────────────────────────────────────────────────────
 
-export function RateWatchCard({ rateWatch, hysaAccounts, currencySymbol }) {
+export function RateWatchCard({ rateWatch, hysaAccounts, currencySymbol, onConfirmProposal, onDismissProposal }) {
   const latest = rateWatch[0];
   const yourBest = Math.max(0, ...hysaAccounts.map(a => a.apy));
+  // Held-bank advertised-rate changes the scan proposed. These are NEVER applied
+  // automatically — an advertised new-customer rate isn't necessarily yours.
+  const proposals = latest?.proposals || [];
+  const [pendingId, setPendingId] = useState(null);
+
+  const act = async (fn, p) => {
+    if (pendingId) return;
+    setPendingId(p.accountId);
+    try { await fn?.(p); } finally { setPendingId(null); }
+  };
 
   return (
     <div className="glass-heavy" style={{ border: '1px solid oklch(78% 0.16 75 / 30%)', borderRadius: 26, padding: 18, marginBottom: 14 }}>
@@ -279,6 +289,35 @@ export function RateWatchCard({ rateWatch, hysaAccounts, currencySymbol }) {
         <p style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: 4, lineHeight: 1.5 }}>
           The bi-weekly APY scan hasn't run yet — first digest lands on the next 1st or 15th, on Telegram and push.
         </p>
+      )}
+
+      {proposals.length > 0 && (onConfirmProposal || onDismissProposal) && (
+        <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {proposals.map((p) => (
+            <div key={p.accountId} style={{ borderTop: '1px solid var(--sur-8)', paddingTop: 10 }}>
+              <p style={{ fontSize: 12, color: 'var(--color-text)', lineHeight: 1.5 }}>
+                <b>{p.bank}</b> now advertises <b className="tabular-nums">{Number(p.proposedApy).toFixed(2)}%</b>
+                {' '}(you have <span className="tabular-nums">{Number(p.currentApy).toFixed(2)}%</span>
+                {p.effectiveDate ? `, eff. ${p.effectiveDate}` : ''}). Promo tiers and grandfathering mean this may not be your rate.
+              </p>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button
+                  onClick={() => act(onConfirmProposal, p)}
+                  disabled={pendingId === p.accountId}
+                  className="tabular-nums"
+                  style={{ flex: '1 1 auto', padding: '8px 12px', borderRadius: 14, fontSize: 12, fontWeight: 800, color: '#fff', background: 'var(--color-accent)', border: 'none', cursor: pendingId ? 'default' : 'pointer', opacity: pendingId === p.accountId ? 0.6 : 1 }}>
+                  Update to {Number(p.proposedApy).toFixed(2)}%
+                </button>
+                <button
+                  onClick={() => act(onDismissProposal, p)}
+                  disabled={pendingId === p.accountId}
+                  style={{ padding: '8px 12px', borderRadius: 14, fontSize: 12, fontWeight: 700, color: 'var(--color-text-secondary)', background: 'var(--sur-8)', border: 'none', cursor: pendingId ? 'default' : 'pointer', opacity: pendingId === p.accountId ? 0.6 : 1 }}>
+                  Not my rate
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

@@ -116,7 +116,7 @@ export const MOCK_INVEST = {
     { rowIndex: 11, date: '2026-07-01', accountId: 'happen-hysa', type: 'INTEREST', symbol: '', qty: null, price: null, amount: 151.25, note: '', uuid: 'act_m10' },
   ],
   rateWatch: [
-    { scanDate: '2026-07-08', bestBank: 'Openbank', bestApy: 4.75, yourBestApy: 4.4, delta: 0.35, details: [{ bank: 'Openbank', apy: 4.75 }, { bank: 'Pibank', apy: 4.6 }, { bank: 'BrioDirect', apy: 4.55 }] },
+    { scanDate: '2026-07-08', bestBank: 'Openbank', bestApy: 4.75, yourBestApy: 4.4, delta: 0.35, rowIndex: 2, details: [{ bank: 'Openbank', apy: 4.75 }, { bank: 'Pibank', apy: 4.6 }, { bank: 'BrioDirect', apy: 4.55 }], proposals: [{ accountId: 'amex-hysa', bank: 'Amex Savings', currentApy: 3.7, proposedApy: 3.85, effectiveDate: '2026-07-01' }] },
   ],
   quotes: {
     VOO:  { price: 512.4,  prevClose: 509.3,  dayChangePct: 0.61,  high: 514.1, low: 508.2, open: 509.9 },
