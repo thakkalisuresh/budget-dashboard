@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Pencil, ListPlus, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Pencil, ListPlus, X, Search } from 'lucide-react';
 import { goalPct, monthlyInterest, monthsToGoal, horizonLabel, futureValue, FDIC_MAX } from './investMath.js';
 
 // Validated categorical palette (dark surface, CVD ΔE ≥ 12) — fixed order.
@@ -395,7 +395,7 @@ function sparkPoints(q) {
   return seq.map((v, i) => `${Math.round((i / (seq.length - 1)) * 84)},${y(v).toFixed(1)}`).join(' ');
 }
 
-export function InvestEquityRows({ positions, currencySymbol, lastUpdated, quotesStale }) {
+export function InvestEquityRows({ positions, currencySymbol, lastUpdated, quotesStale, onCheck }) {
   const [flash, setFlash] = useState({});
   const prevPrices = useRef({});
 
@@ -435,6 +435,12 @@ export function InvestEquityRows({ positions, currencySymbol, lastUpdated, quote
                   {p.symbol}
                   {p.etf && (
                     <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.08em', padding: '2px 5px', borderRadius: 5, color: 'var(--color-accent-text)', background: 'var(--color-accent-subtle)' }}>ETF</span>
+                  )}
+                  {onCheck && (
+                    <button onClick={() => onCheck(p.symbol)} aria-label={`Check ${p.symbol} before buying more`} title="Candidate check"
+                      style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 3, borderRadius: 6, color: 'var(--color-text-muted)', background: 'var(--sur-6)', border: '1px solid var(--sur-10)' }}>
+                      <Search className="w-3 h-3" />
+                    </button>
                   )}
                 </p>
                 <p className="tabular-nums" style={{ fontSize: 11, color: 'var(--color-text-muted)', fontWeight: 600, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

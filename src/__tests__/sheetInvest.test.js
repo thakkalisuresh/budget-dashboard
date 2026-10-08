@@ -5,6 +5,7 @@ import {
   deleteActivityByUUID, INVEST_TABS, ensureInvestTabs,
   writeEtfHoldings, readEtfHoldings, quarterKey, currentQuarterKey, isHoldingsFresh,
   appendRateHistory, fetchRateHistory, ensureRateHistoryTab, writeRateWatchDetails,
+  readCusipMap, writeCusipMap,
 } from '../sheetInvest.js';
 
 // Route-based fetch mock: each entry is [urlSubstring+method matcher, response]
@@ -305,17 +306,18 @@ describe('appendRateHistory', () => {
 
 describe('ensureInvestTabs', () => {
   it('adds only the missing tabs, each with its header row (idempotent backfill)', async () => {
-    // Existing sheet predates EtfHoldings + RateHistory — every older tab present.
+    // Existing sheet predates EtfHoldings + CusipMap + RateHistory — older tabs present.
     routes.push({
       match: '?fields=sheets.properties.title',
       json: { sheets: ['Accounts', 'Activities', 'Snapshots', 'RateWatch'].map(t => ({ properties: { title: t } })) },
     });
     const added = await ensureInvestTabs('inv123', 'tok');
-    expect(added).toEqual(['EtfHoldings', 'RateHistory']);
+    expect(added).toEqual(['EtfHoldings', 'CusipMap', 'RateHistory']);
 
     const batch = calls.find(c => c.url.includes(':batchUpdate'));
     expect(batch.body.requests).toEqual([
       { addSheet: { properties: { title: 'EtfHoldings' } } },
+      { addSheet: { properties: { title: 'CusipMap' } } },
       { addSheet: { properties: { title: 'RateHistory' } } },
     ]);
     const header = calls.find(c => c.method === 'PUT' && c.url.includes('EtfHoldings'));
@@ -367,6 +369,43 @@ describe('EtfHoldings cache round-trip', () => {
   it('returns null for an uncached ticker', async () => {
     routes.push({ match: "'EtfHoldings'!A2", json: { values: [['QQQ', '2026-09-30', 'x', 'y', '', 1]] } });
     expect(await readEtfHoldings('inv123', 'tok', 'VTI')).toBeNull();
+  });
+});
+
+describe('CusipMap cache round-trip', () => {
+  it('reads the map as { cusip: ticker }, first-seen wins, skips empty tickers', async () => {
+    routes.push({
+      match: "'CusipMap'!A2", json: {
+        values: [
+          ['037833100', 'AAPL', 'cache'],
+          ['037833100', 'WRONG', 'openfigi'], // duplicate cusip — first wins
+          ['594918104', 'MSFT', 'openfigi'],
+          ['000000000', '', 'openfigi'],       // empty ticker — skipped
+        ],
+      },
+    });
+    const map = await readCusipMap('inv123', 'tok');
+    expect(map).toEqual({ '037833100': 'AAPL', '594918104': 'MSFT' });
+  });
+
+  it('returns {} when the tab is absent (tolerated)', async () => {
+    routes.push({ match: "'CusipMap'!A2", ok: false, status: 400, json: {} });
+    expect(await readCusipMap('inv123', 'tok')).toEqual({});
+  });
+
+  it('appends only rows with both a cusip and a ticker, uppercased', async () => {
+    // ensureInvestTabs runs first; pretend every tab already exists (no-op).
+    routes.push({
+      match: '?fields=sheets.properties.title',
+      json: { sheets: Object.keys(INVEST_TABS).map(t => ({ properties: { title: t } })) },
+    });
+    const n = await writeCusipMap('inv123', 'tok', [
+      { cusip: '037833100', ticker: 'aapl', source: 'openfigi' },
+      { cusip: 'deadbeef1', ticker: '', source: 'openfigi' }, // no ticker — skipped
+    ]);
+    expect(n).toBe(1);
+    const append = calls.find(c => c.url.includes('CusipMap') && c.url.includes(':append'));
+    expect(append.body.values).toEqual([['037833100', 'AAPL', 'openfigi']]);
   });
 });
 

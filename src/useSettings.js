@@ -82,7 +82,7 @@ export const DEFAULT_SETTINGS = {
   ],
   investEtfSymbols:  [],   // extra symbols to treat as ETFs beyond the built-in set
   itemizeDismissed:  [],   // brokerage DEPOSIT uuids the user chose not to itemize (nudge dismissed)
-  preBuyThresholds:  { concentrationPct: 25, near52wkPct: 5 }, // pre-buy check flags (Phase 2)
+  preBuyThresholds:  { concentrationPct: 25, near52wkPct: 5, overlapPct: 60, sectorCapPct: 80 }, // Candidate Check rule-check flags (Phase 2)
   colorScheme:             'default',
   titleBarColor:           null,   // PWA/browser chrome <meta theme-color>; null = match app dark bg
   hasSeenOnboarding:       false,
@@ -181,6 +181,9 @@ export async function loadUserSettings(userId, accessToken) {
       cardRewardRates:         parsed.cardRewardRates         || null,
       messages:                parsed.messages                || [],
       itemizeDismissed:        parsed.itemizeDismissed        || [],
+      // Merge so a saved copy from before the Candidate Check keys shipped still
+      // gains overlapPct / sectorCapPct (saved partial overrides the defaults).
+      preBuyThresholds:        { ...DEFAULT_SETTINGS.preBuyThresholds, ...(parsed.preBuyThresholds || {}) },
       // Append any new default cards the user doesn't already have (preserves user order)
       cards: (() => {
         const saved = parsed.cards || DEFAULT_SETTINGS.cards;

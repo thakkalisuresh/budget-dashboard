@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { Plus, Upload, RefreshCw, TrendingUp } from 'lucide-react';
+import { Plus, Upload, RefreshCw, TrendingUp, Search } from 'lucide-react';
 import { useInvestData } from './useInvestData.js';
 import { useQuotes } from './useQuotes.js';
 import { valuePortfolio, blendedApy } from './investMath.js';
 import { InvestOrbit } from './InvestOrbit.jsx';
 import { InvestTape, InvestSavingsCard, InvestAccountCard, RateWatchCard, InvestEquityRows, InvestSplitDonut, ItemizeNudgeCard } from './InvestParts.jsx';
 import { EditAccountDialog, AddActivityDialog, ImportCsvDialog } from './InvestDialogs.jsx';
+import { CandidateCheckDialog } from './CandidateCheckDialog.jsx';
 import { updateAccount, writeRateWatchDetails } from './sheetInvest.js';
 import { ItemizeContributionDialog } from './ItemizeContributionDialog.jsx';
 import { pendingItemizations } from './investItemize.js';
@@ -63,6 +64,8 @@ export function InvestTab({ user, settings, updateSettings, settingsLoading, cur
   const [showAddActivity, setShowAddActivity] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [itemizeTarget, setItemizeTarget] = useState(null);
+  // null = closed; '' = open blank; a ticker string = open pre-filled from a row.
+  const [candidateCheck, setCandidateCheck] = useState(null);
 
   const dismissItemize = (uuid) =>
     updateSettings(prev => ({
@@ -128,23 +131,31 @@ export function InvestTab({ user, settings, updateSettings, settingsLoading, cur
           <TrendingUp className="w-4 h-4" style={{ color: 'var(--color-accent-text)' }} />
           <h2 className="text-sm font-black uppercase tracking-widest" style={{ color: 'var(--color-text)' }}>Invest</h2>
         </div>
-        {!isReadOnly && (
-          <div className="flex items-center gap-2">
-            <button onClick={() => setShowImport(true)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-colors"
-              style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-10)', color: 'var(--color-text)' }}>
-              <Upload className="w-3.5 h-3.5" /> Import
-            </button>
-            <button onClick={() => setShowAddActivity(true)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-white transition-colors"
-              style={{ background: 'var(--color-accent)' }}>
-              <Plus className="w-3.5 h-3.5" /> Activity
-            </button>
-            <button onClick={refresh} className="p-2 rounded-xl transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}>
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          {/* Check is read-only analysis → always available, even in view-only mode. */}
+          <button onClick={() => setCandidateCheck('')}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-colors"
+            style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-10)', color: 'var(--color-text)' }}>
+            <Search className="w-3.5 h-3.5" /> Check
+          </button>
+          {!isReadOnly && (
+            <>
+              <button onClick={() => setShowImport(true)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-colors"
+                style={{ background: 'var(--color-surface)', border: '1px solid var(--sur-10)', color: 'var(--color-text)' }}>
+                <Upload className="w-3.5 h-3.5" /> Import
+              </button>
+              <button onClick={() => setShowAddActivity(true)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold text-white transition-colors"
+                style={{ background: 'var(--color-accent)' }}>
+                <Plus className="w-3.5 h-3.5" /> Activity
+              </button>
+              <button onClick={refresh} className="p-2 rounded-xl transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }}>
+                <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Loading skeleton (no cached data yet) */}
@@ -226,7 +237,7 @@ export function InvestTab({ user, settings, updateSettings, settingsLoading, cur
       )}
 
       {/* Equities */}
-      <InvestEquityRows positions={positions} currencySymbol={currencySymbol} lastUpdated={lastUpdated} quotesStale={quotesStale} />
+      <InvestEquityRows positions={positions} currencySymbol={currencySymbol} lastUpdated={lastUpdated} quotesStale={quotesStale} onCheck={(sym) => setCandidateCheck(sym)} />
 
       {/* ETF / stock split donut */}
       <InvestSplitDonut portfolio={portfolio} currencySymbol={currencySymbol} />
@@ -266,6 +277,19 @@ export function InvestTab({ user, settings, updateSettings, settingsLoading, cur
           currencySymbol={currencySymbol}
           onClose={() => setItemizeTarget(null)}
           onSaved={refresh}
+        />
+      )}
+      {candidateCheck != null && (
+        <CandidateCheckDialog
+          holdings={holdings}
+          positions={positions}
+          portfolioTotal={portfolio.total}
+          quotes={quotes}
+          settings={settings}
+          sheetId={sheetId}
+          accessToken={user.accessToken}
+          prefillTicker={candidateCheck}
+          onClose={() => setCandidateCheck(null)}
         />
       )}
     </div>

@@ -81,6 +81,15 @@ export const EDGAR_USER_AGENT = defineString('EDGAR_USER_AGENT', {
   default: 'Fundient/1.0 (contact via app owner)',
 });
 
+// ── Invest tab — OpenFIGI CUSIP↔ticker reconciliation (openfigi function) ───
+// NOT a secret: an OPTIONAL plain string param. OpenFIGI (Bloomberg-run) is free
+// and works WITHOUT a key (~25 req/min, 10 jobs/request); a free key lifts the
+// limit (250 req/min, 100 jobs/request). Leave it empty to run key-less; set a
+// real one via functions/.env or the deploy prompt to raise throughput. The
+// proxy lives server-side so any key stays off the client and the API's header
+// requirements are met (browsers can't set X-OPENFIGI-APIKEY cross-origin).
+export const OPENFIGI_API_KEY = defineString('OPENFIGI_API_KEY', { default: '' });
+
 /** Secrets needed by any function that touches the Sheets/Drive data layer. */
 export const SHEETS_DRIVE_SECRETS = [
   GOOGLE_CLIENT_ID,

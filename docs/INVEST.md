@@ -126,6 +126,22 @@ One deterministic module, two surfaces. No LLM verdicts anywhere.
     `investInsights.holdingKey`). Weights renormalize against the actual `pctVal` column
     sum, so partial filings are handled. Multi-series fund-family trusts: the latest
     `NPORT-P` for a CIK may be a sibling series (single-series ETF trusts resolve exactly).
+  - **CUSIP↔ticker reconciliation (PR2)**: because ETF underlyings are CUSIP-keyed and
+    direct stocks are ticker-keyed, Apple-in-VOO (`C:037833100`) and a direct `AAPL`
+    position (`T:AAPL`) would otherwise count as *distinct* holdings — understating
+    overlap and concentration. A CUSIP→ticker map closes the gap in two tiers, cheap
+    first: (1) **cache-derived** — `investInsights.buildCusipTickerMap` scans the
+    `EtfHoldings` cache for rows carrying both a CUSIP and a best-effort ticker (the
+    megacaps that dominate overlap almost always do), free; (2) **OpenFIGI fallback** —
+    the `/api/openfigi` Cloud Function (`openfigi.mjs`) resolves still-unmapped CUSIPs via
+    Bloomberg's free OpenFIGI `/v3/mapping` (server-side so any `OPENFIGI_API_KEY` stays
+    off the client), persisted to a new **`CusipMap`** sheet tab (`cusip | ticker | source`)
+    so a CUSIP is resolved at most once. `canonicalizeHoldings(holdings, map)` rewrites a
+    holding to its ticker when the CUSIP resolves (PR1's `holdingKey` is left intact);
+    `aggregatePortfolio` accepts the map and applies it, and the candidate's holdings are
+    canonicalized too, so both sides share one identity space before overlap/concentration.
+    `OPENFIGI_API_KEY` is **optional** (key-less OpenFIGI works at ~25 req/min, 10 jobs/req;
+    a free key lifts both) — a `defineString` param, not a secret.
   - **Descriptive User-Agent (SEC fair-access, non-negotiable)**: SEC EDGAR rejects
     requests without a descriptive `User-Agent` and browsers forbid overriding it, which
     is *why* the fetch lives in a Cloud Function. The UA comes from the **`EDGAR_USER_AGENT`**
@@ -140,18 +156,31 @@ One deterministic module, two surfaces. No LLM verdicts anywhere.
     tab from `localhost:5173` (vite proxies `/api/*` to the deployed function).
 - **Candidate Check dialog** (`CandidateCheckDialog.jsx`): a modal (same pattern
   as `AddActivityDialog` / `ImportCsvDialog`), opened from a new **"Check"** button
-  in the InvestTab header action row (beside Import / Activity); a secondary entry
-  point is a "+ add" affordance on the equity rows that opens it pre-filled. Type a ticker →
-  1. fetch its holdings (ETF → EDGAR look-through; stock → itself at 100%);
-  2. **overlap** vs the user's combined portfolio ("68% already owned via VOO + AAPL/MSFT/NVDA");
-  3. **concentration delta** — recompute HHI/sector with the hypothetical add
-     ("tech 72% → 81%");
-  4. **market factors** (data relay, Finnhub): 52-week position, analyst
-     recommendation trend, valuation vs sector — facts only;
-  5. **"Worth it?" rule-check** — transparent flags from `settings.candidateRules`
-     showing *which checks fired and why* (e.g. "3 of 5 flag caution: high overlap,
-     over your 80% tech cap, near 52-wk high ✓ analyst trend improving ✓ valuation
-     in-line"). The user owns every threshold; the dialog renders no verdict.
+  in the InvestTab header action row; because it is *read-only analysis* the button
+  shows even in view-only mode (unlike Import / Activity). A secondary entry point is a
+  per-row **check** affordance on the equity rows that opens it pre-filled. Type a ticker
+  (+ optional hypothetical add amount) →
+  1. fetch its holdings (ETF → EDGAR look-through via `investApi.fetchEtfHoldings`,
+     cache-first; stock → itself at 100%), reconciled into the user's identity space via
+     the CUSIP↔ticker map above;
+  2. **overlap** vs the user's combined look-through portfolio (`aggregatePortfolio` +
+     `computeOverlap`) — overlap % + top shared names;
+  3. **concentration delta** — `concentration(current)` vs `concentration(current +
+     candidate)` (effective-N before → after) plus the single-name % (`concentrationAfterBuy`);
+     needs the amount, else overlap + current concentration only;
+  4. **market factors** (data relay, Finnhub via the `metric` / `recommendation` / `quote`
+     kinds): 52-week position, analyst recommendation trend, P/E + beta — facts only. There
+     is **no free sector P/E baseline**, so the P/E is shown with a neutral label, never a
+     fabricated "vs sector" number;
+  5. **"Worth it?" rule-check** — `investInsights.evaluateCandidate`, transparent flags from
+     `settings.preBuyThresholds` showing *which checks fired and why* (high overlap >
+     `overlapPct`, single-name > `concentrationPct`, diversification narrows (effective-N
+     drops), near 52-wk high within `near52wkPct`, analyst trend). Each flag has an icon +
+     text (caution = amber, pass = teal — never colour alone); it ends with an explicit
+     "you set every threshold; no verdict" line. **Sector cap (`sectorCapPct`) is deferred**:
+     a true sector number needs every N-PORT underlying classified by sector, which no free
+     Finnhub endpoint gives cheaply, so the flag is not shown (a `// TODO sector-cap` marks
+     it); the concentration-delta flag is the robust diversification signal instead.
 - **Contribution itemization** (brokerage-only): the flow-through already routes a
   vendor-matched *Investment* expense to an account and, for `type: 'hysa'` (Amex /
   Happen), silently bumps the balance anchor (`investFlowThrough.js:44`). Add the

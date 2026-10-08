@@ -7,10 +7,11 @@
  * by a per-instance 60s cache and maxInstances: 2 — the household's ~10–30
  * symbols polled once a minute per open tab stays far under the limit.
  *
- * POST { symbols: ["VOO", ...], kind?: "quote" | "recommendation" | "profile" }
+ * POST { symbols: ["VOO", ...], kind?: "quote" | "recommendation" | "profile" | "metric" }
  *   → { data: { VOO: {...} | null, ... }, kind }
  * "quote" is normalised to { price, prevClose, dayChangePct, high, low, open, t };
- * recommendation/profile pass Finnhub's shape through (pre-buy check, Phase 2).
+ * recommendation/profile/metric pass Finnhub's shape through (Candidate Check,
+ * Phase 2). "metric" is /stock/metric?metric=all — 52-wk high/low, P/E, beta.
  */
 import { onRequest } from 'firebase-functions/v2/https';
 import { ALLOWED_EMAILS, FINNHUB_API_KEY } from './lib/secrets.mjs';
@@ -23,11 +24,13 @@ const KINDS = {
   quote:          (s) => `https://finnhub.io/api/v1/quote?symbol=${s}`,
   recommendation: (s) => `https://finnhub.io/api/v1/stock/recommendation?symbol=${s}`,
   profile:        (s) => `https://finnhub.io/api/v1/stock/profile2?symbol=${s}`,
+  metric:         (s) => `https://finnhub.io/api/v1/stock/metric?symbol=${s}&metric=all`,
 };
 
 // Per-instance cache: `${kind}:${symbol}` → { data, at }. Quotes go stale in
-// 60s; slow-moving kinds keep an hour. Pruned by size to bound memory.
-const CACHE_TTL_MS = { quote: 60_000, recommendation: 60 * 60_000, profile: 24 * 60 * 60_000 };
+// 60s; slow-moving kinds keep an hour+. metric (52-wk/valuation) barely moves
+// intraday → 24h. Pruned by size to bound memory.
+const CACHE_TTL_MS = { quote: 60_000, recommendation: 60 * 60_000, profile: 24 * 60 * 60_000, metric: 24 * 60 * 60_000 };
 const MAX_CACHE = 500;
 const cache = new Map();
 

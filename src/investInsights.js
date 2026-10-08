@@ -17,12 +17,19 @@
 // IDENTITY-KEY PRECEDENCE (documented contract): a holding is keyed by the first
 // available of CUSIP → normalized ticker → normalized name. CUSIP is the most
 // reliable (N-PORT's primary identifier) and matches across ETFs that all report
-// the same security by CUSIP. LIMITATION: without a CUSIP↔ticker lookup table we
-// cannot reconcile a CUSIP-keyed ETF underlying against a ticker-keyed direct
-// stock of the same company — they are treated as distinct keys. This is the
-// same trade-off etfray makes; a mapping table is a future enhancement.
+// the same security by CUSIP.
+//
+// CUSIP↔TICKER RECONCILIATION (PR2): the precedence above still treats a
+// CUSIP-keyed ETF underlying (Apple-in-VOO, C:037833100) as DISTINCT from a
+// ticker-keyed direct stock (T:AAPL), understating overlap/concentration. The
+// reconciliation layer below closes that gap WITHOUT rewriting holdingKey: given
+// a CUSIP→ticker map (built cheaply from the EtfHoldings cache, enriched via the
+// OpenFIGI proxy), `canonicalizeHoldings` rewrites a holding to its ticker when
+// its CUSIP resolves, so holdingKey then keys it on T:<ticker>. aggregatePortfolio
+// accepts the same map; apply it to BOTH sides before computeOverlap/concentration
+// so they share one identity space.
 // ════════════════════════════════════════════════════════════════════════════
-import { valuePortfolio, isEtf } from './investMath.js';
+import { valuePortfolio, isEtf, concentrationAfterBuy } from './investMath.js';
 
 /** Collapse a name to a stable comparison key (uppercase, alnum-only). */
 function normName(name) {
@@ -36,6 +43,57 @@ export function holdingKey(h) {
   const ticker = String(h.ticker || '').trim().toUpperCase();
   if (ticker) return `T:${ticker}`;
   return `N:${normName(h.name)}`;
+}
+
+/** A CUSIP is usable as a map key when non-empty and not an all-zero placeholder. */
+function usableCusip(cusip) {
+  const c = String(cusip || '').trim();
+  return c && !/^0+$/.test(c) ? c : '';
+}
+
+/**
+ * Build a CUSIP→ticker map (the cheap, cache-derived reconciliation tier) from
+ * EtfHoldings rows. N-PORT frequently carries a best-effort ticker alongside the
+ * CUSIP (PR1 stores both), and the megacaps that dominate overlap almost always
+ * do — so this one pass over the cache covers the cases that matter, for free.
+ *
+ * Accepts the holding objects readEtfHoldings returns ({ cusip, ticker }) as well
+ * as raw rows exposing `holdingTicker`. Only rows with BOTH a usable CUSIP and a
+ * ticker contribute; first ticker seen for a CUSIP wins (stable).
+ *
+ * @param {Array} rows  [{ cusip, ticker } | { cusip, holdingTicker }]
+ * @returns {Map<string,string>} usableCusip → UPPERCASE ticker
+ */
+export function buildCusipTickerMap(rows) {
+  const map = new Map();
+  for (const r of rows || []) {
+    const cusip = usableCusip(r?.cusip);
+    if (!cusip || map.has(cusip)) continue;
+    const ticker = String(r?.ticker || r?.holdingTicker || '').trim().toUpperCase();
+    if (ticker) map.set(cusip, ticker);
+  }
+  return map;
+}
+
+/**
+ * Canonicalize one holding against a CUSIP→ticker map: when its CUSIP resolves,
+ * return a copy keyed on the ticker (cusip cleared) so holdingKey yields T:<ticker>
+ * and it collapses onto any directly-held position of the same company. A no-op
+ * when there is no map, no usable CUSIP, or no resolution — PR1 precedence stands.
+ */
+export function canonicalizeHolding(h, cusipTicker) {
+  const cusip = usableCusip(h?.cusip);
+  if (cusipTicker && cusip) {
+    const ticker = cusipTicker.get(cusip);
+    if (ticker) return { ...h, ticker: String(ticker).toUpperCase(), cusip: '' };
+  }
+  return h;
+}
+
+/** Canonicalize a whole holdings set (see canonicalizeHolding). */
+export function canonicalizeHoldings(holdings, cusipTicker) {
+  if (!cusipTicker || cusipTicker.size === 0) return holdings || [];
+  return (holdings || []).map((h) => canonicalizeHolding(h, cusipTicker));
 }
 
 /** Human label for a holding: name → ticker → cusip. */
@@ -143,16 +201,20 @@ export function concentration(holdings) {
  * @param {object} args.quotes              { [symbol]: { price, prevClose } }
  * @param {object} args.etfHoldingsByTicker { [TICKER]: { holdings:[{name,cusip,ticker,weight}] } }
  * @param {Array}  args.extraEtfs           extra symbols to treat as ETFs
+ * @param {Map}    args.cusipTicker         optional CUSIP→ticker map; when given,
+ *                 every underlying is canonicalized so a CUSIP-keyed ETF holding
+ *                 collapses onto a directly-held ticker of the same company.
  * @returns {Array} normalized holdings [{ name, cusip, ticker, weight }] summing ~100,
  *                  ready for computeOverlap / concentration.
  */
-export function aggregatePortfolio({ holdings = [], quotes = {}, etfHoldingsByTicker = {}, extraEtfs = [] } = {}) {
+export function aggregatePortfolio({ holdings = [], quotes = {}, etfHoldingsByTicker = {}, extraEtfs = [], cusipTicker = null } = {}) {
   const { positions, total } = valuePortfolio(holdings, quotes, extraEtfs);
   if (total <= 0) return [];
 
   const byKey = new Map(); // key → { name, cusip, ticker, weight }
-  const add = (h, weight) => {
+  const add = (raw, weight) => {
     if (!(weight > 0)) return;
+    const h = canonicalizeHolding(raw, cusipTicker); // identity-space reconciliation
     const key = holdingKey(h);
     const prev = byKey.get(key);
     if (prev) prev.weight += weight;
@@ -183,4 +245,210 @@ export function aggregatePortfolio({ holdings = [], quotes = {}, etfHoldingsByTi
   const sum = merged.reduce((s, h) => s + h.weight, 0);
   if (sum > 0) for (const h of merged) h.weight = Math.round((h.weight / sum) * 100 * 1e6) / 1e6;
   return merged.sort((x, y) => y.weight - x.weight);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Candidate Check — decision-support engine (PR2). Pure: deterministic flags
+// from the user's own thresholds, NEVER a buy/sell verdict. No LLM anywhere.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Finite number or null (so a missing Finnhub field degrades, never NaN). */
+function num(x) {
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Scale every weight in a holdings set by `factor` (relative weights preserved). */
+function scaleHoldings(holdings, factor) {
+  return (holdings || []).map((h) => ({ ...h, weight: (Number(h.weight) || 0) * factor }));
+}
+
+/**
+ * 52-week position from a Finnhub `metric` payload (metric.all) + current price.
+ * Returns { high, low, nearHighPct, rangePct } or null when the data is absent.
+ * `nearHighPct` is the distance BELOW the 52-wk high (0 = at the high).
+ */
+export function fiftyTwoWeekPosition(metricRaw, price) {
+  const m = metricRaw?.metric || metricRaw || {};
+  const high = num(m['52WeekHigh']);
+  const low = num(m['52WeekLow']);
+  const p = num(price);
+  if (!(high > 0) || !(p > 0)) return null; // a real quote is always > 0
+  const nearHighPct = ((high - p) / high) * 100;
+  const rangePct = (low != null && high > low) ? ((p - low) / (high - low)) * 100 : null;
+  return {
+    high, low,
+    nearHighPct: Math.round(nearHighPct * 100) / 100,
+    rangePct: rangePct == null ? null : Math.max(0, Math.min(100, Math.round(rangePct * 100) / 100)),
+  };
+}
+
+/** Valuation facts from a Finnhub `metric` payload. No fabricated sector baseline. */
+export function valuationFactors(metricRaw) {
+  const m = metricRaw?.metric || metricRaw || {};
+  return {
+    peTTM: num(m.peTTM) ?? num(m.peBasicExclExtraTTM),
+    beta: num(m.beta),
+  };
+}
+
+/**
+ * Analyst snapshot from Finnhub /stock/recommendation (array, newest first).
+ * Returns { counts, trend } where trend ∈ improving|deteriorating|flat|null
+ * (null when fewer than two periods — a single period has no trend).
+ */
+export function analystSnapshot(rec) {
+  const arr = Array.isArray(rec) ? rec.filter(Boolean) : [];
+  if (!arr.length) return { counts: null, trend: null };
+  const score = (r) => (num(r.strongBuy) || 0) * 2 + (num(r.buy) || 0) - (num(r.sell) || 0) - (num(r.strongSell) || 0) * 2;
+  const latest = arr[0];
+  const counts = {
+    strongBuy: num(latest.strongBuy) || 0, buy: num(latest.buy) || 0,
+    hold: num(latest.hold) || 0, sell: num(latest.sell) || 0, strongSell: num(latest.strongSell) || 0,
+    period: String(latest.period || ''),
+  };
+  if (arr.length < 2) return { counts, trend: null };
+  const d = score(latest) - score(arr[1]);
+  return { counts, trend: d > 0 ? 'improving' : d < 0 ? 'deteriorating' : 'flat' };
+}
+
+/**
+ * The transparent "worth it?" rule-check. Each flag reports which check fired and
+ * why, against the user's OWN thresholds. Caution ≠ don't-buy; it's a heads-up.
+ * A flag whose inputs are absent is omitted (graceful on missing data), never
+ * shown as a false pass.
+ *
+ * @returns {{ flags: Array<{id,label,severity}>, cautionCount, passCount }}
+ *          severity ∈ 'caution' | 'pass' | 'neutral'.
+ */
+export function evaluateCandidate({
+  overlap = null, concBefore = null, concAfter = null, posPctAfter = null,
+  near52wkPct = null, analystTrend = null, thresholds = {},
+} = {}) {
+  const t = { overlapPct: 60, concentrationPct: 25, near52wkPct: 5, sectorCapPct: 80, ...(thresholds || {}) };
+  const flags = [];
+  const r1 = (x) => Math.round(x * 10) / 10;
+
+  if (overlap != null) {
+    const caution = overlap > t.overlapPct;
+    flags.push({
+      id: 'overlap',
+      severity: caution ? 'caution' : 'pass',
+      label: caution
+        ? `High overlap — ${r1(overlap)}% already owned, over your ${t.overlapPct}% line`
+        : `Overlap ${r1(overlap)}% — within your ${t.overlapPct}% line`,
+    });
+  }
+  if (posPctAfter != null) {
+    const caution = posPctAfter > t.concentrationPct;
+    flags.push({
+      id: 'position',
+      severity: caution ? 'caution' : 'pass',
+      label: caution
+        ? `This position would be ${r1(posPctAfter)}%, over your ${t.concentrationPct}% single-name cap`
+        : `This position ${r1(posPctAfter)}% — under your ${t.concentrationPct}% single-name cap`,
+    });
+  }
+  if (concBefore?.effectiveN != null && concAfter?.effectiveN != null) {
+    const worse = concAfter.effectiveN < concBefore.effectiveN;
+    flags.push({
+      id: 'concentration',
+      severity: worse ? 'caution' : 'pass',
+      label: worse
+        ? `Diversification narrows — effective holdings ${r1(concBefore.effectiveN)} → ${r1(concAfter.effectiveN)}`
+        : `Diversification holds — effective holdings ${r1(concBefore.effectiveN)} → ${r1(concAfter.effectiveN)}`,
+    });
+  }
+  if (near52wkPct != null) {
+    const caution = near52wkPct <= t.near52wkPct;
+    flags.push({
+      id: 'near52wk',
+      severity: caution ? 'caution' : 'pass',
+      label: caution
+        ? `Near its 52-week high — within ${r1(near52wkPct)}% of the top`
+        : `${r1(near52wkPct)}% below its 52-week high`,
+    });
+  }
+  if (analystTrend) {
+    const severity = analystTrend === 'improving' ? 'pass' : analystTrend === 'deteriorating' ? 'caution' : 'neutral';
+    flags.push({
+      id: 'analyst',
+      severity,
+      label: analystTrend === 'improving' ? 'Analyst sentiment improving'
+        : analystTrend === 'deteriorating' ? 'Analyst sentiment deteriorating'
+          : 'Analyst sentiment flat',
+    });
+  }
+  // TODO sector-cap (thresholds.sectorCapPct): a true sector number needs every
+  // holding classified by sector — profile2 gives finnhubIndustry per stock but
+  // nothing cheap for N-PORT underlyings. Deferred; the concentration-delta flag
+  // above is the robust, always-available diversification signal. A misleading
+  // sector % would be worse than none.
+
+  const cautionCount = flags.filter((f) => f.severity === 'caution').length;
+  const passCount = flags.filter((f) => f.severity === 'pass').length;
+  return { flags, cautionCount, passCount };
+}
+
+/**
+ * Assemble the full Candidate Check briefing from already-fetched data. Pure, so
+ * it is unit-tested directly and the dialog stays a thin renderer. Tolerates
+ * missing market fields (any of market.quote/metric/recommendation may be absent).
+ *
+ * @param {object} args
+ * @param {string} args.candidateTicker
+ * @param {Array}  args.candidateHoldings   the candidate's holdings ({name,cusip,ticker,weight});
+ *                                           a stock is [{ ticker, name, weight: 100 }]
+ * @param {boolean} args.isEtfCandidate
+ * @param {Array}  args.aggPortfolio         user's look-through set (aggregatePortfolio output)
+ * @param {Array}  args.positions            valuePortfolio positions (for single-name %)
+ * @param {number} args.portfolioTotal
+ * @param {number} args.amount               hypothetical $ to add (0 = overlap + current conc only)
+ * @param {Map}    args.cusipTicker          CUSIP→ticker reconciliation map
+ * @param {object} args.market               { quote, metric, recommendation } (any may be null)
+ * @param {object} args.thresholds           settings.preBuyThresholds
+ */
+export function buildCandidateReport({
+  candidateTicker, candidateHoldings = [], isEtfCandidate = false,
+  aggPortfolio = [], positions = [], portfolioTotal = 0,
+  amount = 0, cusipTicker = null, market = {}, thresholds = {},
+} = {}) {
+  const cand = canonicalizeHoldings(candidateHoldings, cusipTicker);
+  const overlap = computeOverlap(cand, aggPortfolio);
+  const concBefore = concentration(aggPortfolio);
+
+  const amt = num(amount) > 0 ? Number(amount) : 0;
+  let concAfter = null, posPctAfter = null;
+  if (amt > 0 && portfolioTotal > 0) {
+    const fAgg = portfolioTotal / (portfolioTotal + amt);
+    const fCand = amt / (portfolioTotal + amt);
+    const combined = [...scaleHoldings(aggPortfolio, fAgg), ...scaleHoldings(cand, fCand)];
+    concAfter = concentration(combined);
+    posPctAfter = concentrationAfterBuy(positions, portfolioTotal, candidateTicker, amt).after;
+  }
+
+  const price = num(market?.quote?.price ?? market?.quote?.c);
+  const pos52 = fiftyTwoWeekPosition(market?.metric, price);
+  const valuation = valuationFactors(market?.metric);
+  const analyst = analystSnapshot(market?.recommendation);
+
+  const evaluation = evaluateCandidate({
+    overlap: overlap.overlapPct,
+    concBefore, concAfter, posPctAfter,
+    near52wkPct: pos52?.nearHighPct ?? null,
+    analystTrend: analyst.trend,
+    thresholds,
+  });
+
+  return {
+    ticker: String(candidateTicker || '').toUpperCase(),
+    isEtf: !!isEtfCandidate,
+    amount: amt,
+    overlap,
+    concBefore,
+    concAfter,
+    posPctAfter,
+    factors: { price, pos52, valuation, analyst },
+    evaluation,
+  };
 }

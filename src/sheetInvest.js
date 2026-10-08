@@ -15,6 +15,9 @@
 //   EtfHoldings — ticker | asOf | cusip | name | holdingTicker | weight
 //                 (flat EDGAR N-PORT look-through cache; append-only, recency-wins
 //                  by asOf per ticker; refreshed quarterly via /api/etf-holdings)
+//   CusipMap    — cusip | ticker | source   (CUSIP↔ticker reconciliation cache;
+//                 source: cache|openfigi; append-only, first-seen-wins per cusip —
+//                 so a CUSIP is resolved at most once across Candidate Check runs)
 //   RateHistory — accountId | apy | effectiveDate | source   (source: manual|rate-watch)
 // ════════════════════════════════════════════════════════════════════════════
 import { apiFetch } from './sheetApi.js';
@@ -29,6 +32,10 @@ export const INVEST_TABS = {
   Snapshots:   ['date', 'accountId', 'balance'],
   RateWatch:   ['scanDate', 'bestBank', 'bestApy', 'yourBestApy', 'delta', 'detailsJson'],
   EtfHoldings: ['ticker', 'asOf', 'cusip', 'name', 'holdingTicker', 'weight'],
+  // CUSIP↔ticker reconciliation cache (Candidate Check). Lets a CUSIP-keyed ETF
+  // underlying collapse onto a ticker-keyed direct stock. Append-only, first-seen
+  // wins per cusip (a resolved mapping is immutable), so resolution happens once.
+  CusipMap: ['cusip', 'ticker', 'source'],
   // HYSA APY is variable: every change is appended here with its effective date
   // (the old rate still governs interest accrued before it). source records how
   // the change got in — a manual gauge edit, or a confirmed rate-watch finding.
@@ -464,6 +471,64 @@ export async function readEtfHoldings(sheetId, accessToken, ticker) {
       weight: Number(r[5]) || 0,
     }));
   return { ticker: sym, asOf: latestAsOf, source: 'cache', holdings };
+}
+
+// ── CUSIP↔ticker reconciliation cache ───────────────────────────────────────
+// Durable store for resolved CUSIP→ticker mappings (cache-derived or OpenFIGI),
+// so Candidate Check never re-resolves a CUSIP. Append-only; readCusipMap keeps
+// the first-seen ticker per cusip (resolutions are immutable).
+
+/**
+ * Read the whole CusipMap as a plain object { cusip: ticker } (first-seen wins).
+ * Rows with an empty/placeholder ticker are skipped. Returns {} when the tab is
+ * empty or absent (tolerated — the caller still has the cache-derived tier).
+ */
+export async function readCusipMap(sheetId, accessToken) {
+  const range = encodeURIComponent("'CusipMap'!A2:C20000");
+  let json;
+  try {
+    json = await apiFetch(sheetId, `/values/${range}?valueRenderOption=UNFORMATTED_VALUE`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch { return {}; }
+  const out = {};
+  for (const r of json.values || []) {
+    const cusip = String(r[0] || '').trim().toUpperCase();
+    const ticker = String(r[1] || '').trim().toUpperCase();
+    if (cusip && ticker && !(cusip in out)) out[cusip] = ticker;
+  }
+  return out;
+}
+
+/**
+ * Append resolved CUSIP→ticker entries. entries: [{ cusip, ticker, source }].
+ * Only entries with both a cusip and a ticker are written. Best-effort: ensures
+ * the tab exists first (self-heals a pre-CusipMap sheet) and never throws into
+ * the caller (a cache-write hiccup must not fail a Candidate Check). Returns the
+ * number of rows appended.
+ */
+export async function writeCusipMap(sheetId, accessToken, entries) {
+  const rows = (entries || [])
+    .map((e) => [
+      String(e.cusip || '').trim().toUpperCase(),
+      String(e.ticker || '').trim().toUpperCase(),
+      String(e.source || 'openfigi'),
+    ])
+    .filter((r) => r[0] && r[1]);
+  if (!rows.length) return 0;
+  try {
+    await ensureInvestTabs(sheetId, accessToken);
+    const range = encodeURIComponent("'CusipMap'!A1");
+    await apiFetch(sheetId, `/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
+      method: 'POST',
+      headers: authJson(accessToken),
+      body: JSON.stringify({ values: rows }),
+    });
+    return rows.length;
+  } catch (e) {
+    console.warn('CusipMap append failed (non-fatal):', e?.message);
+    return 0;
+  }
 }
 
 /**
