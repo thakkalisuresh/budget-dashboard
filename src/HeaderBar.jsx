@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
-import { RefreshCw, AlertCircle, Sun, Moon, ChevronDown, Settings as SettingsIcon, LogOut, Users } from 'lucide-react';
+import { RefreshCw, AlertCircle, Sun, Moon, ChevronDown, Settings as SettingsIcon, LogOut, CreditCard } from 'lucide-react';
 import { ThemePicker } from './ThemePicker.jsx';
 import { StackMark } from './StackMark.jsx';
 
@@ -133,15 +133,15 @@ function UserMenu({ user, signOut, setShowSettings, setShowReconcile, setShowUse
             <SettingsIcon className="w-4 h-4" style={{ color: 'var(--color-text-muted)' }} />
             Settings
           </button>
-          {/* Split lost its BottomNav slot to Invest — mobile reaches it here */}
+          {/* Cards lost its BottomNav slot to Invest — mobile reaches it here */}
           {setActiveTab && (
             <button
-              onClick={() => { setShowUserMenu(false); setActiveTab('split'); }}
+              onClick={() => { setShowUserMenu(false); setActiveTab('cards'); }}
               className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold transition-colors duration-150 hover:bg-[var(--sur-5)] lg:hidden"
               style={{ color: 'var(--color-text)' }}
             >
-              <Users className="w-4 h-4" style={{ color: 'var(--color-text-muted)' }} />
-              Split by person
+              <CreditCard className="w-4 h-4" style={{ color: 'var(--color-text-muted)' }} />
+              Cards
             </button>
           )}
           <div className="h-px" style={{ background: 'var(--sur-8)' }} />
