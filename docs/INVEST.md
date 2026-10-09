@@ -90,6 +90,41 @@ SipPlans are fetched inside the component, the live rate once per page load via
   plans skip the fetch and require manual NAV + units. The BUY's `fxToUsd` is the
   `inrPool` average computed before the append.
 
+### MF section UI (`MfHoldings.jsx`)
+
+Rendered on the Invest tab after the equities/donut, only when an `mf_in` account
+and SipPlans exist. All maths lives in the pure `investMfView.buildMfView`
+(tested in `investMfView.test.js`); the component only draws it.
+
+- **Data:** `useInvestData` also fetches `SipPlans` (returned as `sipPlans`, cached
+  with the rest; `refresh` refetches it). MF holdings are derived from the
+  `mf_in` accounts' activities with `deriveHoldings` (native INR lots), keyed on the
+  plan id, so remapping never orphans history. Plans are valued with
+  `useMfNav(mappedCodes(plans))`; with no mapped plan there are **no network calls**.
+- **Per fund:** units, avg cost, invested, value (units × latest NAV), gain and %,
+  XIRR (BUY/FEE out, SELL/DIVIDEND in, plus today's value; hidden under 30 days of
+  history); grouped by AMC with a subtotal; a total row and the NRO INR cash line.
+  A fund with units but no NAV (unmapped plan, or NAV not yet loaded) is carried at
+  cost with a **COST BASIS** badge; unmapped plans also get **NEEDS MAPPING** and a
+  banner at the top of the section. Total XIRR and gain are withheld while any fund
+  is at cost.
+- **INR/USD toggle** (`settings.mfDisplayCurrency`, default `INR`, read-only users
+  toggle locally without saving). USD view: invested = `mfUsdCostBasis` (each BUY at
+  its stored `fxToUsd`), value = INR value ÷ live INR-per-USD rate, XIRR flows via
+  `activityUsd`. The footnote states the basis and rate; the gain is split into
+  "fund returns" and "INR/USD move" (`fxGain` = INR cost × live rate − USD cost).
+  No live rate ⇒ USD values show `—`, never a guess.
+- **Scheme picker** (`MfSchemePicker.jsx`): debounced `/api/mf-nav` search seeded per
+  plan (never a preselected result), "loading, retrying" on `503 retryable`, shows
+  name / AMC / Direct-Regular / Growth-IDCW / NAV, warns when results hold several
+  sub-plans (SBI Retirement Benefit). Saves via `updateSipPlan` (schemeCode, and
+  the name when "Also rename" is ticked); a re-map shows a confirm step because
+  units and cost stay put and only the NAV source changes. No scheme codes are
+  hardcoded.
+- **Mock mode** (`VITE_DEV_MOCK=true`): `mockData.js` carries an `nro-mf` account,
+  four plans (two mapped, two unmapped), three months of SIPs, NAVs, an FX rate and
+  canned search results; nothing hits `/api/mf-nav` or the sheet.
+
 ## Quotes ($0 by construction)
 
 `/api/quotes` (`functions/quotes.mjs`) proxies Finnhub so the API key never reaches

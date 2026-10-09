@@ -6,7 +6,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
-  ensureInvestSheet, ensureRateHistoryTab, ensureInvestMf, fetchAccounts, fetchActivities, fetchRateWatch,
+  ensureInvestSheet, ensureRateHistoryTab, ensureInvestMf, fetchAccounts, fetchActivities, fetchRateWatch, fetchSipPlans,
 } from './sheetInvest.js';
 import { deriveHoldings, monthlyDeposits } from './investMath.js';
 import { MOCK_INVEST } from './mockData.js';
@@ -15,6 +15,7 @@ const DEV_MOCK = import.meta.env.DEV && import.meta.env.VITE_DEV_MOCK === 'true'
 
 const CACHE_MS = 2 * 60 * 1000;                     // in-memory freshness
 const LOCAL_MAX_AGE_MS = 60 * 60 * 1000;            // SEC-05 convention: 1h cap
+const NO_PLANS = [];
 export const investCache = new Map();               // sheetId → { data, fetchedAt }
 const cacheKey = (sheetId) => `budget_invest_cache_${sheetId}`;
 
@@ -94,13 +95,14 @@ export function useInvestData({ user, settings, updateSettings, settingsLoading 
     (async () => {
       try {
         await upgrade;
-        const [accounts, activities, rateWatch] = await Promise.all([
+        const [accounts, activities, rateWatch, sipPlans] = await Promise.all([
           fetchAccounts(sheetId, user.accessToken),
           fetchActivities(sheetId, user.accessToken),
           fetchRateWatch(sheetId, user.accessToken).catch(() => []),
+          fetchSipPlans(sheetId, user.accessToken).catch(() => []),
         ]);
         if (cancelled) return;
-        const fresh = { accounts, activities, rateWatch };
+        const fresh = { accounts, activities, rateWatch, sipPlans };
         const fetchedAt = Date.now();
         investCache.set(sheetId, { data: fresh, fetchedAt });
         try { localStorage.setItem(cacheKey(sheetId), JSON.stringify({ data: fresh, fetchedAt })); } catch { /* quota */ }
@@ -121,6 +123,7 @@ export function useInvestData({ user, settings, updateSettings, settingsLoading 
   const accounts = data?.accounts || [];
   const activities = data?.activities || [];
   const rateWatch = data?.rateWatch || [];
+  const sipPlans = data?.sipPlans || NO_PLANS;   // absent in caches written before the MF UI shipped
 
   const hysaAccounts = useMemo(() => accounts.filter(a => a.type === 'hysa'), [accounts]);
   const brokerageIds = useMemo(
@@ -142,7 +145,7 @@ export function useInvestData({ user, settings, updateSettings, settingsLoading 
 
   return {
     sheetId, loading, provisioning, error, refresh,
-    accounts, hysaAccounts, activities, holdings, rateWatch,
+    accounts, hysaAccounts, activities, holdings, rateWatch, sipPlans,
     monthlyContribution, isEmpty,
   };
 }

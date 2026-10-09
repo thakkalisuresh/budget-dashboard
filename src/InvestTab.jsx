@@ -11,6 +11,7 @@ import { updateAccount, writeRateWatchDetails } from './sheetInvest.js';
 import { ItemizeContributionDialog } from './ItemizeContributionDialog.jsx';
 import { pendingItemizations } from './investItemize.js';
 import { MfNudges } from './MfNudges.jsx';
+import { MfHoldings } from './MfHoldings.jsx';
 
 // ════════════════════════════════════════════════════════════════════════════
 // InvestTab — the approved hybrid layout: ticker tape → orbital hero →
@@ -23,7 +24,7 @@ export function InvestTab({ user, settings, updateSettings, settingsLoading, cur
   const invest = useInvestData({ user, settings, updateSettings, settingsLoading });
   const {
     sheetId, loading, provisioning, error, refresh,
-    accounts, hysaAccounts, activities, holdings, rateWatch, monthlyContribution, isEmpty,
+    accounts, hysaAccounts, activities, holdings, rateWatch, sipPlans, monthlyContribution, isEmpty,
   } = invest;
 
   const symbols = useMemo(() => holdings.map(h => h.symbol), [holdings]);
@@ -254,6 +255,19 @@ export function InvestTab({ user, settings, updateSettings, settingsLoading, cur
 
       {/* ETF / stock split donut */}
       <InvestSplitDonut portfolio={portfolio} currencySymbol={currencySymbol} />
+
+      {/* Indian mutual funds (INR, NAVs from AMFI) */}
+      <MfHoldings
+        user={user}
+        settings={settings}
+        updateSettings={updateSettings}
+        accounts={accounts}
+        activities={activities}
+        sipPlans={sipPlans}
+        sheetId={sheetId}
+        refresh={refresh}
+        isReadOnly={isReadOnly}
+      />
 
       {/* Dialogs */}
       {editAccount && (
