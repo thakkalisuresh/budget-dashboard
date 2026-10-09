@@ -22,6 +22,9 @@ const PLATFORM_PROVIDED = new Set([
   'NODE_ENV', 'FUNCTION_TARGET', 'FUNCTION_SIGNATURE_TYPE', 'K_SERVICE',
   'K_REVISION', 'PORT', 'GCLOUD_PROJECT', 'GOOGLE_CLOUD_PROJECT',
   'FIREBASE_CONFIG', 'FIREBASE_DEBUG_MODE',
+  // Optional key, read with a '' fallback; supplied (if at all) via functions/.env,
+  // not Secret Manager. Deliberately not a defineString/defineSecret — see secrets.mjs.
+  'OPENFIGI_API_KEY',
 ]);
 
 /** Entry-point files: those that actually export an onRequest/onSchedule handler. */

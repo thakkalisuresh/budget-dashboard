@@ -290,7 +290,8 @@ One deterministic module, two surfaces. No LLM verdicts anywhere.
     `aggregatePortfolio` accepts the map and applies it, and the candidate's holdings are
     canonicalized too, so both sides share one identity space before overlap/concentration.
     `OPENFIGI_API_KEY` is **optional** (key-less OpenFIGI works at ~25 req/min, 10 jobs/req;
-    a free key lifts both) — a `defineString` param, not a secret.
+    a free key lifts both) — a plain `process.env` read (set in `functions/.env` to use one), deliberately
+    not a `defineString` param: the CLI aborts non-interactive deploys on a param with no `.env` value.
   - **Descriptive User-Agent (SEC fair-access, non-negotiable)**: SEC EDGAR rejects
     requests without a descriptive `User-Agent` and browsers forbid overriding it, which
     is *why* the fetch lives in a Cloud Function. The UA comes from the **`EDGAR_USER_AGENT`**

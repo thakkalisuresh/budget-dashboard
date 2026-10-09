@@ -82,13 +82,13 @@ export const EDGAR_USER_AGENT = defineString('EDGAR_USER_AGENT', {
 });
 
 // ── Invest tab — OpenFIGI CUSIP↔ticker reconciliation (openfigi function) ───
-// NOT a secret: an OPTIONAL plain string param. OpenFIGI (Bloomberg-run) is free
-// and works WITHOUT a key (~25 req/min, 10 jobs/request); a free key lifts the
-// limit (250 req/min, 100 jobs/request). Leave it empty to run key-less; set a
-// real one via functions/.env or the deploy prompt to raise throughput. The
-// proxy lives server-side so any key stays off the client and the API's header
-// requirements are met (browsers can't set X-OPENFIGI-APIKEY cross-origin).
-export const OPENFIGI_API_KEY = defineString('OPENFIGI_API_KEY', { default: '' });
+// Deliberately NOT declared here. OPENFIGI_API_KEY is an OPTIONAL plain env var
+// read straight from process.env in openfigi.mjs (key-less OpenFIGI works at
+// ~25 req/min; a free key lifts the limit). Declaring it as defineString made
+// every non-interactive `firebase deploy` abort ("no value for the following
+// environment variables") unless it also had a functions/.env entry, because
+// the CLI ignores a param's `default` when it cannot prompt. To use a key, put
+// OPENFIGI_API_KEY=... in functions/.env (deployed with the functions).
 
 /** Secrets needed by any function that touches the Sheets/Drive data layer. */
 export const SHEETS_DRIVE_SECRETS = [
