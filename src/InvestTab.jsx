@@ -244,6 +244,7 @@ export function InvestTab({ user, settings, updateSettings, settingsLoading, cur
         accessToken={user.accessToken}
         accounts={accounts}
         activities={activities}
+        sipPlans={sipPlans}
         settings={settings}
         updateSettings={updateSettings}
         onSaved={refresh}

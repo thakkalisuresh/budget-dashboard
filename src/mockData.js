@@ -113,6 +113,12 @@ export const MOCK_MF_ACTIVITIES = MF_MONTHS.flatMap(([date, fx], m) => [
     amount: 5000, note: '', uuid: `act_mfb${m}${i}`, currency: 'INR', fxToUsd: fx,
   })),
 ]);
+// In-transit USD deposit (this month, no INR_RECEIVED yet) so the "INR received?" nudge,
+// the transfer planner and — with no BUY yet this month — pending SIP cards all render.
+const MOCK_MF_IN_TRANSIT = {
+  date: `${new Date().toISOString().slice(0, 7)}-02`, accountId: 'nro-mf', type: 'DEPOSIT', symbol: '', qty: null, price: null,
+  amount: 250, note: '', uuid: 'act_mfd_transit', currency: 'USD', fxToUsd: 1,
+};
 export const MOCK_SIP_PLANS = [
   { rowIndex: 2, id: 'birla-flexi',        schemeCode: '120564',   mapped: true,  name: 'Aditya Birla Sun Life Flexi Cap Fund - Direct Plan - Growth', amc: 'Aditya Birla Sun Life', amountInr: 5000, day: null, accountId: 'nro-mf', active: true },
   { rowIndex: 3, id: 'birla-conglomerate', schemeCode: 'unmapped', mapped: false, name: 'Birla Conglomerate Fund',   amc: 'Aditya Birla Sun Life', amountInr: 5000, day: null, accountId: 'nro-mf', active: true },
@@ -157,6 +163,7 @@ export const MOCK_INVEST = {
     { rowIndex: 10, date: '2026-07-01', accountId: 'amex-hysa',  type: 'DEPOSIT',  symbol: '', qty: null, price: null, amount: 1000, note: '', uuid: 'act_m9' },
     { rowIndex: 11, date: '2026-07-01', accountId: 'happen-hysa', type: 'INTEREST', symbol: '', qty: null, price: null, amount: 151.25, note: '', uuid: 'act_m10' },
     ...MOCK_MF_ACTIVITIES,
+    MOCK_MF_IN_TRANSIT,
   ],
   sipPlans: MOCK_SIP_PLANS,
   rateWatch: [

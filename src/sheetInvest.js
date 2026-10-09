@@ -23,11 +23,37 @@
 //                 so a CUSIP is resolved at most once across Candidate Check runs)
 //   RateHistory — accountId | apy | effectiveDate | source   (source: manual|rate-watch)
 // ════════════════════════════════════════════════════════════════════════════
-import { apiFetch } from './sheetApi.js';
+import { apiFetch as rawApiFetch } from './sheetApi.js';
 import { safeText, colLetter } from './sheetHelpers.js';
 import { shareSheetWithUsers } from './useMonths.js';
 import { requestDriveToken } from './driveAuth.js';
 import { FDIC_MAX } from './investMath.js';
+
+// ── 429 backoff (Invest tab only) ────────────────────────────────────────────
+// Sheets' per-minute quota can trip on the first-load burst. sheetApi.apiFetch maps
+// a 429 to SHT-001 "Too many requests" (it drops the headers, so Retry-After is not
+// visible here); retry those with a growing wait, then rethrow the same error so the
+// UI's "Try again" path is unchanged. 429s are rejected before processing, so
+// retrying writes is safe too. Other tabs keep the global, non-retrying behaviour.
+export const RETRY_429_DELAYS_MS = [1000, 3000, 9000]; // ≈13s total
+const defaultSleep = (ms) => new Promise(r => setTimeout(r, ms));
+let retrySleep = defaultSleep;
+export function setRetrySleepForTests(fn) { retrySleep = fn || defaultSleep; }
+
+const isRateLimited = (e) => e?.code === 'SHT-001' && /too many requests/i.test(e.message || '');
+
+export async function withRetry429(fn, { sleep = retrySleep, delays = RETRY_429_DELAYS_MS } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (!isRateLimited(e) || attempt >= delays.length) throw e;
+      await sleep(delays[attempt]);
+    }
+  }
+}
+
+const apiFetch = (sheetId, path, options) => withRetry429(() => rawApiFetch(sheetId, path, options));
 
 export const INVEST_TABS = {
   Accounts:    ['id', 'name', 'type', 'institution', 'apy', 'balance', 'balanceAsOf', 'goal', 'currency'],

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Landmark, CalendarClock, ArrowRightLeft, AlertTriangle, X, RefreshCw } from 'lucide-react';
 import { Sheet, Field, ErrorNote, SaveButton, inputCls, inputStyle } from './InvestDialogs.jsx';
-import { fetchSipPlans, appendActivities } from './sheetInvest.js';
+import { appendActivities } from './sheetInvest.js';
 import { investCache } from './useInvestData.js';
 import { fetchMfHistory, fetchInrPerUsd } from './mfNavApi.js';
+import { MOCK_MF_NAV } from './mockData.js';
 import {
   MF_ACCOUNT_ID, DEFAULT_BUFFER_PCT, FX_WARN_PCT, impliedFx, fxDeviationPct, pendingInrReceipts, pendingSips,
   planTransfer, cashLowCheck, sipUnits, sipKey, buildInrReceived, buildSipBuy,
@@ -33,34 +34,24 @@ const cardStyle = { border: '1px solid var(--color-accent-border)', borderRadius
 const eyebrow = { fontSize: 10, fontWeight: 800, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--color-accent-text)' };
 const rowBtn = { background: 'var(--sur-5)', border: '1px solid var(--sur-10)' };
 
+const NO_PLANS = [];
+const DEV_MOCK = import.meta.env.DEV && import.meta.env.VITE_DEV_MOCK === 'true';
+
 // Session-level live-rate cache: one /api/mf-nav fx call per page load.
 let liveRatePromise = null;
 
-export function MfNudges({ sheetId, accessToken, accounts, activities, settings, updateSettings, onSaved, isReadOnly }) {
+export function MfNudges({ sheetId, accessToken, accounts, activities, sipPlans: plans = NO_PLANS, settings, updateSettings, onSaved, isReadOnly }) {
   const mfAccount = accounts.find(a => a.type === 'mf_in');
   const accountId = mfAccount?.id || MF_ACCOUNT_ID;
-  const [plans, setPlans] = useState([]);
   const [rate, setRate] = useState(null); // INR per 1 USD, null = unavailable
   const [showDismissed, setShowDismissed] = useState(false);
   const [inrTarget, setInrTarget] = useState(null);
   const [sipTarget, setSipTarget] = useState(null);
 
-  // Plans are re-read (not cached for the session): after any activity refresh and
-  // whenever the tab regains focus, so a scheme mapped elsewhere (picker) is picked up.
-  useEffect(() => {
-    if (!mfAccount || !sheetId || !accessToken) return undefined;
-    let cancelled = false;
-    const load = () => fetchSipPlans(sheetId, accessToken).then(p => { if (!cancelled) setPlans(p); }).catch(() => {});
-    load();
-    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVisible); };
-  }, [mfAccount?.id, sheetId, accessToken, activities]); // eslint-disable-line react-hooks/exhaustive-deps
-
   useEffect(() => {
     if (!mfAccount || !accessToken) return undefined;
     let cancelled = false;
-    liveRatePromise ||= fetchInrPerUsd({ accessToken });
+    liveRatePromise ||= DEV_MOCK ? Promise.resolve(MOCK_MF_NAV.fx.rate) : fetchInrPerUsd({ accessToken });
     liveRatePromise.then(r => { if (!cancelled) setRate(r); });
     return () => { cancelled = true; };
   }, [mfAccount?.id, accessToken]); // eslint-disable-line react-hooks/exhaustive-deps

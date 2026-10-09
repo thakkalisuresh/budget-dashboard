@@ -36,8 +36,8 @@ export function useInvestData({ user, settings, updateSettings, settingsLoading 
   const [error, setError] = useState('');
   const [tick, setTick] = useState(0);
   const provisionOnce = useRef(false);
-  const ensuredHistoryFor = useRef(null);
-  const ensuredMfFor = useRef(null);
+  const ensuredFor = useRef({ sheetId: null, promise: null }); // schema self-heal, once per sheet
+  const createdHere = useRef(null);                            // sheetId provisioned by THIS hook this session
 
   const sheetId = DEV_MOCK ? 'mock-invest' : (settings.investSheetId || null);
   const refresh = useCallback(() => setTick(t => t + 1), []);
@@ -49,8 +49,15 @@ export function useInvestData({ user, settings, updateSettings, settingsLoading 
     if (!user?.accessToken) return;
     provisionOnce.current = true;
     setProvisioning(true);
+    // Note the new id as it is persisted: the load effect may run before this
+    // promise resolves, and a freshly created sheet needs no schema self-heal.
+    const trackedUpdate = (u) => {
+      const next = typeof u === 'function' ? u({}) : u;
+      if (next?.investSheetId) createdHere.current = next.investSheetId;
+      return updateSettings(u);
+    };
     ensureInvestSheet({
-      settings, updateSettings,
+      settings, updateSettings: trackedUpdate,
       accessToken: user.accessToken,
       allowedEmails: user.allowedEmails || [],
     })
@@ -65,21 +72,6 @@ export function useInvestData({ user, settings, updateSettings, settingsLoading 
     if (!sheetId || !user?.accessToken) return;
     let cancelled = false;
 
-    // Self-heal sheets provisioned before RateHistory shipped: idempotent, once
-    // per sheet per session, fire-and-forget (a missing tab must not block load).
-    if (ensuredHistoryFor.current !== sheetId) {
-      ensuredHistoryFor.current = sheetId;
-      ensureRateHistoryTab(sheetId, user.accessToken).catch(() => {});
-    }
-
-    // Upgrade older sheets to the Indian-MF schema (tabs, columns, seed rows)
-    // BEFORE the first fetch so the new ranges resolve; failure is non-fatal.
-    const upgrade = ensuredMfFor.current === sheetId
-      ? Promise.resolve()
-      : ensureInvestMf(sheetId, user.accessToken)
-          .then(() => { ensuredMfFor.current = sheetId; })
-          .catch(e => console.warn('MF schema upgrade failed (non-fatal):', e?.message));
-
     const mem = investCache.get(sheetId);
     if (mem && Date.now() - mem.fetchedAt < CACHE_MS && tick === 0) {
       setData(mem.data);
@@ -92,15 +84,34 @@ export function useInvestData({ user, settings, updateSettings, settingsLoading 
       setLoading(false);
     }
 
+    // Self-heal older sheets, idempotent and once per sheet per session: the
+    // RateHistory tab first, then the Indian-MF schema (tabs, columns, seed rows)
+    // BEFORE the first fetch so the new ranges resolve. Failures are non-fatal.
+    // A sheet created by this hook already has all of it (createInvestSheet), so skip.
+    const selfHeal = () => {
+      if (createdHere.current === sheetId) return Promise.resolve();
+      if (ensuredFor.current.sheetId !== sheetId) {
+        const promise = (async () => {
+          try { await ensureRateHistoryTab(sheetId, user.accessToken); } catch { /* missing tab must not block load */ }
+          try { await ensureInvestMf(sheetId, user.accessToken); }
+          catch (e) {
+            console.warn('MF schema upgrade failed (non-fatal):', e?.message);
+            ensuredFor.current = { sheetId: null, promise: null }; // retry on the next load
+          }
+        })();
+        ensuredFor.current = { sheetId, promise };
+      }
+      return ensuredFor.current.promise;
+    };
+
     (async () => {
       try {
-        await upgrade;
-        const [accounts, activities, rateWatch, sipPlans] = await Promise.all([
-          fetchAccounts(sheetId, user.accessToken),
-          fetchActivities(sheetId, user.accessToken),
-          fetchRateWatch(sheetId, user.accessToken).catch(() => []),
-          fetchSipPlans(sheetId, user.accessToken).catch(() => []),
-        ]);
+        await selfHeal();
+        // Sequential on purpose: the first-load burst is what trips Sheets' per-minute quota.
+        const accounts = await fetchAccounts(sheetId, user.accessToken);
+        const activities = await fetchActivities(sheetId, user.accessToken);
+        const rateWatch = await fetchRateWatch(sheetId, user.accessToken).catch(() => []);
+        const sipPlans = await fetchSipPlans(sheetId, user.accessToken).catch(() => []);
         if (cancelled) return;
         const fresh = { accounts, activities, rateWatch, sipPlans };
         const fetchedAt = Date.now();

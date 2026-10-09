@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   createInvestSheet, ensureInvestSheet, fetchAccounts, updateAccount,
   appendActivity, appendActivities, fetchActivities, fetchRateWatch,
@@ -8,6 +8,7 @@ import {
   readCusipMap, writeCusipMap,
   ACTIVITY_TYPES, MANUAL_ACTIVITY_TYPES, ensureInvestColumns, ensureInvestMf,
   fetchSipPlans, appendSipPlan, updateSipPlan, SEED_SIP_PLANS,
+  withRetry429, setRetrySleepForTests, RETRY_429_DELAYS_MS,
 } from '../sheetInvest.js';
 
 // Route-based fetch mock: each entry is [urlSubstring+method matcher, response]
@@ -569,5 +570,48 @@ describe('ensureInvestMf', () => {
     routes.push({ match: "'SipPlans'!A2%3AH50", json: { values: [['birla-flexi', 'unmapped', 'B', 'A', 5000, '', 'nro-mf', true]] } });
     await ensureInvestMf('inv', 'tok');
     expect(calls.filter(c => c.url.includes(':append') || c.method === 'PUT')).toHaveLength(0);
+  });
+});
+
+describe('429 backoff (Invest reads)', () => {
+  const waits = [];
+  beforeEach(() => {
+    waits.length = 0;
+    setRetrySleepForTests(async (ms) => { waits.push(ms); });
+  });
+  afterEach(() => setRetrySleepForTests(null));
+
+  it('retries a 429 with growing waits and then succeeds', async () => {
+    let n = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      n++;
+      if (n <= 2) return { ok: false, status: 429, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ values: [['nro-mf', 'India MF (NRO)', 'mf_in']] }) };
+    }));
+    const accounts = await fetchAccounts('s1', 'tok');
+    expect(accounts[0].id).toBe('nro-mf');
+    expect(n).toBe(3);
+    expect(waits).toEqual([1000, 3000]);
+  });
+
+  it('gives up after the last delay and rethrows SHT-001', async () => {
+    const f = vi.fn(async () => ({ ok: false, status: 429, json: async () => ({}) }));
+    vi.stubGlobal('fetch', f);
+    await expect(fetchSipPlans('s1', 'tok')).rejects.toMatchObject({ code: 'SHT-001' });
+    expect(f).toHaveBeenCalledTimes(RETRY_429_DELAYS_MS.length + 1);
+    expect(waits).toEqual(RETRY_429_DELAYS_MS);
+  });
+
+  it('does not retry other errors', async () => {
+    const f = vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) }));
+    vi.stubGlobal('fetch', f);
+    await expect(fetchAccounts('s1', 'tok')).rejects.toMatchObject({ code: 'SHT-001' });
+    expect(f).toHaveBeenCalledTimes(1);
+    expect(waits).toEqual([]);
+  });
+
+  it('withRetry429 passes through non-rate-limit errors untouched', async () => {
+    const err = Object.assign(new Error('nope'), { code: 'AUTH-005' });
+    await expect(withRetry429(async () => { throw err; }, { sleep: async () => {} })).rejects.toBe(err);
   });
 });

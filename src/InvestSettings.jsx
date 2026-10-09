@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { TrendingUp, Plus, Pencil, Trash2, Check, ExternalLink } from 'lucide-react';
 import { newRuleId } from './smartRules.js';
+import { investCache } from './useInvestData.js';
+import { buildAccountOptions } from './investAccountOptions.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // InvestSettingsSection — the "Investing" block inside SettingsPanel.
@@ -9,11 +11,16 @@ import { newRuleId } from './smartRules.js';
 // pre-buy flag thresholds, extra ETF symbols, and a link to the sheet.
 // ════════════════════════════════════════════════════════════════════════════
 
-const ACCOUNT_OPTIONS = [
-  ['fidelity', 'Fidelity'],
-  ['amex-hysa', 'Amex Savings'],
-  ['happen-hysa', 'Happen Bank'],
-];
+// Real Invest accounts come from the Invest tab's cache (no extra fetch); until it
+// has been loaded this session the options fall back to the default list.
+function cachedAccounts(sheetId) {
+  if (!sheetId) return null;
+  const mem = investCache.get(sheetId)?.data?.accounts;
+  if (mem?.length) return mem;
+  try {
+    return JSON.parse(localStorage.getItem(`budget_invest_cache_${sheetId}`))?.data?.accounts || null;
+  } catch { return null; }
+}
 
 const inputCls = 'rounded-xl px-3 py-1.5 text-xs outline-none w-full';
 const inputStyle = { background: 'var(--sur-5)', border: '1px solid var(--sur-12)', color: 'var(--color-text)' };
@@ -28,6 +35,7 @@ function SectionLabel({ children }) {
 
 export function InvestSettingsSection({ settings, updateSettings }) {
   const rules = settings.investAccountRules || [];
+  const ACCOUNT_OPTIONS = buildAccountOptions(cachedAccounts(settings.investSheetId), rules);
   const thresholds = settings.preBuyThresholds || { concentrationPct: 25, near52wkPct: 5 };
 
   const [adding, setAdding] = useState(false);
