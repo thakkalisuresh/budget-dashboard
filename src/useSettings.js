@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
+import { createSettingsController } from './settingsController.js';
 import { DEFAULT_CARD_OWNERS, DEFAULT_PEOPLE } from './cardOwners.js';
 import { DEFAULT_SPLIT_VENDORS } from './itemCategorizer.js';
 
@@ -100,34 +101,43 @@ export const DEFAULT_SETTINGS = {
 
 // ─── Sheets helpers ───────────────────────────────────────────────────────────
 
-async function sheetsGet(path, accessToken) {
+// Every helper throws on a failed response. A throttled/failed read must never be
+// mistaken for "no data" (that made load return defaults and save append rows).
+class SheetsError extends Error {
+  constructor(status, message) { super(message || `Sheets request failed (${status})`); this.status = status; }
+}
+
+async function sheetsFetch(path, accessToken, init = {}) {
   const res = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${TEMPLATE_ID}${path}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
-  );
-  return res.json();
-}
-
-async function sheetsPut(path, body, accessToken) {
-  await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${TEMPLATE_ID}${path}`,
     {
-      method: 'PUT',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      ...init,
+      headers: { Authorization: `Bearer ${accessToken}`, ...(init.body ? { 'Content-Type': 'application/json' } : {}) },
     }
   );
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json?.error) {
+    throw new SheetsError(res.status ?? json?.error?.code, json?.error?.message);
+  }
+  return json;
 }
 
-async function sheetsPost(path, body, accessToken) {
-  await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${TEMPLATE_ID}${path}`,
-    {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+const sheetsGet  = (path, accessToken) => sheetsFetch(path, accessToken);
+const sheetsPut  = (path, body, accessToken) => sheetsFetch(path, accessToken, { method: 'PUT', body: JSON.stringify(body) });
+const sheetsPost = (path, body, accessToken) => sheetsFetch(path, accessToken, { method: 'POST', body: JSON.stringify(body) });
+
+// Transient = worth retrying: throttled, server-side, or the network itself failed.
+const isTransient = (e) => !(e instanceof SheetsError) || e.status === 429 || e.status >= 500;
+const LOAD_RETRY_DELAYS = [500, 1500, 3000];
+
+async function withRetry(fn, delays) {
+  for (let i = 0; ; i++) {
+    try { return await fn(); }
+    catch (e) {
+      if (i >= delays.length || !isTransient(e)) throw e;
+      await new Promise(r => setTimeout(r, delays[i]));
     }
-  );
+  }
 }
 
 // ─── Ensure the UserSettings tab exists ───────────────────────────────────────
@@ -159,8 +169,14 @@ async function fetchRows(accessToken) {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-export async function loadUserSettings(userId, accessToken) {
-  try {
+// Resolves to defaults only when there is genuinely no stored row. Any failure
+// (after retrying transient ones) rejects so callers can refuse to save.
+export function loadUserSettings(userId, accessToken, { delays = LOAD_RETRY_DELAYS } = {}) {
+  return withRetry(() => loadOnce(userId, accessToken), delays);
+}
+
+async function loadOnce(userId, accessToken) {
+  {
     await ensureSettingsSheet(accessToken);
     const rows = await fetchRows(accessToken);
     const row = rows.find(r => r[0] === userId);
@@ -223,73 +239,70 @@ export async function loadUserSettings(userId, accessToken) {
       localStorage.setItem('budget_custom_categories', JSON.stringify(customMap));
     } catch {}
     return merged;
-  } catch {
-    return { ...DEFAULT_SETTINGS, visibility: { ...DEFAULT_SETTINGS.visibility } };
   }
 }
 
 export async function saveUserSettings(userId, settings, accessToken) {
-  try {
-    await ensureSettingsSheet(accessToken);
-    const rows = await fetchRows(accessToken);
-    const rowIndex = rows.findIndex(r => r[0] === userId);
-    const json = JSON.stringify(settings);
+  await ensureSettingsSheet(accessToken);
+  const rows = await fetchRows(accessToken); // throws on failure: never append on a failed read
+  const rowIndex = rows.findIndex(r => r[0] === userId);
+  const json = JSON.stringify(settings);
 
-    if (rowIndex >= 0) {
-      const range = encodeURIComponent(`'${SETTINGS_SHEET}'!A${rowIndex + 1}:B${rowIndex + 1}`);
-      await sheetsPut(`/values/${range}?valueInputOption=RAW`, {
-        values: [[userId, json]],
-      }, accessToken);
-    } else {
-      const range = encodeURIComponent(`'${SETTINGS_SHEET}'!A:B`);
-      await sheetsPost(
-        `/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
-        { values: [[userId, json]] },
-        accessToken
-      );
-    }
-    if (settings.hasSeenOnboarding) {
-      try { localStorage.setItem('budget_onboarding_done', 'true'); } catch {}
-    }
-  } catch (e) {
-    console.error('saveUserSettings:', e);
+  if (rowIndex >= 0) {
+    const range = encodeURIComponent(`'${SETTINGS_SHEET}'!A${rowIndex + 1}:B${rowIndex + 1}`);
+    await sheetsPut(`/values/${range}?valueInputOption=RAW`, {
+      values: [[userId, json]],
+    }, accessToken);
+  } else {
+    const range = encodeURIComponent(`'${SETTINGS_SHEET}'!A:B`);
+    await sheetsPost(
+      `/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+      { values: [[userId, json]] },
+      accessToken
+    );
+  }
+  if (settings.hasSeenOnboarding) {
+    try { localStorage.setItem('budget_onboarding_done', 'true'); } catch {}
   }
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
-export function useSettings(userId, accessToken) {
-  const [settings, setSettings] = useState(() =>
-    DEV_MOCK ? { ...DEFAULT_SETTINGS, hasSeenOnboarding: true } : DEFAULT_SETTINGS
-  );
-  const [loading, setLoading]   = useState(!DEV_MOCK);
-
-  useEffect(() => {
-    if (DEV_MOCK) return;
-    if (!userId || !accessToken) return;
-    loadUserSettings(userId, accessToken).then(s => {
-      setSettings(s);
-      setLoading(false);
+// Keep localStorage in sync so synchronous callers (fetchDetail, dialogs) stay up to date.
+function syncLocalCaches(next) {
+  try {
+    localStorage.setItem('budget_category_icons', JSON.stringify(next.categoryIcons || {}));
+    const customMap = {};
+    (next.customCategories || []).forEach(n => {
+      customMap[n] = { sheet: n, descCol: 2, amtCol: 3, uuidStartCol: 4 };
     });
-  }, [userId, accessToken]);
-
-  const updateSettings = useCallback((updater) => {
-    setSettings(prev => {
-      const next = typeof updater === 'function' ? updater(prev) : { ...prev, ...updater };
-      // Keep localStorage in sync so synchronous callers stay up to date
-      try {
-        localStorage.setItem('budget_category_icons', JSON.stringify(next.categoryIcons || {}));
-        const customMap = {};
-        (next.customCategories || []).forEach(n => {
-          customMap[n] = { sheet: n, descCol: 2, amtCol: 3, uuidStartCol: 4 };
-        });
-        localStorage.setItem('budget_custom_categories', JSON.stringify(customMap));
-      } catch {}
-      if (!DEV_MOCK) saveUserSettings(userId, next, accessToken); // fire-and-forget
-      return next;
-    });
-  }, [userId, accessToken]);
-
-  return { settings, loading, updateSettings };
+    localStorage.setItem('budget_custom_categories', JSON.stringify(customMap));
+  } catch {}
 }
 
+export function useSettings(userId, accessToken) {
+  const tokenRef = useRef(accessToken);
+  tokenRef.current = accessToken;
+
+  const ctrl = useMemo(() => createSettingsController({
+    defaults: DEV_MOCK ? { ...DEFAULT_SETTINGS, hasSeenOnboarding: true } : DEFAULT_SETTINGS,
+    status:   DEV_MOCK ? 'ready' : 'loading',
+    persist:  !DEV_MOCK,
+    load: () => loadUserSettings(userId, tokenRef.current),
+    save: (next) => saveUserSettings(userId, next, tokenRef.current),
+    onApply: syncLocalCaches,
+  }), [userId]);
+
+  const { settings, status, loadError } = useSyncExternalStore(ctrl.subscribe, ctrl.getState);
+
+  useEffect(() => {
+    if (DEV_MOCK || !userId || !accessToken) return;
+    ctrl.start(); // no-op once ready or while a load is in flight
+  }, [ctrl, userId, accessToken]);
+
+  const updateSettings = useCallback((updater) => ctrl.update(updater), [ctrl]);
+
+  // `loading` stays true while the load has failed so Invest provisioning and the
+  // onboarding wizard (both gated on it) can't act on defaults.
+  return { settings, loading: status !== 'ready', loadError, retryLoad: ctrl.retry, updateSettings };
+}

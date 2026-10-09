@@ -143,7 +143,7 @@ function Dashboard({ auth }) {
 
   // Per-user settings (saved to Google Sheets)
   const isReadOnly = user.role === 'viewer';
-  const { settings, loading: settingsLoading, updateSettings } = useSettings(user.email, user.accessToken);
+  const { settings, loading: settingsLoading, loadError: settingsLoadError, retryLoad: retrySettingsLoad, updateSettings } = useSettings(user.email, user.accessToken);
   const currencySymbol = getCurrencySymbol(settings.currency || 'USD');
   const categoryIcons  = { ...DEFAULT_ICONS, ...(settings.categoryIcons || {}) };
   // Stable array references so memoized children (ExpenseTable etc.) can skip re-renders
@@ -375,6 +375,17 @@ function Dashboard({ auth }) {
             {getQueue().length > 0
               ? `You're offline — ${getQueue().length} expense${getQueue().length === 1 ? '' : 's'} pending sync`
               : "You're offline — changes will sync when reconnected"}
+          </div>
+        )}
+
+        {/* Settings failed to load — saving is disabled so defaults can't overwrite the stored row */}
+        {settingsLoadError && (
+          <div
+            className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl"
+            style={{ background: 'oklch(62% 0.22 25 / 10%)', border: '1px solid oklch(62% 0.22 25 / 25%)' }}
+          >
+            <span className="text-sm font-bold" style={{ color: 'var(--color-danger)' }}>Couldn't load your settings. Changes won't be saved.</span>
+            <button onClick={retrySettingsLoad} className="text-sm font-bold underline" style={{ color: 'var(--color-danger)' }}>Retry</button>
           </div>
         )}
 
