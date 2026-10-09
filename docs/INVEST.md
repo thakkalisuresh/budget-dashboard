@@ -36,6 +36,49 @@ If Finnhub's free tier ever degrades: swap the fetcher in `functions/quotes.mjs`
 (single function, normalised shape) — Yahoo's unofficial `query1.finance.yahoo.com`
 chart endpoint or Twelve Data's free tier are drop-in candidates.
 
+## Indian mutual fund NAVs ($0, no keys)
+
+`/api/mf-nav` (`functions/mf-nav.mjs`, data layer `functions/lib/_mf-nav.mjs`) serves
+NAVs for Indian mutual funds. Same auth stack as `/api/quotes`. Sources:
+
+- **Latest NAV + search:** AMFI's official `https://portal.amfiindia.com/spages/NAVAll.txt`
+  (~1.5 MB, ~14k schemes, redirected from `www.amfiindia.com/spages/NAVAll.txt`).
+  Parsed once per instance and cached 6h (`maxInstances: 2`, 512 MiB, 60s timeout).
+  The in-flight download is shared; while the *first* one is running the endpoint
+  answers `503 {retryable:true}`. If a later refresh fails, the previous parse is
+  served with `stale: true`. Parser handles per-category/AMC header lines, blanks,
+  `N.A.` NAVs (→ `null`), blank Plan/Option columns (inferred from the name) and
+  the option text variants (`GROWTH`, `Growth Option`, `IDCW Payout`, …).
+- **Historical NAV:** mfapi.in (`/mf/{code}?startDate&endDate`, free, unofficial).
+  If it is down, AMFI's `DownloadNAVHistoryReport_Po.aspx` report (all schemes, so
+  only used for windows ≤ 7 days). Both down → `502 {retryable:true}`.
+- **FX:** `open.er-api.com` via `getRate('INR')` in `functions/lib/_currency.mjs`
+  (latest only, no historical rate).
+
+`POST /api/mf-nav` with `{ action, ... }`, dates are ISO `YYYY-MM-DD`:
+
+| action | request | response |
+|---|---|---|
+| `latest` | `codes: ["147919", …]` (≤20, numeric), `includeFx?: true` | `{ data: { "147919": { schemeCode, name, amc, plan, option, nav, date } \| null }, stale, fx? }` |
+| `search` | `q` (≤60 chars) | `{ results: [{ code, name, amc, plan, option, nav, date }] (≤50), stale }` |
+| `history` (one date) | `code`, `date` | `{ schemeCode, date, resolvedDate, fellBack, nav, source }` |
+| `history` (range) | `code`, `from`, `to` (≤366 days) | `{ schemeCode, from, to, series: [{ date, nav }], source }` |
+| `fx` | — | `{ fx: { currency: "INR", rate, updatedAt } }` (INR per 1 USD) |
+
+`plan` is `direct`/`regular`/`null`; `option` is `growth`/`idcw`/`other`. Search
+covers open-ended schemes with an inferable plan (others only on an exact name or
+code match) and lists Direct Growth first. `history` returns the NAV for exactly
+`date`, or the previous available one with `resolvedDate` and `fellBack: true`
+(weekends/holidays); `nav: null` if nothing exists in the 10 days before. The server
+applies **no** allotment-day offset — callers decide, and the UI lets the user
+override NAV/units because the real allotment NAV can differ.
+
+The client hook `useMfNav(codes, accessToken)` (`src/useMfNav.js`) fetches `latest`
+with `includeFx` on mount and then every 6h, only while the Invest tab is mounted
+and the app is visible. It ignores empty / `"unmapped"` codes and returns
+`{ navs, fx, stale, lastUpdated, refresh }`; the last response is cached per device
+in `localStorage` (`fundient.mfNav.v1`) — a convenience, not a source of truth.
+
 ## Seeding & imports
 
 - **Fidelity CSV** (`fidelityCsvParser.js`): a *positions* export seeds one opening
