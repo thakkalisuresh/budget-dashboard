@@ -6,6 +6,8 @@ import {
   writeEtfHoldings, readEtfHoldings, quarterKey, currentQuarterKey, isHoldingsFresh,
   appendRateHistory, fetchRateHistory, ensureRateHistoryTab, writeRateWatchDetails,
   readCusipMap, writeCusipMap,
+  ACTIVITY_TYPES, MANUAL_ACTIVITY_TYPES, ensureInvestColumns, ensureInvestMf,
+  fetchSipPlans, appendSipPlan, updateSipPlan, SEED_SIP_PLANS,
 } from '../sheetInvest.js';
 
 // Route-based fetch mock: each entry is [urlSubstring+method matcher, response]
@@ -41,8 +43,16 @@ describe('createInvestSheet', () => {
     const accounts = create.body.sheets.find(s => s.properties.title === 'Accounts');
     const headerCells = accounts.data[0].rowData[0].values.map(v => v.userEnteredValue.stringValue);
     expect(headerCells).toEqual(INVEST_TABS.Accounts);
-    // 3 seed accounts follow the header
-    expect(accounts.data[0].rowData).toHaveLength(4);
+    // 4 seed accounts (incl. the NRO mf_in account) follow the header
+    expect(accounts.data[0].rowData).toHaveLength(5);
+    const nro = accounts.data[0].rowData[4].values.map(v => v.userEnteredValue.stringValue ?? v.userEnteredValue.numberValue);
+    expect(nro[0]).toBe('nro-mf');
+    expect(nro[2]).toBe('mf_in');
+    expect(nro[8]).toBe('INR');
+    // SipPlans tab is created and seeded with the four funds at INR 5000
+    const sip = create.body.sheets.find(s => s.properties.title === 'SipPlans');
+    expect(sip.data[0].rowData).toHaveLength(5);
+    expect(sip.data[0].rowData[1].values[0].userEnteredValue.stringValue).toBe('birla-flexi');
     expect(accounts.data[0].rowData[1].values[0].userEnteredValue.stringValue).toBe('amex-hysa');
     // HYSA goal seeded at 250k
     expect(accounts.data[0].rowData[1].values[7].userEnteredValue.numberValue).toBe(250000);
@@ -77,7 +87,7 @@ describe('ensureInvestSheet', () => {
 describe('fetchAccounts', () => {
   it('parses account rows and skips blanks', async () => {
     routes.push({
-      match: "'Accounts'!A2%3AH50", json: {
+      match: "'Accounts'!A2%3AI50", json: {
         values: [
           ['amex-hysa', 'Amex Savings', 'hysa', 'American Express', 3.7, 28400, '2026-07-01', 250000],
           ['fidelity', 'Fidelity', 'brokerage', 'Fidelity', '', '', '', ''],
@@ -95,7 +105,7 @@ describe('fetchAccounts', () => {
 describe('updateAccount', () => {
   it('writes apy/balance/asOf and snapshots a balance change', async () => {
     routes.push({
-      match: "'Accounts'!A2%3AH50", json: {
+      match: "'Accounts'!A2%3AI50", json: {
         values: [['happen-hysa', 'Happen Bank', 'hysa', 'Happen', 4.4, 41250, '2026-06-01', 250000]],
       },
     });
@@ -111,14 +121,14 @@ describe('updateAccount', () => {
 
   it('throws on unknown account and skips snapshot when balance unchanged', async () => {
     routes.push({
-      match: "'Accounts'!A2%3AH50", json: {
+      match: "'Accounts'!A2%3AI50", json: {
         values: [['amex-hysa', 'Amex', 'hysa', 'Amex', 3.7, 28400, '', 250000]],
       },
     });
     await expect(updateAccount('inv123', 'tok', 'nope', {})).rejects.toThrow('Unknown account');
     mockFetch();
     routes.push({
-      match: "'Accounts'!A2%3AH50", json: {
+      match: "'Accounts'!A2%3AI50", json: {
         values: [['amex-hysa', 'Amex', 'hysa', 'Amex', 3.7, 28400, '', 250000]],
       },
     });
@@ -150,7 +160,7 @@ describe('activities', () => {
 
   it('fetchActivities parses typed rows and skips junk', async () => {
     routes.push({
-      match: "'Activities'!A2%3AI5000", json: {
+      match: "'Activities'!A2%3AK5000", json: {
         values: [
           ['2026-07-02', 'fidelity', 'BUY', 'VOO', 10, 502.11, 5021.1, 'import', 'act_aaa'],
           ['', '', '', '', '', '', '', '', ''],
@@ -164,7 +174,7 @@ describe('activities', () => {
 
   it('deleteActivityByUUID deletes the matching sheet row', async () => {
     routes.push({
-      match: "'Activities'!A2%3AI5000", json: {
+      match: "'Activities'!A2%3AK5000", json: {
         values: [['2026-07-02', 'fidelity', 'BUY', 'VOO', 10, 502.11, 5021.1, '', 'act_kill']],
       },
     });
@@ -226,7 +236,7 @@ function withRateHistoryTab() {
 
 describe('RateHistory on APY change', () => {
   it('appends a manual-source row when the APY changes', async () => {
-    routes.push({ match: "'Accounts'!A2%3AH50", json: {
+    routes.push({ match: "'Accounts'!A2%3AI50", json: {
       values: [['amex-hysa', 'Amex', 'hysa', 'Amex', 3.7, 28400, '', 250000]],
     } });
     withRateHistoryTab();
@@ -238,7 +248,7 @@ describe('RateHistory on APY change', () => {
   });
 
   it('does NOT append RateHistory when only the balance changes', async () => {
-    routes.push({ match: "'Accounts'!A2%3AH50", json: {
+    routes.push({ match: "'Accounts'!A2%3AI50", json: {
       values: [['amex-hysa', 'Amex', 'hysa', 'Amex', 3.7, 28400, '', 250000]],
     } });
     withRateHistoryTab();
@@ -249,7 +259,7 @@ describe('RateHistory on APY change', () => {
   });
 
   it('honours an explicit rate-watch source (the confirmed-finding path)', async () => {
-    routes.push({ match: "'Accounts'!A2%3AH50", json: {
+    routes.push({ match: "'Accounts'!A2%3AI50", json: {
       values: [['amex-hysa', 'Amex', 'hysa', 'Amex', 3.7, 28400, '', 250000]],
     } });
     withRateHistoryTab();
@@ -312,13 +322,14 @@ describe('ensureInvestTabs', () => {
       json: { sheets: ['Accounts', 'Activities', 'Snapshots', 'RateWatch'].map(t => ({ properties: { title: t } })) },
     });
     const added = await ensureInvestTabs('inv123', 'tok');
-    expect(added).toEqual(['EtfHoldings', 'CusipMap', 'RateHistory']);
+    expect(added).toEqual(['EtfHoldings', 'CusipMap', 'RateHistory', 'SipPlans']);
 
     const batch = calls.find(c => c.url.includes(':batchUpdate'));
     expect(batch.body.requests).toEqual([
       { addSheet: { properties: { title: 'EtfHoldings' } } },
       { addSheet: { properties: { title: 'CusipMap' } } },
       { addSheet: { properties: { title: 'RateHistory' } } },
+      { addSheet: { properties: { title: 'SipPlans' } } },
     ]);
     const header = calls.find(c => c.method === 'PUT' && c.url.includes('EtfHoldings'));
     expect(header.body.values[0]).toEqual(INVEST_TABS.EtfHoldings);
@@ -423,5 +434,140 @@ describe('holdings freshness (quarterly)', () => {
     expect(isHoldingsFresh('2026-10-01', now)).toBe(true);
     expect(isHoldingsFresh('2026-07-31', now)).toBe(false); // last quarter → refetch
     expect(isHoldingsFresh('', now)).toBe(false);
+  });
+});
+
+
+describe('mf_in schema', () => {
+  it('adds INR_RECEIVED but keeps it out of the manual-entry list', () => {
+    expect(ACTIVITY_TYPES).toContain('INR_RECEIVED');
+    expect(MANUAL_ACTIVITY_TYPES).not.toContain('INR_RECEIVED');
+    expect(MANUAL_ACTIVITY_TYPES).toContain('BUY');
+  });
+
+  it('tab headers carry the new columns at the right edge', () => {
+    expect(INVEST_TABS.Accounts.slice(-1)).toEqual(['currency']);
+    expect(INVEST_TABS.Activities.slice(-2)).toEqual(['currency', 'fxToUsd']);
+    expect(INVEST_TABS.SipPlans).toEqual(['id', 'schemeCode', 'name', 'amc', 'amountInr', 'day', 'accountId', 'active']);
+  });
+
+  it('fetchAccounts defaults currency (INR for mf_in, USD otherwise)', async () => {
+    routes.push({ match: "'Accounts'!A2%3AI50", json: { values: [
+      ['amex-hysa', 'Amex', 'hysa', 'Amex', 3.7, 100, '', 250000],
+      ['nro-mf', 'NRO', 'mf_in', 'NRO', '', '', '', '', ''],
+      ['x', 'X', 'brokerage', 'F', '', '', '', '', 'USD'],
+    ] } });
+    const a = await fetchAccounts('inv', 'tok');
+    expect(a.map(x => x.currency)).toEqual(['USD', 'INR', 'USD']);
+  });
+
+  it('activities round-trip currency + fxToUsd; legacy rows read USD/1', async () => {
+    await appendActivity('inv', 'tok', {
+      date: '2026-11-03', accountId: 'nro-mf', type: 'INR_RECEIVED', amount: 20000,
+      currency: 'INR', fxToUsd: 0.0115, note: 'settles:act_1',
+    });
+    await appendActivity('inv', 'tok', { accountId: 'amex-hysa', type: 'DEPOSIT', amount: 5 });
+    const rows = calls.filter(c => c.url.includes(':append')).map(c => c.body.values[0]);
+    expect(rows[0]).toHaveLength(11);
+    expect(rows[0][8]).toMatch(/^act_/);
+    expect(rows[0].slice(9)).toEqual(['INR', 0.0115]);
+    expect(rows[1].slice(9)).toEqual(['USD', 1]);
+
+    mockFetch();
+    routes.push({ match: "'Activities'!A2%3AK5000", json: { values: [
+      ['2026-11-03', 'nro-mf', 'INR_RECEIVED', '', '', '', 20000, 'settles:act_1', 'act_2', 'INR', 0.0115],
+      ['2026-07-02', 'fidelity', 'BUY', 'VOO', 10, 500, 5000, '', 'act_3'],
+    ] } });
+    const acts = await fetchActivities('inv', 'tok');
+    expect(acts[0]).toMatchObject({ currency: 'INR', fxToUsd: 0.0115 });
+    expect(acts[1]).toMatchObject({ currency: 'USD', fxToUsd: 1 });
+  });
+});
+
+describe('ensureInvestColumns', () => {
+  it('appends only missing header cells and never touches data rows', async () => {
+    routes.push({ match: 'values:batchGet', json: { valueRanges: [
+      { values: [INVEST_TABS.Accounts.slice(0, 8)] },
+      { values: [INVEST_TABS.Activities.slice(0, 9)] },
+    ] } });
+    const added = await ensureInvestColumns('inv', 'tok');
+    expect(added).toEqual({ Accounts: ['currency'], Activities: ['currency', 'fxToUsd'] });
+    const puts = calls.filter(c => c.method === 'PUT');
+    expect(puts).toHaveLength(2);
+    expect(puts[0].url).toContain(encodeURIComponent("'Accounts'!I1"));
+    expect(puts[0].body.values).toEqual([['currency']]);
+    expect(puts[1].url).toContain(encodeURIComponent("'Activities'!J1"));
+    expect(puts[1].body.values).toEqual([['currency', 'fxToUsd']]);
+  });
+
+  it('is a no-op when headers are complete', async () => {
+    routes.push({ match: 'values:batchGet', json: { valueRanges: [
+      { values: [INVEST_TABS.Accounts] }, { values: [INVEST_TABS.Activities] },
+    ] } });
+    expect(await ensureInvestColumns('inv', 'tok')).toEqual({});
+    expect(calls.filter(c => c.method === 'PUT')).toHaveLength(0);
+  });
+});
+
+describe('SipPlans', () => {
+  it('seeds the four funds at INR 5000, unmapped, no day, active', () => {
+    expect(SEED_SIP_PLANS.map(r => r[0])).toEqual(['birla-flexi', 'birla-conglomerate', 'sbi-retirement', 'iti-small-cap']);
+    for (const r of SEED_SIP_PLANS) {
+      expect(r[1]).toBe('unmapped'); expect(r[4]).toBe(5000); expect(r[5]).toBe('');
+      expect(r[6]).toBe('nro-mf'); expect(r[7]).toBe(true);
+    }
+    expect(SEED_SIP_PLANS.map(r => r[3])).toEqual(['Aditya Birla Sun Life', 'Aditya Birla Sun Life', 'SBI', 'ITI']);
+  });
+
+  it('fetchSipPlans parses rows, optional day, active flag, unmapped', async () => {
+    routes.push({ match: "'SipPlans'!A2%3AH50", json: { values: [
+      ['birla-flexi', 'unmapped', 'Birla Flexi Cap Fund', 'Aditya Birla Sun Life', 5000, '', 'nro-mf', true],
+      ['sbi-retirement', '119775', 'SBI Retirement Fund', 'SBI', 5000, 7, 'nro-mf', 'FALSE'],
+      [],
+    ] } });
+    const plans = await fetchSipPlans('inv', 'tok');
+    expect(plans).toHaveLength(2);
+    expect(plans[0]).toMatchObject({ id: 'birla-flexi', schemeCode: 'unmapped', mapped: false, day: null, active: true, rowIndex: 2 });
+    expect(plans[1]).toMatchObject({ mapped: true, day: 7, active: false, amountInr: 5000, rowIndex: 3 });
+  });
+
+  it('appendSipPlan writes a RAW row', async () => {
+    await appendSipPlan('inv', 'tok', { id: 'p1', name: 'P1', amc: 'X', amountInr: 1000, accountId: 'nro-mf' });
+    const ap = calls.find(c => c.url.includes('SipPlans') && c.url.includes(':append'));
+    expect(ap.body.values[0]).toEqual(['p1', 'unmapped', 'P1', 'X', 1000, '', 'nro-mf', true]);
+  });
+
+  it('updateSipPlan rewrites the row in place, merging fields', async () => {
+    routes.push({ match: "'SipPlans'!A2%3AH50", json: { values: [
+      ['birla-flexi', 'unmapped', 'Birla Flexi Cap Fund', 'ABSL', 5000, '', 'nro-mf', true],
+    ] } });
+    await updateSipPlan('inv', 'tok', 'birla-flexi', { schemeCode: '120', day: 5, active: false });
+    const put = calls.find(c => c.method === 'PUT' && c.url.includes(encodeURIComponent("'SipPlans'!A2:H2")));
+    expect(put.body.values[0]).toEqual(['birla-flexi', '120', 'Birla Flexi Cap Fund', 'ABSL', 5000, 5, 'nro-mf', false]);
+    await expect(updateSipPlan('inv', 'tok', 'nope', {})).rejects.toThrow('Unknown SIP plan');
+  });
+});
+
+describe('ensureInvestMf', () => {
+  it('seeds nro-mf and the SIP plans on a sheet that has neither', async () => {
+    routes.push({ match: '?fields=sheets.properties.title', json: { sheets: Object.keys(INVEST_TABS).map(t => ({ properties: { title: t } })) } });
+    routes.push({ match: 'values:batchGet', json: { valueRanges: [{ values: [INVEST_TABS.Accounts] }, { values: [INVEST_TABS.Activities] }] } });
+    routes.push({ match: "'Accounts'!A2%3AI50", json: { values: [['amex-hysa', 'Amex', 'hysa', 'A', 1, 1, '', 250000]] } });
+    routes.push({ match: "'SipPlans'!A2%3AH50", json: {} });
+    await ensureInvestMf('inv', 'tok');
+    const acct = calls.find(c => c.url.includes('Accounts') && c.url.includes(':append'));
+    expect(acct.body.values[0][0]).toBe('nro-mf');
+    expect(acct.body.values[0][8]).toBe('INR');
+    const plans = calls.find(c => c.url.includes('SipPlans') && c.url.includes(':append'));
+    expect(plans.body.values).toHaveLength(4);
+  });
+
+  it('is a no-op when everything is already there', async () => {
+    routes.push({ match: '?fields=sheets.properties.title', json: { sheets: Object.keys(INVEST_TABS).map(t => ({ properties: { title: t } })) } });
+    routes.push({ match: 'values:batchGet', json: { valueRanges: [{ values: [INVEST_TABS.Accounts] }, { values: [INVEST_TABS.Activities] }] } });
+    routes.push({ match: "'Accounts'!A2%3AI50", json: { values: [['nro-mf', 'N', 'mf_in', 'N', '', '', '', '', 'INR']] } });
+    routes.push({ match: "'SipPlans'!A2%3AH50", json: { values: [['birla-flexi', 'unmapped', 'B', 'A', 5000, '', 'nro-mf', true]] } });
+    await ensureInvestMf('inv', 'tok');
+    expect(calls.filter(c => c.url.includes(':append') || c.method === 'PUT')).toHaveLength(0);
   });
 });

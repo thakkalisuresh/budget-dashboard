@@ -189,3 +189,84 @@ export function concentrationAfterBuy(positions, total, symbol, amount) {
     after: newTotal > 0 ? ((current + amount) / newTotal) * 100 : 0,
   };
 }
+
+// ── Dated cash flows / currency ──────────────────────────────────────────────
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Annualised internal rate of return for dated cash flows (decimal, 0.1 = 10%).
+ * flows: [{ date, amount }] — negative = money invested, positive = value
+ * received (use today's market value as the final positive flow). Newton's
+ * method, falling back to bisection when it diverges. Returns null when the
+ * rate is undefined: <2 flows, no sign change, a bad date, or a zero time span.
+ */
+export function xirr(flows) {
+  const pts = (flows || [])
+    .map(f => ({ t: Date.parse(f?.date), a: Number(f?.amount) }))
+    .filter(f => Number.isFinite(f.a) && f.a !== 0);
+  if (pts.length < 2 || pts.some(p => !Number.isFinite(p.t))) return null;
+  if (!pts.some(p => p.a < 0) || !pts.some(p => p.a > 0)) return null;
+  const t0 = Math.min(...pts.map(p => p.t));
+  const span = Math.max(...pts.map(p => p.t)) - t0;
+  if (span <= 0) return null;
+  const yrs = pts.map(p => (p.t - t0) / DAY_MS / 365);
+
+  const npv = (r) => pts.reduce((s, p, i) => s + p.a / Math.pow(1 + r, yrs[i]), 0);
+  const dnpv = (r) => pts.reduce((s, p, i) => s - yrs[i] * p.a / Math.pow(1 + r, yrs[i] + 1), 0);
+
+  let r = 0.1;
+  for (let i = 0; i < 50; i++) {
+    const f = npv(r), d = dnpv(r);
+    if (!Number.isFinite(f) || !Number.isFinite(d) || d === 0) break;
+    const next = r - f / d;
+    if (!(next > -1)) break;
+    if (Math.abs(next - r) < 1e-10) return next;
+    r = next;
+  }
+
+  // Bisection on (-1, hi]; npv is monotone decreasing in r for one sign change.
+  let lo = -0.999999, hi = 1e6;
+  let flo = npv(lo), fhi = npv(hi);
+  if (!Number.isFinite(flo) || !Number.isFinite(fhi) || flo * fhi > 0) return null;
+  for (let i = 0; i < 300; i++) {
+    const mid = (lo + hi) / 2;
+    const fm = npv(mid);
+    if (Math.abs(fm) < 1e-9 || (hi - lo) / 2 < 1e-12) return mid;
+    if (flo * fm < 0) { hi = mid; fhi = fm; } else { lo = mid; flo = fm; }
+  }
+  return (lo + hi) / 2;
+}
+
+/** Convert between USD and INR given usdPerInr (e.g. 0.0115). null on a bad rate. */
+export function convert(amount, from, to, usdPerInr) {
+  if (from === to) return amount;
+  const rate = Number(usdPerInr);
+  if (!(rate > 0)) return null;
+  if (from === 'INR' && to === 'USD') return amount * rate;
+  if (from === 'USD' && to === 'INR') return amount / rate;
+  return null;
+}
+
+/**
+ * USD value of one activity using its stored fxToUsd (USD per 1 unit of the
+ * row's currency). Legacy/blank-currency rows are USD. INR rows without a
+ * usable fx return null — never guess.
+ */
+export function activityUsd(a) {
+  const amount = Number(a?.amount) || 0;
+  if (!a?.currency || a.currency === 'USD') return amount;
+  const fx = Number(a.fxToUsd);
+  return fx > 0 ? amount * fx : null;
+}
+
+/**
+ * This month's contribution flow: USD DEPOSITs dated in `ym` (YYYY-MM). Includes
+ * mf_in USD deposits; excludes INR-denominated rows and INR_RECEIVED (a type
+ * of its own), so INR never leaks into a USD sum.
+ */
+export function monthlyDeposits(activities, ym) {
+  return (activities || [])
+    .filter(a => a.type === 'DEPOSIT' && (!a.currency || a.currency === 'USD') && String(a.date).startsWith(ym))
+    .reduce((s, a) => s + (Number(a.amount) || 0), 0);
+}

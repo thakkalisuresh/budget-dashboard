@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { X, Upload, Plus, Check } from 'lucide-react';
-import { updateAccount, appendActivity, appendActivities, ACTIVITY_TYPES } from './sheetInvest.js';
+import { updateAccount, appendActivity, appendActivities, MANUAL_ACTIVITY_TYPES } from './sheetInvest.js';
 import { parseFidelityCsv } from './fidelityCsvParser.js';
 
 export const inputCls = 'w-full rounded-2xl px-4 py-3 text-sm outline-none transition-all';
@@ -116,6 +116,8 @@ const NEEDS_SYMBOL = new Set(['BUY', 'SELL', 'DIVIDEND']);
 const NEEDS_QTY = new Set(['BUY', 'SELL']);
 
 export function AddActivityDialog({ accounts, sheetId, accessToken, onClose, onSaved }) {
+  // mf_in (INR) accounts are driven by the SIP/INR-received flow, not this USD dialog.
+  accounts = accounts.filter(a => a.type !== 'mf_in');
   const [accountId, setAccountId] = useState(accounts.find(a => a.type === 'brokerage')?.id || accounts[0]?.id || '');
   const [type, setType] = useState('BUY');
   const [symbol, setSymbol] = useState('');
@@ -162,7 +164,7 @@ export function AddActivityDialog({ accounts, sheetId, accessToken, onClose, onS
         </Field>
         <Field label="Type">
           <select value={type} onChange={e => setType(e.target.value)} className={`${inputCls} cursor-pointer`} style={inputStyle}>
-            {ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            {MANUAL_ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         </Field>
       </div>

@@ -8,8 +8,11 @@
 // rate-watch function can find it.
 //
 // Tabs:
-//   Accounts    — id | name | type | institution | apy | balance | balanceAsOf | goal
-//   Activities  — date | accountId | type | symbol | qty | price | amount | note | uuid
+//   Accounts    — id | name | type | institution | apy | balance | balanceAsOf | goal | currency
+//   Activities  — date | accountId | type | symbol | qty | price | amount | note | uuid | currency | fxToUsd
+//                 (currency USD|INR, default USD; fxToUsd = USD per 1 unit of currency)
+//   SipPlans    — id | schemeCode | name | amc | amountInr | day | accountId | active
+//                 (Indian MF SIP config; schemeCode "unmapped" until the user maps it)
 //   Snapshots   — date | accountId | balance
 //   RateWatch   — scanDate | bestBank | bestApy | yourBestApy | delta | detailsJson
 //   EtfHoldings — ticker | asOf | cusip | name | holdingTicker | weight
@@ -21,14 +24,14 @@
 //   RateHistory — accountId | apy | effectiveDate | source   (source: manual|rate-watch)
 // ════════════════════════════════════════════════════════════════════════════
 import { apiFetch } from './sheetApi.js';
-import { safeText } from './sheetHelpers.js';
+import { safeText, colLetter } from './sheetHelpers.js';
 import { shareSheetWithUsers } from './useMonths.js';
 import { requestDriveToken } from './driveAuth.js';
 import { FDIC_MAX } from './investMath.js';
 
 export const INVEST_TABS = {
-  Accounts:    ['id', 'name', 'type', 'institution', 'apy', 'balance', 'balanceAsOf', 'goal'],
-  Activities:  ['date', 'accountId', 'type', 'symbol', 'qty', 'price', 'amount', 'note', 'uuid'],
+  Accounts:    ['id', 'name', 'type', 'institution', 'apy', 'balance', 'balanceAsOf', 'goal', 'currency'],
+  Activities:  ['date', 'accountId', 'type', 'symbol', 'qty', 'price', 'amount', 'note', 'uuid', 'currency', 'fxToUsd'],
   Snapshots:   ['date', 'accountId', 'balance'],
   RateWatch:   ['scanDate', 'bestBank', 'bestApy', 'yourBestApy', 'delta', 'detailsJson'],
   EtfHoldings: ['ticker', 'asOf', 'cusip', 'name', 'holdingTicker', 'weight'],
@@ -40,9 +43,15 @@ export const INVEST_TABS = {
   // (the old rate still governs interest accrued before it). source records how
   // the change got in — a manual gauge edit, or a confirmed rate-watch finding.
   RateHistory: ['accountId', 'apy', 'effectiveDate', 'source'],
+  // Indian mutual-fund SIP plans (account type mf_in). Config, edited in place.
+  SipPlans: ['id', 'schemeCode', 'name', 'amc', 'amountInr', 'day', 'accountId', 'active'],
 };
 
-export const ACTIVITY_TYPES = ['BUY', 'SELL', 'DIVIDEND', 'DEPOSIT', 'WITHDRAW', 'INTEREST', 'FEE'];
+// INR_RECEIVED = INR credited to the NRO account (mf_in only; amount in INR,
+// fxToUsd = true FX, note "settles:<usd deposit uuid>"). It is written by the
+// nudge flow, never typed by hand, so MANUAL_ACTIVITY_TYPES omits it.
+export const ACTIVITY_TYPES = ['BUY', 'SELL', 'DIVIDEND', 'DEPOSIT', 'WITHDRAW', 'INTEREST', 'FEE', 'INR_RECEIVED'];
+export const MANUAL_ACTIVITY_TYPES = ACTIVITY_TYPES.filter(t => t !== 'INR_RECEIVED');
 
 // Seed rows for the household's known accounts — editable afterwards in the UI.
 const SEED_ACCOUNTS = [
@@ -50,6 +59,20 @@ const SEED_ACCOUNTS = [
   ['happen-hysa', 'Happen Bank',  'hysa',      'Happen Bank',      0, 0, '', FDIC_MAX],
   ['fidelity',    'Fidelity',     'brokerage', 'Fidelity',         '', '', '', ''],
 ];
+
+export const MF_ACCOUNT_ID = 'nro-mf';
+// Indian NRO account holding the MF SIPs. Currency INR; goal/APY n/a.
+const SEED_MF_ACCOUNT = [MF_ACCOUNT_ID, 'India MF (NRO)', 'mf_in', 'NRO account', '', '', '', '', 'INR'];
+
+// Names are provisional (plan variants unconfirmed) — editable, never used in logic.
+export const SEED_SIP_PLANS = [
+  ['birla-flexi',        'unmapped', 'Birla Flexi Cap Fund',     'Aditya Birla Sun Life', 5000, '', MF_ACCOUNT_ID, true],
+  ['birla-conglomerate', 'unmapped', 'Birla Conglomerate Fund',  'Aditya Birla Sun Life', 5000, '', MF_ACCOUNT_ID, true],
+  ['sbi-retirement',     'unmapped', 'SBI Retirement Fund',      'SBI',                   5000, '', MF_ACCOUNT_ID, true],
+  ['iti-small-cap',      'unmapped', 'ITI Small Cap Fund',       'ITI',                   5000, '', MF_ACCOUNT_ID, true],
+];
+
+const SEED_ROWS = { Accounts: [...SEED_ACCOUNTS, SEED_MF_ACCOUNT], SipPlans: SEED_SIP_PLANS };
 
 const activityUUID = () => `act_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -76,15 +99,15 @@ export async function createInvestSheet(accessToken, allowedEmails = []) {
           startRow: 0, startColumn: 0,
           rowData: [
             { values: headers.map(h => ({ userEnteredValue: { stringValue: h } })) },
-            ...(title === 'Accounts'
-              ? SEED_ACCOUNTS.map(row => ({
+            ...(SEED_ROWS[title] || []).map(row => ({
                   values: row.map(v => ({
                     userEnteredValue: typeof v === 'number'
                       ? { numberValue: v }
-                      : { stringValue: String(v) },
+                      : typeof v === 'boolean'
+                        ? { boolValue: v }
+                        : { stringValue: String(v) },
                   })),
-                }))
-              : []),
+                })),
           ],
         }],
       })),
@@ -155,10 +178,125 @@ export async function ensureInvestTabs(sheetId, accessToken) {
   return missing;
 }
 
+/**
+ * Idempotently append any missing header columns to Accounts / Activities (e.g.
+ * currency, fxToUsd on a pre-MF sheet). Only header cells at the right edge are
+ * written — data rows are never touched; blank cells read as the defaults
+ * (USD, fx 1). Returns { [tab]: [added column names] } (empty when nothing to do).
+ */
+export async function ensureInvestColumns(sheetId, accessToken) {
+  const tabs = ['Accounts', 'Activities'];
+  const qs = tabs.map(t => `ranges=${encodeURIComponent(`'${t}'!1:1`)}`).join('&');
+  const json = await apiFetch(sheetId, `/values:batchGet?${qs}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const added = {};
+  for (const [i, tab] of tabs.entries()) {
+    const have = (json.valueRanges?.[i]?.values?.[0] || []).map(String);
+    const want = INVEST_TABS[tab];
+    const missing = want.filter((h, idx) => idx >= have.length);
+    if (!missing.length) continue;
+    const range = encodeURIComponent(`'${tab}'!${colLetter(have.length)}1`);
+    await apiFetch(sheetId, `/values/${range}?valueInputOption=RAW`, {
+      method: 'PUT',
+      headers: authJson(accessToken),
+      body: JSON.stringify({ values: [missing] }),
+    });
+    added[tab] = missing;
+  }
+  return added;
+}
+
+/**
+ * One-stop, idempotent upgrade for the Indian-MF schema: missing tabs, missing
+ * header columns, then seed the nro-mf account and the four SIP plans when absent.
+ * Safe to call on every Invest-tab load; a fully-upgraded sheet costs reads only.
+ */
+export async function ensureInvestMf(sheetId, accessToken) {
+  await ensureInvestTabs(sheetId, accessToken);
+  await ensureInvestColumns(sheetId, accessToken);
+
+  const accounts = await fetchAccounts(sheetId, accessToken);
+  if (!accounts.some(a => a.id === MF_ACCOUNT_ID)) {
+    await appendValues(sheetId, accessToken, 'Accounts', [SEED_MF_ACCOUNT]);
+  }
+  const plans = await fetchSipPlans(sheetId, accessToken);
+  if (!plans.length) {
+    await appendValues(sheetId, accessToken, 'SipPlans', SEED_SIP_PLANS);
+  }
+}
+
+async function appendValues(sheetId, accessToken, tab, rows) {
+  const range = encodeURIComponent(`'${tab}'!A1`);
+  await apiFetch(sheetId, `/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
+    method: 'POST',
+    headers: authJson(accessToken),
+    body: JSON.stringify({ values: rows }),
+  });
+}
+
+// ── SIP plans (Indian MF) ────────────────────────────────────────────────────
+
+const truthy = (v) => v === true || String(v).toLowerCase() === 'true';
+
+export async function fetchSipPlans(sheetId, accessToken) {
+  const range = encodeURIComponent("'SipPlans'!A2:H50");
+  const json = await apiFetch(sheetId, `/values/${range}?valueRenderOption=UNFORMATTED_VALUE`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  return (json.values || [])
+    .map((r, i) => {
+      const schemeCode = String(r[1] ?? '').trim() || 'unmapped';
+      return {
+        rowIndex: i + 2,
+        id: String(r[0] || ''),
+        schemeCode,
+        mapped: schemeCode !== 'unmapped',
+        name: String(r[2] || ''),
+        amc: String(r[3] || ''),
+        amountInr: Number(r[4]) || 0,
+        day: r[5] === '' || r[5] == null ? null : (Number(r[5]) || null),
+        accountId: String(r[6] || MF_ACCOUNT_ID),
+        active: r[7] === '' || r[7] == null ? true : truthy(r[7]),
+      };
+    })
+    .filter(p => p.id);
+}
+
+function sipPlanRow(p) {
+  return [
+    String(p.id),
+    String(p.schemeCode || 'unmapped'),
+    safeText(String(p.name || '')),
+    safeText(String(p.amc || '')),
+    Number(p.amountInr) || 0,
+    p.day === '' || p.day == null ? '' : Number(p.day),
+    String(p.accountId || MF_ACCOUNT_ID),
+    p.active === undefined ? true : !!p.active,
+  ];
+}
+
+export async function appendSipPlan(sheetId, accessToken, plan) {
+  await appendValues(sheetId, accessToken, 'SipPlans', [sipPlanRow(plan)]);
+}
+
+/** Merge `patch` into one plan (by id) and rewrite its row in place. */
+export async function updateSipPlan(sheetId, accessToken, planId, patch = {}) {
+  const plans = await fetchSipPlans(sheetId, accessToken);
+  const cur = plans.find(p => p.id === planId);
+  if (!cur) throw new Error(`Unknown SIP plan: ${planId}`);
+  const range = encodeURIComponent(`'SipPlans'!A${cur.rowIndex}:H${cur.rowIndex}`);
+  await apiFetch(sheetId, `/values/${range}?valueInputOption=RAW`, {
+    method: 'PUT',
+    headers: authJson(accessToken),
+    body: JSON.stringify({ values: [sipPlanRow({ ...cur, ...patch, id: cur.id })] }),
+  });
+}
+
 // ── Accounts ─────────────────────────────────────────────────────────────────
 
 export async function fetchAccounts(sheetId, accessToken) {
-  const range = encodeURIComponent("'Accounts'!A2:H50");
+  const range = encodeURIComponent("'Accounts'!A2:I50");
   const json = await apiFetch(sheetId, `/values/${range}?valueRenderOption=UNFORMATTED_VALUE`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -173,6 +311,7 @@ export async function fetchAccounts(sheetId, accessToken) {
       balance: Number(r[5]) || 0,
       balanceAsOf: String(r[6] || ''),
       goal: Number(r[7]) || 0,
+      currency: String(r[8] || '').toUpperCase() || (String(r[2]) === 'mf_in' ? 'INR' : 'USD'),
     }))
     .filter(a => a.id);
 }
@@ -227,6 +366,10 @@ function activityRow(a) {
     a.amount === '' || a.amount == null ? '' : Number(a.amount),
     safeText(String(a.note || '')),
     a.uuid || activityUUID(),
+    String(a.currency || 'USD').toUpperCase(),
+    a.fxToUsd === '' || a.fxToUsd == null
+      ? (String(a.currency || 'USD').toUpperCase() === 'USD' ? 1 : '')  // never guess an INR rate
+      : Number(a.fxToUsd),
   ];
 }
 
@@ -248,7 +391,7 @@ export async function appendActivities(sheetId, accessToken, activities) {
 }
 
 export async function fetchActivities(sheetId, accessToken) {
-  const range = encodeURIComponent("'Activities'!A2:I5000");
+  const range = encodeURIComponent("'Activities'!A2:K5000");
   const json = await apiFetch(sheetId, `/values/${range}?valueRenderOption=UNFORMATTED_VALUE`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -264,6 +407,8 @@ export async function fetchActivities(sheetId, accessToken) {
       amount: r[6] === '' || r[6] == null ? null : Number(r[6]),
       note: String(r[7] || ''),
       uuid: String(r[8] || ''),
+      currency: String(r[9] || '').toUpperCase() || 'USD',
+      fxToUsd: Number(r[10]) > 0 ? Number(r[10]) : ((String(r[9] || 'USD').toUpperCase() === 'USD') ? 1 : null),
     }))
     .filter(a => a.date && a.type);
 }
