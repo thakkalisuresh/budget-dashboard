@@ -23,7 +23,7 @@
  * so a batch never exceeds it.
  */
 import { onRequest } from 'firebase-functions/v2/https';
-import { ALLOWED_EMAILS, OPENFIGI_API_KEY } from './lib/secrets.mjs';
+import { ALLOWED_EMAILS } from './lib/secrets.mjs';
 import { corsOriginFor, hasValidSecFetchSite, sendJson, verifyBearer } from './lib/http-common.mjs';
 
 const OPENFIGI_URL = 'https://api.openfigi.com/v3/mapping';
@@ -108,7 +108,7 @@ export const openfigi = onRequest(
       return;
     }
 
-    const apiKey = OPENFIGI_API_KEY.value();
+    const apiKey = process.env.OPENFIGI_API_KEY || '';
     const jobsPerReq = apiKey ? 100 : 10; // OpenFIGI per-request job cap
 
     const data = {};
