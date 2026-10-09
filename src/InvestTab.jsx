@@ -10,6 +10,7 @@ import { CandidateCheckDialog } from './CandidateCheckDialog.jsx';
 import { updateAccount, writeRateWatchDetails } from './sheetInvest.js';
 import { ItemizeContributionDialog } from './ItemizeContributionDialog.jsx';
 import { pendingItemizations } from './investItemize.js';
+import { MfNudges } from './MfNudges.jsx';
 
 // ════════════════════════════════════════════════════════════════════════════
 // InvestTab — the approved hybrid layout: ticker tape → orbital hero →
@@ -235,6 +236,18 @@ export function InvestTab({ user, settings, updateSettings, settingsLoading, cur
           onDismiss={dismissItemize}
         />
       )}
+
+      {/* Indian MF: transfer planner, INR-received + SIP confirm nudges */}
+      <MfNudges
+        sheetId={sheetId}
+        accessToken={user.accessToken}
+        accounts={accounts}
+        activities={activities}
+        settings={settings}
+        updateSettings={updateSettings}
+        onSaved={refresh}
+        isReadOnly={isReadOnly}
+      />
 
       {/* Equities */}
       <InvestEquityRows positions={positions} currencySymbol={currencySymbol} lastUpdated={lastUpdated} quotesStale={quotesStale} onCheck={(sym) => setCandidateCheck(sym)} />
