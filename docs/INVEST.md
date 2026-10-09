@@ -57,6 +57,39 @@ the first fetch) adds missing tabs, appends missing header columns
 (`ensureInvestColumns`; data rows untouched) and seeds `nro-mf` plus the four
 SIPs (INR 5,000 each, `unmapped`, names provisional/editable).
 
+### MF nudges & planner (`MfNudges.jsx`, pure logic in `investMfNudge.js`)
+
+Self-contained block on the Invest tab (only when an `mf_in` account exists;
+SipPlans are fetched inside the component, the live rate once per page load via
+`mfNavApi.js` → `/api/mf-nav` `fx`, shown as "unavailable" on failure).
+
+- **Flow-through:** a vendor rule (`wise` / `remitly` → `nro-mf` in Settings →
+  Investing) mirrors the Investment expense as a USD `DEPOSIT`
+  (`currency: 'USD'`, `fxToUsd: 1`, no balance bump). `mirrorInvestContribution`
+  returns `needsInrReceipt: true` for it.
+- **Transfer planner:** target = Σ active SipPlans `amountInr`; suggested send =
+  target ÷ live INR-per-USD, shown as a range up to `+ settings.mfBufferPct`
+  (default 2%, editable inline). INR already in the account is shown with the USD
+  it saves. A low-cash warning fires when `inrCashBalance` < the active-SIP total,
+  suppressed until something has been sent (INR_RECEIVED or a USD deposit exists).
+- **INR received nudge:** one card per `inTransitDeposits` row. The dialog takes
+  INR credited + date, shows implied USD/INR and INR/USD, and warns (never blocks)
+  when it is >5% off the live rate (`FX_WARN_PCT`) — a typo guard. Writes
+  `INR_RECEIVED` with `fxToUsd = usdSent ÷ inrReceived`, note `settles:<uuid>`.
+  Dismissal is permanent (`settings.mfInrDismissed`), with a "Show dismissed →
+  Restore" link.
+- **SIP confirm cards:** gated on the first `INR_RECEIVED`. For every month from
+  that one through today, each active plan without a BUY (symbol = plan id,
+  case-insensitive, dated in that YYYY-MM) is pending — so a late Nov
+  confirmation survives into Dec. A plan `day` makes a month due only on/after
+  that day (clamped to month end). "Skip" hides one plan-month
+  (`settings.mfSipSkipped`, keys `planId:YYYY-MM`). The dialog's date defaults to
+  today (or the due date when confirming an earlier month), fetches the NAV for
+  that date (`history`, auto-retrying 503/502 `retryable` errors, with a manual
+  Retry), units default to amount ÷ NAV; NAV and units are overridable. `unmapped`
+  plans skip the fetch and require manual NAV + units. The BUY's `fxToUsd` is the
+  `inrPool` average computed before the append.
+
 ## Quotes ($0 by construction)
 
 `/api/quotes` (`functions/quotes.mjs`) proxies Finnhub so the API key never reaches

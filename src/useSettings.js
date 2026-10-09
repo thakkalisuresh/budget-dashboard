@@ -82,6 +82,9 @@ export const DEFAULT_SETTINGS = {
   ],
   investEtfSymbols:  [],   // extra symbols to treat as ETFs beyond the built-in set
   itemizeDismissed:  [],   // brokerage DEPOSIT uuids the user chose not to itemize (nudge dismissed)
+  mfBufferPct:       2,    // Indian-MF monthly transfer buffer over the live FX rate (%)
+  mfInrDismissed:    [],   // mf_in USD deposit uuids whose "INR received" nudge was dismissed
+  mfSipSkipped:      [],   // "planId:YYYY-MM" SIP months the user chose to skip
   preBuyThresholds:  { concentrationPct: 25, near52wkPct: 5, overlapPct: 60, sectorCapPct: 80 }, // Candidate Check rule-check flags (Phase 2)
   colorScheme:             'default',
   titleBarColor:           null,   // PWA/browser chrome <meta theme-color>; null = match app dark bg
@@ -181,6 +184,9 @@ export async function loadUserSettings(userId, accessToken) {
       cardRewardRates:         parsed.cardRewardRates         || null,
       messages:                parsed.messages                || [],
       itemizeDismissed:        parsed.itemizeDismissed        || [],
+      mfBufferPct:             Number.isFinite(parsed.mfBufferPct) ? parsed.mfBufferPct : DEFAULT_SETTINGS.mfBufferPct,
+      mfInrDismissed:          parsed.mfInrDismissed          || [],
+      mfSipSkipped:            parsed.mfSipSkipped            || [],
       // Merge so a saved copy from before the Candidate Check keys shipped still
       // gains overlapPct / sectorCapPct (saved partial overrides the defaults).
       preBuyThresholds:        { ...DEFAULT_SETTINGS.preBuyThresholds, ...(parsed.preBuyThresholds || {}) },
