@@ -45,14 +45,25 @@ export function MfNudges({ sheetId, accessToken, accounts, activities, settings,
   const [inrTarget, setInrTarget] = useState(null);
   const [sipTarget, setSipTarget] = useState(null);
 
+  // Plans are re-read (not cached for the session): after any activity refresh and
+  // whenever the tab regains focus, so a scheme mapped elsewhere (picker) is picked up.
   useEffect(() => {
     if (!mfAccount || !sheetId || !accessToken) return undefined;
     let cancelled = false;
-    fetchSipPlans(sheetId, accessToken).then(p => { if (!cancelled) setPlans(p); }).catch(() => {});
+    const load = () => fetchSipPlans(sheetId, accessToken).then(p => { if (!cancelled) setPlans(p); }).catch(() => {});
+    load();
+    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVisible); };
+  }, [mfAccount?.id, sheetId, accessToken, activities]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!mfAccount || !accessToken) return undefined;
+    let cancelled = false;
     liveRatePromise ||= fetchInrPerUsd({ accessToken });
     liveRatePromise.then(r => { if (!cancelled) setRate(r); });
     return () => { cancelled = true; };
-  }, [mfAccount?.id, sheetId, accessToken]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mfAccount?.id, accessToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const dismissed = settings.mfInrDismissed || [];
   const bufferPct = settings.mfBufferPct ?? DEFAULT_BUFFER_PCT;
