@@ -200,7 +200,7 @@ export function MfNudges({ sheetId, accessToken, accounts, activities, settings,
           onClose={() => setInrTarget(null)} onSaved={saved} />
       )}
       {sipTarget && (
-        <SipConfirmDialog sip={sipTarget} activities={activities} sheetId={sheetId} accessToken={accessToken}
+        <SipConfirmDialog sip={sips.find(x => sipKey(x.planId, x.month) === sipKey(sipTarget.planId, sipTarget.month)) || sipTarget} activities={activities} sheetId={sheetId} accessToken={accessToken}
           onClose={() => setSipTarget(null)} onSaved={saved} />
       )}
     </>
