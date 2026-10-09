@@ -60,11 +60,13 @@ SIPs (INR 5,000 each, `unmapped`, names provisional/editable).
 ### MF nudges & planner (`MfNudges.jsx`, pure logic in `investMfNudge.js`)
 
 Self-contained block on the Invest tab (only when an `mf_in` account exists;
-SipPlans are fetched inside the component, the live rate once per page load via
+SipPlans come from `useInvestData` (passed down as `sipPlans`; no fetch of its own), the live rate once per page load via
 `mfNavApi.js` → `/api/mf-nav` `fx`, shown as "unavailable" on failure).
 
 - **Flow-through:** a vendor rule (`wise` / `remitly` → `nro-mf` in Settings →
-  Investing) mirrors the Investment expense as a USD `DEPOSIT`
+  Investing; the account dropdown lists every Invest account incl. `nro-mf`, taken
+  from the Invest cache via `buildAccountOptions`, with a default list as fallback
+  and unknown ids still shown) mirrors the Investment expense as a USD `DEPOSIT`
   (`currency: 'USD'`, `fxToUsd: 1`, no balance bump). `mirrorInvestContribution`
   returns `needsInrReceipt: true` for it.
 - **Transfer planner:** target = Σ active SipPlans `amountInr`; suggested send =
@@ -377,3 +379,15 @@ One deterministic module, two surfaces. No LLM verdicts anywhere.
 - **Rebalancing suggestion** (ws-rebalancer port): drift vs the user's target
   allocation + the exact buy list to close it; buy-only, with a drift-threshold
   alert.
+
+## First-load behaviour
+
+- `useInvestData` reads sequentially (Accounts → Activities → RateWatch → SipPlans);
+  `ensureRateHistoryTab` + `ensureInvestMf` run first, once per sheet per session,
+  and are skipped for a sheet this hook just created (`createInvestSheet` already
+  writes every tab, column and seed row).
+- `sheetInvest.js` wraps its Sheets calls in `withRetry429` (waits 1s/3s/9s on a
+  429, then rethrows SHT-001). `sheetApi.js` is unchanged, so other tabs don't retry.
+- Mock mode (`VITE_DEV_MOCK=true`) includes an in-transit USD deposit to `nro-mf`
+  (no INR_RECEIVED yet) and uses `MOCK_MF_NAV.fx.rate`, so the INR-received nudge,
+  transfer planner and pending SIP cards render locally.
