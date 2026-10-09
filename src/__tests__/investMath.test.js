@@ -177,3 +177,80 @@ describe('isEtf', () => {
     expect(isEtf('NVDA', ['nvda'])).toBe(true);
   });
 });
+
+import { xirr, convert, activityUsd, monthlyDeposits } from '../investMath.js';
+
+describe('xirr', () => {
+  it('matches a simple one-year 10% case', () => {
+    const r = xirr([{ date: '2025-01-01', amount: -1000 }, { date: '2026-01-01', amount: 1100 }]);
+    expect(r).toBeCloseTo(0.1, 3);
+  });
+  it('solves a monthly SIP stream', () => {
+    const flows = [];
+    for (let m = 0; m < 12; m++) flows.push({ date: `2025-${String(m + 1).padStart(2, '0')}-05`, amount: -5000 });
+    flows.push({ date: '2026-01-05', amount: 63000 });
+    const r = xirr(flows);
+    expect(r).toBeGreaterThan(0.05);
+    expect(r).toBeLessThan(0.2);
+    // The returned rate zeroes the NPV.
+    const t0 = Date.parse('2025-01-05');
+    const npv = flows.reduce((s, f) => s + f.amount / Math.pow(1 + r, (Date.parse(f.date) - t0) / 86400000 / 365), 0);
+    expect(Math.abs(npv)).toBeLessThan(0.5);
+  });
+  it('handles a loss (negative rate)', () => {
+    const r = xirr([{ date: '2025-01-01', amount: -1000 }, { date: '2026-01-01', amount: 800 }]);
+    expect(r).toBeCloseTo(-0.2, 3);
+  });
+  it('is order-independent', () => {
+    const r = xirr([{ date: '2026-01-01', amount: 1100 }, { date: '2025-01-01', amount: -1000 }]);
+    expect(r).toBeCloseTo(0.1, 3);
+  });
+  it('returns null when it cannot be defined', () => {
+    expect(xirr([])).toBeNull();
+    expect(xirr([{ date: '2025-01-01', amount: -1000 }])).toBeNull();
+    expect(xirr([{ date: '2025-01-01', amount: -1000 }, { date: '2026-01-01', amount: -5 }])).toBeNull(); // no sign change
+    expect(xirr([{ date: '2025-01-01', amount: 1000 }, { date: '2026-01-01', amount: 5 }])).toBeNull();
+    expect(xirr([{ date: '2025-01-01', amount: -1000 }, { date: '2025-01-01', amount: 1100 }])).toBeNull(); // same day
+    expect(xirr([{ date: 'bad', amount: -1 }, { date: '2025-01-01', amount: 2 }])).toBeNull();
+  });
+  it('falls back to bisection for extreme returns', () => {
+    const r = xirr([{ date: '2025-01-01', amount: -100 }, { date: '2025-02-01', amount: 1000 }]);
+    expect(r).toBeGreaterThan(100);
+  });
+});
+
+describe('convert', () => {
+  it('converts both ways at USD-per-INR', () => {
+    expect(convert(20000, 'INR', 'USD', 0.0115)).toBeCloseTo(230, 6);
+    expect(convert(230, 'USD', 'INR', 0.0115)).toBeCloseTo(20000, 4);
+  });
+  it('is identity for same currency and null for a bad rate', () => {
+    expect(convert(5, 'USD', 'USD', 0)).toBe(5);
+    expect(convert(5, 'INR', 'USD', 0)).toBeNull();
+    expect(convert(5, 'INR', 'USD', null)).toBeNull();
+  });
+});
+
+describe('activityUsd', () => {
+  it('passes USD and legacy rows through', () => {
+    expect(activityUsd({ amount: 100, currency: 'USD', fxToUsd: 1 })).toBe(100);
+    expect(activityUsd({ amount: 100 })).toBe(100);
+  });
+  it('uses the stored fx for INR rows, null when missing', () => {
+    expect(activityUsd({ amount: 5000, currency: 'INR', fxToUsd: 0.0115 })).toBeCloseTo(57.5, 6);
+    expect(activityUsd({ amount: 5000, currency: 'INR', fxToUsd: null })).toBeNull();
+  });
+});
+
+describe('monthlyDeposits', () => {
+  const acts = [
+    { type: 'DEPOSIT', date: '2026-10-02', amount: 1000, currency: 'USD' },
+    { type: 'DEPOSIT', date: '2026-10-05', amount: 230, currency: 'USD', accountId: 'nro-mf' },
+    { type: 'INR_RECEIVED', date: '2026-10-08', amount: 20000, currency: 'INR', fxToUsd: 0.0115 },
+    { type: 'DEPOSIT', date: '2026-10-09', amount: 99999, currency: 'INR' },
+    { type: 'DEPOSIT', date: '2026-09-30', amount: 500 },
+  ];
+  it('sums only this month\'s USD deposits (mf_in USD counts, INR never)', () => {
+    expect(monthlyDeposits(acts, '2026-10')).toBe(1230);
+  });
+});

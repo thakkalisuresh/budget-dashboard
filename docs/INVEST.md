@@ -14,10 +14,48 @@ its id stored in `UserSettings` as `settings.investSheetId` (readable server-sid
 
 | Tab | Purpose |
 |---|---|
-| `Accounts` | one row per account: id, name, type (`hysa`/`brokerage`), institution, APY, balance anchor, balanceAsOf, goal (250000 for HYSAs) |
-| `Activities` | append-only event log: date, accountId, type (`BUY SELL DIVIDEND DEPOSIT WITHDRAW INTEREST FEE`), symbol, qty, price, amount, note, uuid. Holdings + FIFO lots are **derived** client-side (`investMath.deriveHoldings`) — Ghostfolio-style, nothing stored twice |
+| `Accounts` | one row per account: id, name, type (`hysa`/`brokerage`/`mf_in`), institution, APY, balance anchor, balanceAsOf, goal (250000 for HYSAs), `currency` (`USD`; `INR` for `mf_in`; blank reads as that default) |
+| `Activities` | append-only event log: date, accountId, type (`BUY SELL DIVIDEND DEPOSIT WITHDRAW INTEREST FEE INR_RECEIVED`), symbol, qty, price, amount, note, uuid, `currency` (`USD`/`INR`), `fxToUsd`. Holdings + FIFO lots are **derived** client-side (`investMath.deriveHoldings`) — Ghostfolio-style, nothing stored twice |
+| `SipPlans` | Indian MF SIP config, edited in place: id (stable slug), schemeCode (`unmapped` until the user picks a scheme), name, amc, amountInr, day (optional), accountId, active |
 | `Snapshots` | balance history points (written on every balance update) |
 | `RateWatch` | scan log written by the Phase-2 scheduled function; the Rate-watch card shows an empty state until the first run |
+
+## Indian mutual funds (`mf_in`)
+
+Tracks monthly USD sent to an Indian NRO account (Wise/Remitly) and the SIPs it
+funds. Everything lives on one account (`nro-mf`, currency INR) in the same
+append-only Activities log:
+
+1. `DEPOSIT` (USD, `fxToUsd` 1) — the mirror of the Investment-category expense;
+   the real USD cost. It is "in transit" until step 2 references it
+   (`investMf.inTransitDeposits`).
+2. `INR_RECEIVED` (INR) — INR actually credited; `fxToUsd` = USD sent ÷ INR
+   received (true FX); note `settles:<depositUuid>` (`settlesNote`).
+3. `BUY` (INR) — a confirmed SIP debit: `symbol` = SipPlan id (upper-cased on
+   write, e.g. `BIRLA-FLEXI`; compare case-insensitively), `qty` = units, `price`
+   = NAV, `amount` = INR debited, `fxToUsd` = the **average-cost INR pool** rate at
+   confirm time (`investMf.inrPool`). Because the symbol is the plan id, remapping
+   a scheme code later never orphans history; NAV lookup is planId → schemeCode
+   (`unmapped` ⇒ no NAV, cost-only).
+
+`fxToUsd` always means *USD per 1 unit of the row's `currency`*; legacy rows
+(no currency) are USD, fx 1. INR rows without an fx read `null` — never guessed.
+
+Derived, never stored: INR cash = INR received − BUY − FEE (`inrCashBalance`);
+holdings via `deriveHoldings` (native INR lots); USD cost basis per fund
+`mfUsdCostBasis` (BUY × stored fx, SELL removes the proportional share);
+returns via `investMath.xirr` (dated flows, Newton → bisection, `null` when
+undefined); display conversion `convert` / `activityUsd`.
+
+USD isolation: `INR_RECEIVED` is excluded from the manual Add-activity types
+(`MANUAL_ACTIVITY_TYPES`), `mf_in` is filtered out of that dialog, and
+`monthlyDeposits` counts USD DEPOSITs only (mf_in USD deposits count as
+contributions). HYSA/brokerage aggregates are type-filtered so INR never mixes in.
+
+**Upgrading older sheets:** `ensureInvestMf` (called from `useInvestData` before
+the first fetch) adds missing tabs, appends missing header columns
+(`ensureInvestColumns`; data rows untouched) and seeds `nro-mf` plus the four
+SIPs (INR 5,000 each, `unmapped`, names provisional/editable).
 
 ## Quotes ($0 by construction)
 

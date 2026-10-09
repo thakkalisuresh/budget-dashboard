@@ -6,9 +6,9 @@
 // ════════════════════════════════════════════════════════════════════════════
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
-  ensureInvestSheet, ensureRateHistoryTab, fetchAccounts, fetchActivities, fetchRateWatch,
+  ensureInvestSheet, ensureRateHistoryTab, ensureInvestMf, fetchAccounts, fetchActivities, fetchRateWatch,
 } from './sheetInvest.js';
-import { deriveHoldings } from './investMath.js';
+import { deriveHoldings, monthlyDeposits } from './investMath.js';
 import { MOCK_INVEST } from './mockData.js';
 
 const DEV_MOCK = import.meta.env.DEV && import.meta.env.VITE_DEV_MOCK === 'true';
@@ -36,6 +36,7 @@ export function useInvestData({ user, settings, updateSettings, settingsLoading 
   const [tick, setTick] = useState(0);
   const provisionOnce = useRef(false);
   const ensuredHistoryFor = useRef(null);
+  const ensuredMfFor = useRef(null);
 
   const sheetId = DEV_MOCK ? 'mock-invest' : (settings.investSheetId || null);
   const refresh = useCallback(() => setTick(t => t + 1), []);
@@ -70,6 +71,14 @@ export function useInvestData({ user, settings, updateSettings, settingsLoading 
       ensureRateHistoryTab(sheetId, user.accessToken).catch(() => {});
     }
 
+    // Upgrade older sheets to the Indian-MF schema (tabs, columns, seed rows)
+    // BEFORE the first fetch so the new ranges resolve; failure is non-fatal.
+    const upgrade = ensuredMfFor.current === sheetId
+      ? Promise.resolve()
+      : ensureInvestMf(sheetId, user.accessToken)
+          .then(() => { ensuredMfFor.current = sheetId; })
+          .catch(e => console.warn('MF schema upgrade failed (non-fatal):', e?.message));
+
     const mem = investCache.get(sheetId);
     if (mem && Date.now() - mem.fetchedAt < CACHE_MS && tick === 0) {
       setData(mem.data);
@@ -84,6 +93,7 @@ export function useInvestData({ user, settings, updateSettings, settingsLoading 
 
     (async () => {
       try {
+        await upgrade;
         const [accounts, activities, rateWatch] = await Promise.all([
           fetchAccounts(sheetId, user.accessToken),
           fetchActivities(sheetId, user.accessToken),
@@ -121,13 +131,12 @@ export function useInvestData({ user, settings, updateSettings, settingsLoading 
     () => deriveHoldings(activities.filter(a => brokerageIds.has(a.accountId))),
     [activities, brokerageIds]
   );
-  // This month's DEPOSIT flow into any account (feeds "on pace" projections).
-  const monthlyContribution = useMemo(() => {
-    const ym = new Date().toISOString().slice(0, 7);
-    return activities
-      .filter(a => a.type === 'DEPOSIT' && String(a.date).startsWith(ym))
-      .reduce((s, a) => s + (a.amount || 0), 0);
-  }, [activities]);
+  // This month's USD DEPOSIT flow into any account (feeds "on pace" projections).
+  // mf_in USD deposits count; INR_RECEIVED / INR-denominated rows never do.
+  const monthlyContribution = useMemo(
+    () => monthlyDeposits(activities, new Date().toISOString().slice(0, 7)),
+    [activities]
+  );
 
   const isEmpty = !loading && accounts.every(a => !(a.balance > 0)) && activities.length === 0;
 
