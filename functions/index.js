@@ -36,6 +36,8 @@ export { categoryAudit } from './category-audit.mjs';
 export { errorDigest } from './error-digest.mjs';
 // Invest tab — Finnhub quotes proxy (key stays server-side).
 export { quotes } from './quotes.mjs';
+// Invest tab — Indian mutual-fund NAVs (AMFI + mfapi.in), no secrets beyond the allowlist.
+export { mfNav } from './mf-nav.mjs';
 // Invest tab — EDGAR N-PORT holdings look-through (descriptive User-Agent stays server-side).
 export { etfHoldings } from './etf-holdings.mjs';
 // Invest tab — CUSIP↔ticker reconciliation via OpenFIGI (optional key stays server-side).
