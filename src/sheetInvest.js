@@ -22,6 +22,8 @@
 //                 source: cache|openfigi; append-only, first-seen-wins per cusip —
 //                 so a CUSIP is resolved at most once across Candidate Check runs)
 //   RateHistory — accountId | apy | effectiveDate | source   (source: manual|rate-watch)
+//   MfHoldings / MfHoldingsStatus — monthly AMC holdings + per-fund ingest status
+//                 (server-written by /api/mf-holdings; see docs/INVEST.md)
 // ════════════════════════════════════════════════════════════════════════════
 import { apiFetch as rawApiFetch } from './sheetApi.js';
 import { safeText, colLetter } from './sheetHelpers.js';
@@ -71,6 +73,11 @@ export const INVEST_TABS = {
   RateHistory: ['accountId', 'apy', 'effectiveDate', 'source'],
   // Indian mutual-fund SIP plans (account type mf_in). Config, edited in place.
   SipPlans: ['id', 'schemeCode', 'name', 'amc', 'amountInr', 'day', 'accountId', 'active'],
+  // Monthly AMC portfolio disclosures for the held funds (written server-side by
+  // functions/mf-holdings.mjs; latest + previous asOf per fundKey). weightPct is
+  // 0-100 of NAV; `industry` carries the rating on debt rows. Status: ok|stale|failed|missing.
+  MfHoldings: ['asOf', 'fundKey', 'isin', 'name', 'industry', 'assetClass', 'weightPct', 'marketValueInrLakh', 'sourceFile'],
+  MfHoldingsStatus: ['fundKey', 'asOf', 'status', 'checkedAt', 'rowCount', 'weightSum', 'reason', 'sourceFile'],
 };
 
 // INR_RECEIVED = INR credited to the NRO account (mf_in only; amount in INR,
