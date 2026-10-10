@@ -26,8 +26,13 @@ vi.mock('../../functions/lib/_error-log.mjs', () => ({ reportError: reportMock }
 vi.mock('firebase-functions/v2/scheduler', () => ({ onSchedule: (_opts, fn) => fn }));
 
 const itiFile = { body: null, status: 200 };
-vi.stubGlobal('fetch', vi.fn(async (url) => {
-  if (String(url).includes('oauth2/v3/userinfo')) return { ok: true, json: async () => ({ email: 'nair.sabarish97@gmail.com' }) };
+const ITI_SEP = 'https://itiamc.com/admin/pdf/1791539984-ITIMF_Monthly_Portfolio_30092026.xlsx';
+vi.stubGlobal('fetch', vi.fn(async (url, init) => {
+  if (String(url).includes('oauth2/v3/userinfo')) {
+    // A read-only household viewer (VIEWER_EMAILS) is a valid Google user but NOT in ALLOWED_EMAILS.
+    const viewer = /viewer-token/.test(init?.headers?.Authorization || '');
+    return { ok: true, json: async () => ({ email: viewer ? 'viewer@example.com' : 'nair.sabarish97@gmail.com' }) };
+  }
   if (String(url).startsWith('https://itiamc.com/admin/pdf/')) return new Response(itiFile.body, { status: itiFile.status });
   throw new Error(`unexpected network call in test: ${url}`);
 }));
@@ -67,6 +72,14 @@ describe('mf-holdings endpoint — gates & validation', () => {
     expect((await call(req({ secFetch: 'cross-site' }))).status).toBe(403);
     expect((await call(req({ auth: null, body: { action: 'status' } }))).status).toBe(401);
     expect((await call(req({ method: 'GET' }))).status).toBe(405);
+  });
+
+  it('rejects read-only viewers (not in ALLOWED_EMAILS) on every action, including status and refresh', async () => {
+    for (const body of [{ action: 'status' }, { action: 'refresh' }, { action: 'refresh', houses: ['iti'], itiUrl: ITI_SEP }, { action: 'ingest', house: 'iti', url: ITI_SEP }]) {
+      const r = await call(req({ auth: 'Bearer viewer-token', body }));
+      expect(r.status, JSON.stringify(body)).toBe(401);
+    }
+    expect(store.calls).toEqual([]);       // nothing read or written
   });
 
   it('answers the CORS preflight', async () => {
@@ -132,7 +145,6 @@ describe('mf-holdings endpoint — behaviour', () => {
   });
 });
 
-const ITI_SEP = 'https://itiamc.com/admin/pdf/1791539984-ITIMF_Monthly_Portfolio_30092026.xlsx';
 const ITI_AUG = 'https://itiamc.com/admin/pdf/1788000000-ITIMF_Monthly_Portfolio_31082026.xlsx';
 
 describe('mf-holdings ingest (ITI pasted link)', () => {
