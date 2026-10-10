@@ -13,6 +13,7 @@
  * `asOf` is the asOf of the rows currently stored for it.
  */
 import { FUND_REGISTRY, FUND_KEYS, HOUSES, fundsOfHouse } from './mf-holdings/_registry.mjs';
+import { MfFetchError } from './mf-holdings/_errors.mjs';
 
 export { FUND_REGISTRY, FUND_KEYS, HOUSES };
 
@@ -28,14 +29,7 @@ export const MAX_UNCLASSIFIED_PCT = 5;
 /** Months of history a backfill may reach (target month + 2 earlier). */
 const BACKFILL_MONTHS = 3;
 
-/** A fetcher signals "nothing there yet" (404, empty listing) vs a real failure. */
-export class MfFetchError extends Error {
-  constructor(kind, message) {
-    super(message);
-    this.name = 'MfFetchError';
-    this.kind = kind === 'missing' ? 'missing' : 'failed';
-  }
-}
+export { MfFetchError };
 
 /* ── Date logic (IST calendar: AMC files are published in India) ──────────── */
 
@@ -187,9 +181,10 @@ function statusFromStored(fundKey, holdings, prev, { status, reason, now }) {
  * @param {string} [p.asOf]      backfill a specific month-end (default: previous month-end)
  * @param {string[]} [p.houses]  limit to these fund houses
  * @param {boolean} [p.force]    re-ingest even if the month is already stored
+ * @param {object} [p.params]    extra per-house fetch inputs (e.g. { itiUrl })
  * @returns {Promise<{target, houses: Record<string,{status, funds: Record<string,string>}>, wrote: boolean}>}
  */
-export async function runMfHoldings({ io, impl, now = new Date(), asOf, houses, force = false, fetchImpl, sleep }) {
+export async function runMfHoldings({ io, impl, now = new Date(), asOf, houses, force = false, fetchImpl, sleep, params = {} }) {
   if (asOf !== undefined) {
     const v = validateAsOf(asOf, now);
     if (!v.ok) throw new Error(`invalid asOf: ${v.reason} (must be a month-end within the last ${BACKFILL_MONTHS} months)`);
@@ -220,7 +215,7 @@ export async function runMfHoldings({ io, impl, now = new Date(), asOf, houses, 
     const impls = impl[house];
     let parsed = null;
     try {
-      const file = await impls.fetch({ asOf: target, now, fetchImpl, sleep });
+      const file = await impls.fetch({ asOf: target, now, fetchImpl, sleep, ...params });
       parsed = impls.parse(file.buffer, { fileName: file.fileName, fundKeys: funds.map(f => f.fundKey) });
     } catch (e) {
       const kind = e instanceof MfFetchError ? e.kind : 'failed';
