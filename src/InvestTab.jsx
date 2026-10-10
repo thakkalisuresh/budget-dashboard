@@ -272,7 +272,7 @@ export function InvestTab({ user, settings, updateSettings, settingsLoading, cur
       />
 
       {/* Indian MF portfolio health (category mix, SIP split, holdings overlap) */}
-      <MfInsightsCard user={user} settings={settings} accounts={accounts} activities={activities} sipPlans={sipPlans} sheetId={sheetId} />
+      <MfInsightsCard user={user} settings={settings} accounts={accounts} activities={activities} sipPlans={sipPlans} sheetId={sheetId} isReadOnly={isReadOnly} />
 
       {/* Dialogs */}
       {editAccount && (

@@ -179,6 +179,15 @@ always says *Ideas and observations from public data, not investment advice.*
   `mfHoldingsApi.test.js`.
 - **Row hygiene:** `derivative` rows (signed notionals, blank ISIN) and non-positive weights (negative cash)
   are ignored everywhere; only `equity` rows feed overlap, stock/sector exposure and equity share.
+- **ITI manual link:** ITI's file can't be discovered automatically. From the 10th, when
+  `iti-small-cap` holdings are missing or older than last month-end, the card shows a
+  paste-the-link form (hidden for read-only users). `validateItiUrl` checks the shape
+  client-side (https, `itiamc.com`, `…/admin/pdf/<n>-ITIMF_Monthly_Portfolio_<DDMMYYYY>.xlsx`, no
+  query/port/credentials); `ingestMfHoldingsUrl` then calls
+  `POST /api/mf-holdings { action: 'ingest', house: 'iti', url }` (idempotent; an older month-end link within the
+  last 3 months backfills) and reads `{ ok, fundKey, asOf, status ok|stale|missing|failed, rowCount, weightSum,
+  reason }`; 409 reads "a refresh is already running", 404 "the holdings service isn't deployed yet". On
+  success the card refetches.
 - **Mock mode:** `mockMfHoldings.js` holds the equity rows of the real 30-Sep-2026 ABSL / ITI /
   SBI Aggressive Hybrid files; the mock SBI plan stays unmapped on purpose (shows the
   "sub-plan not confirmed" note). The card is an extra `useMfNav` consumer next to `MfHoldings`

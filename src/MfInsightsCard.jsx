@@ -5,10 +5,10 @@
 // its own holdings read (useMfHoldings). Colour is never the only signal: every
 // segment/flag also carries a glyph and a number.
 // ════════════════════════════════════════════════════════════════════════════
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Activity, Eye, Info } from 'lucide-react';
 import { useMfNav, cleanCodes } from './useMfNav.js';
-import { useMfHoldings } from './mfHoldingsApi.js';
+import { useMfHoldings, ingestMfHoldingsUrl, expectedHoldingsMonth } from './mfHoldingsApi.js';
 import { buildMfView } from './investMfView.js';
 import { buildMfInsights, GROUP_LABELS } from './mfInsights.js';
 import { MOCK_MF_NAV } from './mockData.js';
@@ -189,6 +189,38 @@ function Exposure({ ins }) {
   );
 }
 
+function ItiLinkForm({ month, accessToken, onLoaded }) {
+  const [url, setUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true); setResult(null);
+    const r = await ingestMfHoldingsUrl(url, accessToken);
+    setBusy(false); setResult(r);
+    if (r.ok) { setUrl(''); onLoaded?.(); }
+  };
+  return (
+    <form onSubmit={submit} style={section} aria-label="Load ITI Small Cap holdings">
+      <p style={{ fontSize: 11.5, lineHeight: 1.55, color: 'var(--color-text-secondary)' }}>
+        ITI Small Cap holdings for {month} are not loaded yet. Open ITI’s Statutory Disclosures page, copy the link of “Monthly Portfolio - {month}” and paste it here.
+      </p>
+      <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+        <input type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://itiamc.com/admin/pdf/…xlsx"
+          aria-label="Link to ITI monthly portfolio file" disabled={busy}
+          style={{ flex: '1 1 200px', minWidth: 0, fontSize: 12, padding: '8px 10px', borderRadius: 10, background: 'var(--sur-6)', border: '1px solid var(--sur-10)', color: 'var(--color-text)' }} />
+        <button type="submit" disabled={busy || !url.trim()}
+          style={{ fontSize: 11.5, fontWeight: 800, padding: '8px 14px', borderRadius: 10, background: 'var(--color-accent)', color: '#fff', opacity: busy || !url.trim() ? 0.6 : 1 }}>
+          {busy ? 'Loading…' : 'Load holdings'}
+        </button>
+      </div>
+      <p role="status" style={{ fontSize: 11, marginTop: 6, minHeight: 14, color: result && !result.ok ? 'var(--color-warning)' : 'var(--color-text-muted)' }}>
+        {result?.ok ? `Loaded ${result.rowCount ?? ''} rows as of ${fmtAsOf(result.asOf)}.` : result?.error || ''}
+      </p>
+    </form>
+  );
+}
+
 function Explainer({ ins }) {
   const t = ins.thresholds;
   return (
@@ -205,12 +237,12 @@ function Explainer({ ins }) {
   );
 }
 
-export function MfInsightsCard({ user, settings, accounts, activities, sipPlans, sheetId }) {
+export function MfInsightsCard({ user, settings, accounts, activities, sipPlans, sheetId, isReadOnly = false }) {
   const mfIds = useMemo(() => accounts.filter(a => a.type === 'mf_in').map(a => a.id), [accounts]);
   const codes = useMemo(() => (DEV_MOCK ? [] : cleanCodes(sipPlans.map(p => p.schemeCode))), [sipPlans]);
   const live = useMfNav(codes, user.accessToken);
   const navs = DEV_MOCK ? MOCK_MF_NAV.navs : live.navs;
-  const { data: holdings, loading } = useMfHoldings({ sheetId, accessToken: user.accessToken, enabled: mfIds.length > 0 && sipPlans.length > 0 });
+  const { data: holdings, loading, refetch } = useMfHoldings({ sheetId, accessToken: user.accessToken, enabled: mfIds.length > 0 && sipPlans.length > 0 });
 
   const ins = useMemo(() => {
     const view = buildMfView({ plans: sipPlans, activities, accountIds: mfIds, navs, fx: null, currency: 'INR' });
@@ -222,6 +254,10 @@ export function MfInsightsCard({ user, settings, accounts, activities, sipPlans,
   const watch = ins.flags.filter(f => f.severity === 'watch');
   const info = ins.flags.filter(f => f.severity === 'info');
   const asOfFunds = ins.holdings.funds.filter(f => f.available);
+  // ITI's file can't be fetched automatically: offer the paste-a-link form when the expected month is missing.
+  const expected = expectedHoldingsMonth(ins.today);
+  const iti = ins.holdings.funds.find(f => f.fundKey === 'iti-small-cap');
+  const needsIti = !isReadOnly && !DEV_MOCK && !loading && !!iti && !!expected && (!iti.available || iti.asOf < expected.asOf);
 
   return (
     <section aria-label="Mutual fund portfolio health" style={{ marginBottom: 14 }}>
@@ -271,6 +307,8 @@ export function MfInsightsCard({ user, settings, accounts, activities, sipPlans,
             </ul>
           </div>
         )}
+
+        {needsIti && <ItiLinkForm month={expected.label} accessToken={user.accessToken} onLoaded={refetch} />}
 
         <Explainer ins={ins} />
       </div>
