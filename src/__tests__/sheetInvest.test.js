@@ -323,7 +323,7 @@ describe('ensureInvestTabs', () => {
       json: { sheets: ['Accounts', 'Activities', 'Snapshots', 'RateWatch'].map(t => ({ properties: { title: t } })) },
     });
     const added = await ensureInvestTabs('inv123', 'tok');
-    expect(added).toEqual(['EtfHoldings', 'CusipMap', 'RateHistory', 'SipPlans']);
+    expect(added).toEqual(['EtfHoldings', 'CusipMap', 'RateHistory', 'SipPlans', 'MfHoldings', 'MfHoldingsStatus']);
 
     const batch = calls.find(c => c.url.includes(':batchUpdate'));
     expect(batch.body.requests).toEqual([
@@ -331,9 +331,13 @@ describe('ensureInvestTabs', () => {
       { addSheet: { properties: { title: 'CusipMap' } } },
       { addSheet: { properties: { title: 'RateHistory' } } },
       { addSheet: { properties: { title: 'SipPlans' } } },
+      { addSheet: { properties: { title: 'MfHoldings' } } },
+      { addSheet: { properties: { title: 'MfHoldingsStatus' } } },
     ]);
     const header = calls.find(c => c.method === 'PUT' && c.url.includes('EtfHoldings'));
     expect(header.body.values[0]).toEqual(INVEST_TABS.EtfHoldings);
+    const mfHeader = calls.find(c => c.method === 'PUT' && c.url.includes('MfHoldings') && !c.url.includes('Status'));
+    expect(mfHeader.body.values[0]).toEqual(INVEST_TABS.MfHoldings);
   });
 
   it('is a no-op when all tabs already exist', async () => {

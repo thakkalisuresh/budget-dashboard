@@ -19,6 +19,8 @@ its id stored in `UserSettings` as `settings.investSheetId` (readable server-sid
 | `SipPlans` | Indian MF SIP config, edited in place: id (stable slug), schemeCode (`unmapped` until the user picks a scheme), name, amc, amountInr, day (optional), accountId, active |
 | `Snapshots` | balance history points (written on every balance update) |
 | `RateWatch` | scan log written by the Phase-2 scheduled function; the Rate-watch card shows an empty state until the first run |
+| `MfHoldings` | monthly AMC portfolio lines for the household's Indian funds, one row per holding per fund per `asOf` (server-written; latest + previous month kept). See *Indian MF holdings* below |
+| `MfHoldingsStatus` | one row per `fundKey`: what is stored and whether the last attempt succeeded (`ok`/`stale`/`failed`/`missing`) |
 
 ## Indian mutual funds (`mf_in`)
 
@@ -186,6 +188,129 @@ with `includeFx` on mount and then every 6h, only while the Invest tab is mounte
 and the app is visible. It ignores empty / `"unmapped"` codes and returns
 `{ navs, fx, stale, lastUpdated, refresh }`; the last response is cached per device
 in `localStorage` (`fundient.mfNav.v1`) — a convenience, not a source of truth.
+
+## Indian MF holdings (monthly, $0, no keys)
+
+Phase 2 "portfolio health" needs what each held fund actually owns. AMCs publish a
+monthly portfolio statement (SEBI template); `functions/mf-holdings.mjs` ingests it
+for the household's funds into two Invest-sheet tabs. Pure logic and the contract live in
+`functions/lib/_mf-holdings.mjs`; the per-AMC fetch + parse in
+`functions/lib/mf-holdings/{absl,sbi,iti}.mjs`; the shared sheet parser in
+`mf-holdings/_sheet.mjs`.
+
+**Funds (`fundKey`, one per *scheme*, not per Direct/Regular plan — the portfolio is identical):**
+`absl-flexi-cap`, `absl-conglomerate`, `iti-small-cap`, and all four SBI Retirement
+Benefit Fund sub-plans (`sbi-retirement-aggressive-hybrid`, `-aggressive`,
+`-conservative-hybrid`, `-conservative`; which one is held is not pinned down, so none
+is privileged). `FUND_KEYS` / `FUND_REGISTRY` are exported from `_mf-holdings.mjs`.
+
+**`MfHoldings`** — `asOf | fundKey | isin | name | industry | assetClass | weightPct | marketValueInrLakh | sourceFile`
+
+- `asOf` is the file's own portfolio date (`YYYY-MM-DD`, always a month-end).
+- `weightPct` is **percent of NAV, 0-100**, normalised at parse time (ABSL/ITI publish
+  fractions, SBI percent; the unit is read from the sheet's own GRAND TOTAL row, with the
+  AMC's usual unit only as a fallback).
+- `assetClass` ∈ `equity | debt | cash | derivative | other`, taken from the sheet's
+  section headings (equity / debt & money-market / TREPS & net receivables / mutual-fund
+  units, ETFs, gold, InvIT/REIT → `other`). `industry` is the industry for equity and the
+  **credit rating for debt rows**. Cash lines may be negative (net payables). `derivative`
+  rows (ITI stock futures, SBI interest-rate-swap notionals) are notional exposure shown
+  after the GRAND TOTAL, signed by Long/Short, with no ISIN, and are **excluded from the
+  weight sum and should be ignored by overlap/allocation maths**.
+- Duplicate ISINs within a scheme are aggregated (weights and values summed, names joined).
+  `marketValueInrLakh` is blank when unavailable. Sub-total / total rows and zero or
+  "NIL" lines are dropped. All writes are `RAW`, so AMC text is never evaluated as a formula.
+- The **latest and previous** `asOf` per `fundKey` are kept; re-running the same `asOf`
+  replaces that fund's rows for it (idempotent); a backfill never evicts the latest month.
+
+**`MfHoldingsStatus`** — `fundKey | asOf | status | checkedAt | rowCount | weightSum | reason | sourceFile`.
+`asOf` is the asOf of the rows **currently stored** for the fund. `status`:
+`ok` (stored rows are for the target month and passed the checks), `stale` (the AMC still
+serves last month's file), `missing` (not published yet / ITI link not supplied) or
+`failed` (see `reason`). On `stale`/`missing`/`failed` the previous rows stay untouched, so
+the UI can always show "holdings as of <asOf>" plus a banner.
+
+**Checks** (a fund that fails keeps its previous rows and records the reason): the sheet's
+portfolio date equals the target month-end exactly; at least one row; weights over all
+non-derivative rows sum to **90-102**; no negative weight outside cash/derivative rows;
+at most 5% of weight unclassified. The sheet is located by its code **and** the scheme-name
+text in its first rows; a mismatch fails that fund with a clear reason — another sheet is
+never picked silently.
+
+**Job.** `mfHoldingsRefresh` runs at 02:00 IST on days 8-12 each month and targets the
+previous month-end. Per fund house: skipped if all its funds already have rows for the
+target month, otherwise fetched, parsed, checked and merged; each house runs in its own
+try/catch, so one failing never blocks the others. Failures (not "not published yet") are
+logged through `reportError('INV-001', …, { stage: 'mf-holdings' })` — no new error code,
+no Telegram/push. Written in one pass at the end of the run (holdings, then status).
+
+| AMC | Fetch | Notes |
+|---|---|---|
+| ABSL | `GET` the JSON listing `…/FactsheetAccordionById?id=3ccab227-…&month=&year=0` (the `month`/`year` params are required), pick the item "Monthly Portfolios as on <date>" for the target, `GET` its ~2 MB zip (host allowlist: `abcscprod.azureedge.net`, `mutualfund.adityabirlacapital.com`), unzip the single legacy `.xls` in memory | File names change nearly monthly, so the link comes only from the listing. The accordion id is a constant; if that listing fails or has no monthly items, the job reads the portfolio page's `data-accordian-api` links and tries up to 4 other accordions (an unpublished month never triggers this). Zip guarded: ≤ 3 entries, ≤ 40 MB uncompressed. |
+| SBI | `GET` `www.sbimf.com/docs/default-source/scheme-portfolios/all-schemes-monthly-portfolio---as-on-<D><st/nd/rd/th>-<month>-<year>.xlsx`; 404 = not out yet | Sheets `SRBF-AHP`, `-AP`, `-CHP`, `-CP`. |
+| ITI | **Semi-manual.** The AMC's listing API is client-side-encrypted (`{"eData": ciphertext}`; we deliberately do not reverse it) and the file name contains the upload epoch, so it cannot be discovered | The owner pastes the link via `POST /api/mf-holdings {action:'ingest', house:'iti', url}` (see below). Until then the scheduled job records ITI as `missing` with reason "awaiting manual link". |
+
+All requests: honest identifying `User-Agent`, ≤ 1 request/second per host, 45 s timeout,
+bounded response size (streamed, aborted at the cap), https + host allowlist (also after
+redirects).
+
+**On-demand endpoint** `POST /api/mf-holdings` (same auth stack as `/api/mf-nav`: allowlisted
+origin, `sec-fetch-site`, Google bearer + `ALLOWED_EMAILS`; **read-only viewers (`VIEWER_EMAILS`) get `403 {ok:false, error:'Read-only users cannot load holdings'}` on `refresh`/`ingest` and may only call `status`**, because those write to the household sheet with the server's credentials; 300 s / 1 GiB; one refresh at a
+time → `409 {retryable:true}`):
+
+| action | request | response |
+|---|---|---|
+| `status` | — | `{ target, status: [MfHoldingsStatus rows] }` |
+| `refresh` | optional `asOf` (a month-end ≤ the latest one, ≤ 3 months back — backfill), `houses` (subset of `absl`, `sbi`, `iti`), `force` (re-ingest a stored month), `itiUrl` (same rules as `ingest`'s `url`) | `{ target, houses: { absl: { status, funds, details }, … }, wrote, status }` |
+| `ingest` | `house: 'iti'`, `url: 'https://itiamc.com/admin/pdf/<epoch>-ITIMF_Monthly_Portfolio_<DDMMYYYY>.xlsx'` | `{ ok, fundKey, asOf, status, rowCount, weightSum, reason }` (`status` as in `MfHoldingsStatus`) |
+
+House `status` is `done | skipped | partial | missing | failed`. **`ingest` (ITI's manual path)**:
+the link is validated before any request — https only, host exactly `itiamc.com` or
+`www.itiamc.com`, no credentials/query/fragment, path exactly
+`/admin/pdf/<digits>-ITIMF_Monthly_Portfolio_<DDMMYYYY>.xlsx`, and the filename date must be a
+month-end within the last 3 months (so August can be backfilled). Then: no redirects followed,
+≤ 6 MB, must start with the zip/`.xlsx` signature, and the sheet's own portfolio date must equal the
+filename date (else `status: 'stale'`, nothing written). It then takes the same
+parse → check → replace path as the job (re-pasting a link replaces that month, idempotent).
+Invalid input → `400`; a bad/old link (404, HTML page, wrong date, failed check) → `200 { ok: false, status, reason }`.
+Hosting forwards `/api/*` to the function with a 60 s limit, so a refresh should be limited with
+`houses` if the AMCs are slow.
+
+**Dependencies.** `xlsx` is SheetJS **0.20.3 installed from the official tarball**
+(`https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`, Apache-2.0), because the npm
+registry copy (0.18.5) carries two unfixed high advisories (prototype pollution
+GHSA-4r6h-8v6p-xvw6, ReDoS GHSA-5pgg-2g8v-p4x9) and ABSL's legacy `.xls` (BIFF) needs SheetJS.
+The lockfiles record the tarball's SHA-512 integrity, so `npm ci` is reproducible and a changed
+tarball fails the install. Cost: `functions/` (and the root, for tests — same pattern as
+`fast-xml-parser`) fetches the tarball from `cdn.sheetjs.com` at install time, so a CDN outage
+at deploy time would fail that install; the CI deploy job has no other config to change.
+Dependabot cannot see a non-registry tarball: bump it by hand when SheetJS publishes
+a newer version (check `cdn.sheetjs.com` and the advisories). `fflate` 0.8.3 (MIT) unzips ABSL's
+download. Parsing ABSL's 8 MB, 105-sheet `.xls` takes ~160 ms and ~120 MB of RSS, hence 1 GiB.
+
+**Secrets.** No new secret or param: the functions bind `SHEETS_DRIVE_SECRETS` (which includes
+`ALLOWED_EMAILS`), the HTTP function also the existing `VIEWER_EMAILS` (read via `.value()`), and the User-Agent is a constant, so non-interactive deploys are unaffected
+(`functionSecrets.test.js` covers both entry points).
+
+**Fixtures / tests.** `src/__tests__/fixtures/mf-holdings/{absl.xls,sbi.xlsx,iti.xlsx}` are the
+real 30-Sep-2026 disclosures cut down to the held schemes' sheets (the ABSL file is a genuine
+BIFF8 `.xls`); regenerate with `node scripts/build-mf-holdings-fixtures.mjs <absl.xls> <sbi.xlsx> <iti.xlsx>`.
+Tests mock `fetch`; none touch the network.
+
+**Failure modes (all tested).** ABSL: listing 500 (the `month=&year=0` params missing, or the Sitecore
+accordion id changed → fallback above), listing not JSON / no `AccordionList`, month not listed yet
+(`missing`), link on an unexpected host or not a `.zip`, zip with > 3 entries / oversized / no spreadsheet /
+corrupt, sheet code renamed or title mismatch (that fund fails; Index is not trusted for another
+sheet). SBI: 404 = not published yet (`missing`); wrong day suffix would also 404; sheet missing or
+title of another sub-plan → that sub-plan fails alone. ITI: link not supplied (`missing`), bad link,
+redirect, HTML instead of xlsx, wrong filename date, sheet renamed. Everywhere: truncated downloads
+(fewer bytes than `Content-Length`, or an unreadable workbook), duplicate ISINs (aggregated), `NIL`/blank/
+`$0.00%` weights, fraction↔percent mix-ups (unit read from the GRAND TOTAL; a sum far outside 90-102
+still fails the fund), and a stale file (the AMC still serves last month's → `stale`).
+
+**Not built.** A generic file-upload fallback (`ingest { house, fileName, contentBase64 }`, ≤ ~12 MB checked
+before decoding, feeding the same parse → check → merge → write path) — ITI's pasted-link `ingest` covers
+the one house that needs a manual step.
 
 ## Seeding & imports
 

@@ -14,9 +14,11 @@
   },
   "dependencies": {
     "fast-xml-parser": "^5.11.2",
+    "fflate": "0.8.3",
     "firebase-admin": "^13.10.0",
     "firebase-functions": "^7.2.5",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "comments": {
     "overrides": "uuid pinned to >=11.1.1 to clear GHSA-w5hq-g745-h8pq pulled in transitively via firebase-admin (google-gax/gaxios/teeny-request bundle uuid 9.x). firebase-admin@14 (which npm audit suggests) is not yet supported by firebase-functions@7's peer deps (^11||^12||^13), so this surgical override stays. Drop once firebase-functions allows firebase-admin@14."

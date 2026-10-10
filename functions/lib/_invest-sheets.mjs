@@ -77,3 +77,58 @@ export async function appendRateWatchRow(sheetId, { scanDate, bestBank, bestApy,
     }),
   });
 }
+
+/* ── Generic tab helpers (MfHoldings pipeline) ───────────────────────────────
+ * The scheduled job can run before the user ever opens the Invest tab on a
+ * sheet that predates these tabs, so the server creates missing tabs itself
+ * (same header rows as src/sheetInvest.js INVEST_TABS — a test pins them equal).
+ * Every write is RAW: AMC-sourced text (names) is never interpreted as a
+ * formula, and ISO dates / ISINs stay literal strings.
+ */
+
+/** Create any missing tab (with its header row). `tabs` = { title: headers[] }. */
+export async function ensureInvestTabsServer(sheetId, tabs) {
+  const meta = await investRequest(sheetId, '?fields=sheets.properties.title');
+  const have = new Set((meta.sheets || []).map(s => s.properties?.title).filter(Boolean));
+  const missing = Object.keys(tabs).filter(t => !have.has(t));
+  if (!missing.length) return [];
+  await investRequest(sheetId, ':batchUpdate', {
+    method: 'POST',
+    body: JSON.stringify({ requests: missing.map(title => ({ addSheet: { properties: { title } } })) }),
+  });
+  for (const title of missing) {
+    const range = encodeURIComponent(`'${title}'!A1`);
+    await investRequest(sheetId, `/values/${range}?valueInputOption=RAW`, {
+      method: 'PUT',
+      body: JSON.stringify({ values: [tabs[title]] }),
+    });
+  }
+  return missing;
+}
+
+/** Read the data rows (below the header) of several tabs in one call. `specs` = [{ title, width, maxRows }]. */
+export async function readInvestTabs(sheetId, specs) {
+  const qs = specs.map(s => `ranges=${encodeURIComponent(`'${s.title}'!A2:${colName(s.width)}${(s.maxRows || 5000) + 1}`)}`).join('&');
+  const json = await investRequest(sheetId, `/values:batchGet?${qs}&valueRenderOption=UNFORMATTED_VALUE`);
+  return specs.map((_, i) => json.valueRanges?.[i]?.values || []);
+}
+
+/**
+ * Replace a tab's data rows (everything below the header) with `values`.
+ * Writes the new block first, then clears any leftover tail, so a failure
+ * midway leaves old-or-new rows, never an empty tab.
+ */
+export async function replaceInvestRows(sheetId, title, width, values, maxRows = 5000) {
+  if (values.length > maxRows) throw new Error(`${title}: ${values.length} rows exceeds the ${maxRows}-row cap`);
+  if (values.length) {
+    const range = encodeURIComponent(`'${title}'!A2:${colName(width)}${values.length + 1}`);
+    await investRequest(sheetId, `/values/${range}?valueInputOption=RAW`, { method: 'PUT', body: JSON.stringify({ values }) });
+  }
+  const tail = encodeURIComponent(`'${title}'!A${values.length + 2}:${colName(width)}${maxRows + 1}`);
+  await investRequest(sheetId, `/values/${tail}:clear`, { method: 'POST', body: '{}' });
+}
+
+/** 1 → A … 26 → Z (tabs here are < 26 columns wide). */
+function colName(n) {
+  return String.fromCharCode(64 + n);
+}
