@@ -81,17 +81,41 @@ function inferOption(optionCol, name) {
   return 'other';
 }
 
-/** Parse AMFI's semicolon file into [{ code, name, amc, plan, option, openEnded, nav, date }]. */
+/**
+ * Section header → { category, categoryKey }.
+ * "Open Ended Schemes(Equity Scheme - Flexi Cap Fund)" → category "Equity Scheme - Flexi Cap Fund",
+ * categoryKey "Equity: Flexi Cap Fund". AMFI has used both "Scheme" and "Schemes" (and
+ * "Hybrid Scheme(s)" etc.), so the key drops that word; clients group on the part before ":".
+ */
+export function parseCategoryHeader(line) {
+  const m = /\(\s*(.*?)\s*\)\s*$/.exec(String(line || ''));
+  const category = m ? m[1].replace(/\s+/g, ' ').trim() : '';
+  return { category: category || null, categoryKey: categoryKeyOf(category) };
+}
+
+export function categoryKeyOf(category) {
+  const raw = String(category || '').replace(/\s+/g, ' ').trim();
+  if (!raw) return null;
+  const i = raw.indexOf(' - ');
+  const norm = (h) => h.replace(/\s*Schemes?(\(s\))?\s*$/i, '').trim();
+  if (i < 0) return norm(raw) || null;
+  const head = norm(raw.slice(0, i));
+  const rest = raw.slice(i + 3).trim();
+  return head && rest ? `${head}: ${rest}` : (head || rest || null);
+}
+
+/** Parse AMFI's semicolon file into [{ code, name, amc, plan, option, openEnded, category, categoryKey, nav, date }]. */
 export function parseNavAll(text) {
   const out = [];
   let amc = '';
   let openEnded = false;
+  let cat = { category: null, categoryKey: null };
   for (const raw of String(text).split(/\r?\n/)) {
     const line = raw.trim();
     if (!line) continue;
     if (!line.includes(';')) {
       // Section lines: "Open Ended Schemes(...)" or an AMC name.
-      if (/^(open|close|interval)\s*ended/i.test(line)) openEnded = /^open/i.test(line);
+      if (/^(open|close|interval)\s*ended/i.test(line)) { openEnded = /^open/i.test(line); cat = parseCategoryHeader(line); }
       else amc = line;
       continue;
     }
@@ -106,6 +130,8 @@ export function parseNavAll(text) {
       plan: inferPlan(p[4], name),
       option: inferOption(p[5], name),
       openEnded,
+      category: cat.category,
+      categoryKey: cat.categoryKey,
       nav: Number.isFinite(nav) && nav > 0 ? nav : null, // "N.A." → null
       date: amfiDateToIso(p[7]),
     });
@@ -192,7 +218,7 @@ function rank(s) {
 }
 
 export function toPublic(s) {
-  return { schemeCode: s.code, name: s.name, amc: s.amc, plan: s.plan, option: s.option, nav: s.nav, date: s.date };
+  return { schemeCode: s.code, name: s.name, amc: s.amc, plan: s.plan, option: s.option, category: s.category ?? null, categoryKey: s.categoryKey ?? null, nav: s.nav, date: s.date };
 }
 
 export function searchSchemes(list, query) {
@@ -208,7 +234,7 @@ export function searchSchemes(list, query) {
   }
   hits.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name) || a.code.localeCompare(b.code));
   return hits.slice(0, MAX_SEARCH_RESULTS).map(s => ({
-    code: s.code, name: s.name, amc: s.amc, plan: s.plan, option: s.option, nav: s.nav, date: s.date,
+    code: s.code, name: s.name, amc: s.amc, plan: s.plan, option: s.option, category: s.category ?? null, categoryKey: s.categoryKey ?? null, nav: s.nav, date: s.date,
   }));
 }
 

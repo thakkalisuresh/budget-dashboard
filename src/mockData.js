@@ -128,8 +128,8 @@ export const MOCK_SIP_PLANS = [
 // Stand-ins for /api/mf-nav in mock mode (no backend, no auth).
 export const MOCK_MF_NAV = {
   navs: {
-    120564: { schemeCode: '120564', name: 'Aditya Birla Sun Life Flexi Cap Fund - Direct Plan - Growth', amc: 'Aditya Birla Sun Life Mutual Fund', plan: 'direct', option: 'growth', nav: 108.74, date: '2026-10-08' },
-    147919: { schemeCode: '147919', name: 'ITI Small Cap Fund - Direct Plan - Growth', amc: 'ITI Mutual Fund', plan: 'direct', option: 'growth', nav: 21.18, date: '2026-10-08' },
+    120564: { schemeCode: '120564', name: 'Aditya Birla Sun Life Flexi Cap Fund - Direct Plan - Growth', amc: 'Aditya Birla Sun Life Mutual Fund', plan: 'direct', option: 'growth', category: 'Equity Scheme - Flexi Cap Fund', categoryKey: 'Equity: Flexi Cap Fund', nav: 108.74, date: '2026-10-08' },
+    147919: { schemeCode: '147919', name: 'ITI Small Cap Fund - Direct Plan - Growth', amc: 'ITI Mutual Fund', plan: 'direct', option: 'growth', category: 'Equity Scheme - Small Cap Fund', categoryKey: 'Equity: Small Cap Fund', nav: 21.18, date: '2026-10-08' },
   },
   fx: { currency: 'INR', rate: 88.4, updatedAt: '2026-10-09T06:00:00Z' },
 };
@@ -177,3 +177,6 @@ export const MOCK_INVEST = {
     MSFT: { price: 445.2,  prevClose: 441.14, dayChangePct: 0.92,  high: 446.8, low: 440.6, open: 441.5 },
   },
 };
+
+// Holdings stand-in for the MF "Portfolio health" card (see mockMfHoldings.js).
+export { MOCK_MF_HOLDINGS } from './mockMfHoldings.js';

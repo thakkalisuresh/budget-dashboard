@@ -8,9 +8,9 @@
  *
  * POST { action, ... }
  *   latest:  { codes: ["147919", ...≤20], includeFx?: true }
- *     → { data: { code: {schemeCode,name,amc,plan,option,nav,date} | null }, stale, fx? }
+ *     → { data: { code: {schemeCode,name,amc,plan,option,category,categoryKey,nav,date} | null }, stale, fx? }
  *   search:  { q }  (≤60 chars)
- *     → { results: [{code,name,amc,plan,option,nav,date}...≤50], stale }
+ *     → { results: [{code,name,amc,plan,option,category,categoryKey,nav,date}...≤50], stale }
  *   history: { code, date }  → { schemeCode, date, resolvedDate, fellBack, nav, source }
  *            { code, from, to } (≤366 days) → { schemeCode, from, to, series: [{date,nav}], source }
  *   fx:      {} → { fx: { currency: "INR", rate, updatedAt } }   (INR per 1 USD)
