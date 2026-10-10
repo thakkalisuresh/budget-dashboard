@@ -108,6 +108,17 @@ describe('groupHoldings', () => {
     expect(g.equityPct).toBe(9);
     expect(g.weightSum).toBe(17);
   });
+  it('ignores derivative notionals and negative cash entirely; debt ratings never become sectors', () => {
+    const g = groupHoldings([
+      mkRow('f', 'INE1', 50), mkRow('f', '', 90, { assetClass: 'derivative', name: 'Future' }),
+      mkRow('f', '', -0.3, { assetClass: 'cash' }), mkRow('f', 'INE2', 30, { assetClass: 'debt', industry: 'AAA' }),
+    ]).get('f');
+    expect(g.weightSum).toBe(80);
+    expect(g.equityPct).toBe(50);
+    expect(g.byKey.size).toBe(1);
+    const r = buildMfInsights({ funds: [FOUR[0]], navs: NAVS, holdings: holdings([mkRow('absl-flexi-cap', 'INE1', 60), mkRow('absl-flexi-cap', 'INE2', 30, { assetClass: 'debt', industry: 'AAA' })]), today: TODAY });
+    expect(r.exposure.sectors.map(x => x.sector)).toEqual(['Banks']);
+  });
   it('drops rows with no usable weight and tolerates empty input', () => {
     expect(groupHoldings([mkRow('f', 'A', 'x'), mkRow('f', 'B', 0), mkRow('f', 'C', -1)]).size).toBe(0);
     expect(groupHoldings(null).size).toBe(0);

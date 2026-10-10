@@ -175,6 +175,8 @@ always says *Ideas and observations from public data, not investment advice.*
   sourceFile`), written by the holdings pipeline, never by the app. A missing/empty tab is
   "no holdings yet"; sign-in errors still surface. The column lists are pinned by
   `mfHoldingsApi.test.js`.
+- **Row hygiene:** `derivative` rows (signed notionals, blank ISIN) and non-positive weights (negative cash)
+  are ignored everywhere; only `equity` rows feed overlap, stock/sector exposure and equity share.
 - **Mock mode:** `mockMfHoldings.js` holds the equity rows of the real 30-Sep-2026 ABSL / ITI /
   SBI Aggressive Hybrid files; the mock SBI plan stays unmapped on purpose (shows the
   "sub-plan not confirmed" note). The card is an extra `useMfNav` consumer next to `MfHoldings`

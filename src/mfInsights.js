@@ -151,12 +151,12 @@ const flag = (id, severity, message, numbers = {}, asOf = []) => ({ id, severity
 export function groupHoldings(rows) {
   const latest = new Map();
   for (const r of rows || []) {
-    if (!r?.fundKey || !r.asOf) continue;
+    if (!r?.fundKey || !r.asOf || r.assetClass === 'derivative') continue; // signed notionals, not part of the 100% NAV
     if (!latest.has(r.fundKey) || String(r.asOf) > latest.get(r.fundKey)) latest.set(r.fundKey, String(r.asOf));
   }
   const out = new Map();
   for (const r of rows || []) {
-    if (!r?.fundKey || String(r.asOf) !== latest.get(r.fundKey)) continue;
+    if (!r?.fundKey || r.assetClass === 'derivative' || String(r.asOf) !== latest.get(r.fundKey)) continue;
     const w = Number(r.weightPct);
     if (!Number.isFinite(w) || w <= 0) continue;
     let g = out.get(r.fundKey);
