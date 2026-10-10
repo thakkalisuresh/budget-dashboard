@@ -336,7 +336,7 @@ describe('ensureInvestTabs', () => {
     ]);
     const header = calls.find(c => c.method === 'PUT' && c.url.includes('EtfHoldings'));
     expect(header.body.values[0]).toEqual(INVEST_TABS.EtfHoldings);
-    const mfHeader = calls.find(c => c.method === 'PUT' && c.url.includes('MfHoldings%27'));
+    const mfHeader = calls.find(c => c.method === 'PUT' && c.url.includes('MfHoldings') && !c.url.includes('Status'));
     expect(mfHeader.body.values[0]).toEqual(INVEST_TABS.MfHoldings);
   });
 
