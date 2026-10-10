@@ -12,6 +12,7 @@ import { ItemizeContributionDialog } from './ItemizeContributionDialog.jsx';
 import { pendingItemizations } from './investItemize.js';
 import { MfNudges } from './MfNudges.jsx';
 import { MfHoldings } from './MfHoldings.jsx';
+import { MfInsightsCard } from './MfInsightsCard.jsx';
 
 // ════════════════════════════════════════════════════════════════════════════
 // InvestTab — the approved hybrid layout: ticker tape → orbital hero →
@@ -269,6 +270,9 @@ export function InvestTab({ user, settings, updateSettings, settingsLoading, cur
         refresh={refresh}
         isReadOnly={isReadOnly}
       />
+
+      {/* Indian MF portfolio health (category mix, SIP split, holdings overlap) */}
+      <MfInsightsCard user={user} settings={settings} accounts={accounts} activities={activities} sipPlans={sipPlans} sheetId={sheetId} />
 
       {/* Dialogs */}
       {editAccount && (

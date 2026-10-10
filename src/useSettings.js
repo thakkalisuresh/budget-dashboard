@@ -2,6 +2,7 @@ import { useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'r
 import { createSettingsController } from './settingsController.js';
 import { DEFAULT_CARD_OWNERS, DEFAULT_PEOPLE } from './cardOwners.js';
 import { DEFAULT_SPLIT_VENDORS } from './itemCategorizer.js';
+import { DEFAULT_MF_THRESHOLDS, sanitizeMfThresholds } from './mfInsights.js';
 
 const DEV_MOCK = import.meta.env.DEV && import.meta.env.VITE_DEV_MOCK === 'true';
 
@@ -87,6 +88,7 @@ export const DEFAULT_SETTINGS = {
   mfBufferPct:       2,    // Indian-MF monthly transfer buffer over the live FX rate (%)
   mfInrDismissed:    [],   // mf_in USD deposit uuids whose "INR received" nudge was dismissed
   mfSipSkipped:      [],   // "planId:YYYY-MM" SIP months the user chose to skip
+  mfInsightThresholds: DEFAULT_MF_THRESHOLDS, // Portfolio-health markers (see mfInsights.js); no editing UI yet
   preBuyThresholds:  { concentrationPct: 25, near52wkPct: 5, overlapPct: 60, sectorCapPct: 80 }, // Candidate Check rule-check flags (Phase 2)
   colorScheme:             'default',
   titleBarColor:           null,   // PWA/browser chrome <meta theme-color>; null = match app dark bg
@@ -205,6 +207,7 @@ async function loadOnce(userId, accessToken) {
       mfInrDismissed:          parsed.mfInrDismissed          || [],
       mfSipSkipped:            parsed.mfSipSkipped            || [],
       mfDisplayCurrency:       parsed.mfDisplayCurrency === 'USD' ? 'USD' : 'INR',
+      mfInsightThresholds:     sanitizeMfThresholds(parsed.mfInsightThresholds),
       // Merge so a saved copy from before the Candidate Check keys shipped still
       // gains overlapPct / sectorCapPct (saved partial overrides the defaults).
       preBuyThresholds:        { ...DEFAULT_SETTINGS.preBuyThresholds, ...(parsed.preBuyThresholds || {}) },

@@ -8,7 +8,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 
 const POLL_MS = 6 * 60 * 60_000;
-export const MF_CACHE_KEY = 'fundient.mfNav.v1';
+export const MF_CACHE_KEY = 'fundient.mfNav.v2';
 const CODE_RE = /^\d{4,7}$/;
 
 /** Valid, unique, sorted scheme codes — drops '', 'unmapped' and anything non-numeric. */

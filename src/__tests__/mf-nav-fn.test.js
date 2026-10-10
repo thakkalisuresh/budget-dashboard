@@ -210,6 +210,7 @@ describe('mf-nav function — latest', () => {
     expect(json.data['147919']).toEqual({
       schemeCode: '147919', name: 'ITI Small Cap Fund', amc: 'ITI Mutual Fund',
       plan: 'direct', option: 'growth', nav: 37.2823, date: '2026-10-09',
+      category: 'Equity Scheme - Small Cap Fund', categoryKey: 'Equity: Small Cap Fund',
     });
     expect(json.data['999998']).toBeNull();
     expect(json.data['148699']).toBeNull();
@@ -277,6 +278,7 @@ describe('mf-nav function — search', () => {
     expect(json.results.map(r => r.code)).toEqual(['147919', '147917', '147920', '147918']);
     expect(json.results[0]).toMatchObject({
       code: '147919', name: 'ITI Small Cap Fund', amc: 'ITI Mutual Fund', plan: 'direct', option: 'growth',
+      category: 'Equity Scheme - Small Cap Fund', categoryKey: 'Equity: Small Cap Fund',
     });
   });
 
@@ -375,5 +377,23 @@ describe('mf-nav function — fx', () => {
 
   it('getRate exposes rate + updatedAt', async () => {
     expect(await getRate('inr')).toEqual({ rate: 83.25, updatedAt: new Date(1791504000 * 1000).toISOString() });
+  });
+});
+
+describe('category headers', () => {
+  it('normalises old and new AMFI label families to one key', () => {
+    const k = (h) => lib.parseCategoryHeader(h);
+    expect(k('Open Ended Schemes(Equity Scheme - Flexi Cap Fund)')).toEqual({ category: 'Equity Scheme - Flexi Cap Fund', categoryKey: 'Equity: Flexi Cap Fund' });
+    expect(k('Open Ended Schemes(Equity Schemes - Flexi Cap Fund)').categoryKey).toBe('Equity: Flexi Cap Fund');
+    expect(k('Open Ended Schemes( Hybrid Scheme(s) - Aggressive Hybrid Fund )').categoryKey).toBe('Hybrid: Aggressive Hybrid Fund');
+    expect(k('Open Ended Schemes(Solution Oriented Scheme - Retirement Fund)').categoryKey).toBe('Solution Oriented: Retirement Fund');
+    expect(k('Close Ended Schemes(Income)')).toEqual({ category: 'Income', categoryKey: 'Income' });
+    expect(k('Open Ended Schemes')).toEqual({ category: null, categoryKey: null });
+  });
+
+  it('carries the category onto every scheme under the header', () => {
+    const list = lib.parseNavAll(NAV_ALL);
+    expect(list.find(s => s.code === '148685').categoryKey).toBe('Other: Retirement');
+    expect(list.find(s => s.code === '120564').category).toBe('Equity Scheme - Flexi Cap Fund');
   });
 });

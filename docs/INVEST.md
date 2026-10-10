@@ -127,6 +127,61 @@ and SipPlans exist. All maths lives in the pure `investMfView.buildMfView`
   four plans (two mapped, two unmapped), three months of SIPs, NAVs, an FX rate and
   canned search results; nothing hits `/api/mf-nav` or the sheet.
 
+### Portfolio health (`MfInsightsCard.jsx`, pure logic in `mfInsights.js`)
+
+Card under the MF holdings (same visibility rule as `MfHoldings`, read-only viewers
+included; it only reads). Slice 1 = category mix, SIP-split sanity, holdings
+overlap/concentration. Deterministic and rule-based (same spirit as `investInsights.js`:
+overlap = Σ min weights, HHI / effective-N); no LLM, no buy/sell/switch wording. The card
+always says *Ideas and observations from public data, not investment advice.*
+
+- **Fund identity** (`fundKeyFor`): mapped plans by AMFI code (4 verified Direct Growth codes)
+  or scheme name; unmapped plans by plan id (`birla-flexi`, `birla-conglomerate`,
+  `iti-small-cap`). `sbi-retirement` stays unknown until the scheme is mapped; the SBI
+  sub-plan is read from the scheme name. Unknown funds are skipped for holdings insights
+  (a note says so) but still count in category mix and SIP split. Holdings
+  `fundKey`s: `absl-flexi-cap`, `absl-conglomerate`, `iti-small-cap`,
+  `sbi-retirement-{aggressive-hybrid,aggressive,conservative-hybrid,conservative}`.
+- **Weights:** current market value per fund when every active fund has one, else the
+  monthly SIP amount (`amountInr`). The card states which basis was used.
+- **Category mix:** AMFI `categoryKey` per fund (from `useMfNav`), else a fixed per-fundKey table
+  marked "assumed"; percent per category, equity / hybrid / solution-oriented / debt split,
+  and a look-through equity share per fund from the holdings.
+- **SIP split:** active plans only. Flags: one fund above `sipSharePct`; SIP share vs value
+  share apart by `sipValueDivergencePts`; a retirement lock-in fund (SBI: 5 years per
+  instalment or until 65, per the scheme document) at/above `lockInSharePct` (a plain fact).
+- **Overlap** (equity `assetClass` only, latest `asOf` per fund, duplicate ISINs summed):
+  pair overlap = Σ over shared ISINs of min(wA, wB) with each fund's equity weights
+  re-scaled to 100% of its own equity (the headline, what thresholds apply to), shown with
+  each fund's equity coverage, the common-stock count, top shared names and the raw
+  %-of-NAV figure (ABSL Flexi × Conglomerate, 30-Sep-2026: 20.7% raw, 21.1% scaled, 14
+  stocks). Portfolio exposure = Σ over funds of (portfolio weight × holding weight) by
+  ISIN, so figures are % of the whole portfolio and are minimums when some funds have no
+  holdings (coverage % is shown). Top-10, HHI / effective-N, single-stock and sector (`industry`) caps.
+- **Thresholds** (`DEFAULT_MF_THRESHOLDS`, `settings.mfInsightThresholds`, sanitised in
+  `useSettings`: finite numbers in (0, 100] else default; no editing UI yet): `pairOverlapPct`
+  25 (watch), `pairOverlapInfoPct` 15 (info), `singleStockPct` 10, `sectorPct` 30,
+  `categoryPct` 50, `sipSharePct` 40, `sipValueDivergencePts` 15, `lockInSharePct` 30.
+  A flag is `{ id, severity: 'watch'|'info', message, numbers, asOf }`; "watch" reads *Worth
+  keeping an eye on*, "info" *For awareness*.
+- **Stale / missing data:** holdings older than 45 days, or a `stale`/`failed` status row, get a
+  visible note (the stored rows still show, with their as-of date and the reason). With no
+  holdings at all the card still shows category mix and SIP split and says holdings are not
+  available yet, so it works before the holdings pipeline has run.
+- **Holdings source** (`mfHoldingsApi.js`, own `useMfHoldings` hook, 10-min in-memory cache):
+  Invest-sheet tabs `MfHoldings` (`asOf, fundKey, isin, name, industry, assetClass, weightPct
+  (percent 0-100 of the scheme), marketValueInrLakh, sourceFile`) and `MfHoldingsStatus`
+  (`fundKey, asOf, status ok|stale|failed|missing, checkedAt, rowCount, weightSum, reason,
+  sourceFile`), written by the holdings pipeline, never by the app. A missing/empty tab is
+  "no holdings yet"; sign-in errors still surface. The column lists are pinned by
+  `mfHoldingsApi.test.js`.
+- **Mock mode:** `mockMfHoldings.js` holds the equity rows of the real 30-Sep-2026 ABSL / ITI /
+  SBI Aggressive Hybrid files; the mock SBI plan stays unmapped on purpose (shows the
+  "sub-plan not confirmed" note). The card is an extra `useMfNav` consumer next to `MfHoldings`
+  (the server caches NAVAll, so it is one more small POST).
+- **Tests:** `mfInsights.test.js` (fixture `__tests__/fixtures/mfHoldings.sample.json` = the same
+  real files), `mfHoldingsApi.test.js`, category cases in `mf-nav-fn.test.js`.
+
 ## Quotes ($0 by construction)
 
 `/api/quotes` (`functions/quotes.mjs`) proxies Finnhub so the API key never reaches
@@ -167,13 +222,16 @@ NAVs for Indian mutual funds. Same auth stack as `/api/quotes`. Sources:
 
 | action | request | response |
 |---|---|---|
-| `latest` | `codes: ["147919", …]` (≤20, numeric), `includeFx?: true` | `{ data: { "147919": { schemeCode, name, amc, plan, option, nav, date } \| null }, stale, fx? }` |
-| `search` | `q` (≤60 chars) | `{ results: [{ code, name, amc, plan, option, nav, date }] (≤50), stale }` |
+| `latest` | `codes: ["147919", …]` (≤20, numeric), `includeFx?: true` | `{ data: { "147919": { schemeCode, name, amc, plan, option, category, categoryKey, nav, date } \| null }, stale, fx? }` |
+| `search` | `q` (≤60 chars) | `{ results: [{ code, name, amc, plan, option, category, categoryKey, nav, date }] (≤50), stale }` |
 | `history` (one date) | `code`, `date` | `{ schemeCode, date, resolvedDate, fellBack, nav, source }` |
 | `history` (range) | `code`, `from`, `to` (≤366 days) | `{ schemeCode, from, to, series: [{ date, nav }], source }` |
 | `fx` | — | `{ fx: { currency: "INR", rate, updatedAt } }` (INR per 1 USD) |
 
-`plan` is `direct`/`regular`/`null`; `option` is `growth`/`idcw`/`other`. Search
+`plan` is `direct`/`regular`/`null`; `option` is `growth`/`idcw`/`other`. `category` is the raw
+NAVAll header text (`Equity Scheme - Flexi Cap Fund`), `categoryKey` its normalised form
+(`Equity: Flexi Cap Fund`; AMFI's old/new "Scheme"/"Schemes" labels collapse to one key; both
+null when the header has no category). Clients group on the part before `:`. Search
 covers open-ended schemes with an inferable plan (others only on an exact name or
 code match) and lists Direct Growth first. `history` returns the NAV for exactly
 `date`, or the previous available one with `resolvedDate` and `fellBack: true`
@@ -185,7 +243,7 @@ The client hook `useMfNav(codes, accessToken)` (`src/useMfNav.js`) fetches `late
 with `includeFx` on mount and then every 6h, only while the Invest tab is mounted
 and the app is visible. It ignores empty / `"unmapped"` codes and returns
 `{ navs, fx, stale, lastUpdated, refresh }`; the last response is cached per device
-in `localStorage` (`fundient.mfNav.v1`) — a convenience, not a source of truth.
+in `localStorage` (`fundient.mfNav.v2`) — a convenience, not a source of truth.
 
 ## Seeding & imports
 
