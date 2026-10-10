@@ -246,9 +246,9 @@ no Telegram/push. Written in one pass at the end of the run (holdings, then stat
 
 | AMC | Fetch | Notes |
 |---|---|---|
-| ABSL | `GET` the JSON listing `…/FactsheetAccordionById?id=3ccab227-…&month=&year=0` (the `month`/`year` params are required), pick the item "Monthly Portfolios as on <date>" for the target, `GET` its ~2 MB zip (host allowlist: `abcscprod.azureedge.net`, `mutualfund.adityabirlacapital.com`), unzip the single legacy `.xls` in memory | File names change nearly monthly, so the link comes only from the listing. Zip guarded: ≤ 3 entries, ≤ 40 MB uncompressed. |
+| ABSL | `GET` the JSON listing `…/FactsheetAccordionById?id=3ccab227-…&month=&year=0` (the `month`/`year` params are required), pick the item "Monthly Portfolios as on <date>" for the target, `GET` its ~2 MB zip (host allowlist: `abcscprod.azureedge.net`, `mutualfund.adityabirlacapital.com`), unzip the single legacy `.xls` in memory | File names change nearly monthly, so the link comes only from the listing. The accordion id is a constant; if that listing fails or has no monthly items, the job reads the portfolio page's `data-accordian-api` links and tries up to 4 other accordions (an unpublished month never triggers this). Zip guarded: ≤ 3 entries, ≤ 40 MB uncompressed. |
 | SBI | `GET` `www.sbimf.com/docs/default-source/scheme-portfolios/all-schemes-monthly-portfolio---as-on-<D><st/nd/rd/th>-<month>-<year>.xlsx`; 404 = not out yet | Sheets `SRBF-AHP`, `-AP`, `-CHP`, `-CP`. |
-| ITI | **Semi-manual.** The AMC's listing API is client-side-encrypted and the file name contains the upload epoch, so it cannot be discovered | Pass this month's link as `itiUrl` (see below). Without it ITI is recorded `missing` with that hint. |
+| ITI | **Semi-manual.** The AMC's listing API is client-side-encrypted (`{"eData": ciphertext}`; we deliberately do not reverse it) and the file name contains the upload epoch, so it cannot be discovered | The owner pastes the link via `POST /api/mf-holdings {action:'ingest', house:'iti', url}` (see below). Until then the scheduled job records ITI as `missing` with reason "awaiting manual link". |
 
 All requests: honest identifying `User-Agent`, ≤ 1 request/second per host, 45 s timeout,
 bounded response size (streamed, aborted at the cap), https + host allowlist (also after
@@ -261,11 +261,18 @@ time → `409 {retryable:true}`):
 | action | request | response |
 |---|---|---|
 | `status` | — | `{ target, status: [MfHoldingsStatus rows] }` |
-| `refresh` | optional `asOf` (a month-end ≤ the latest one, ≤ 3 months back — backfill), `houses` (subset of `absl`, `sbi`, `iti`), `force` (re-ingest a stored month), `itiUrl` | `{ target, houses: { absl: { status, funds }, … }, wrote, status }` |
+| `refresh` | optional `asOf` (a month-end ≤ the latest one, ≤ 3 months back — backfill), `houses` (subset of `absl`, `sbi`, `iti`), `force` (re-ingest a stored month), `itiUrl` (same rules as `ingest`'s `url`) | `{ target, houses: { absl: { status, funds, details }, … }, wrote, status }` |
+| `ingest` | `house: 'iti'`, `url: 'https://itiamc.com/admin/pdf/<epoch>-ITIMF_Monthly_Portfolio_<DDMMYYYY>.xlsx'` | `{ ok, fundKey, asOf, status, rowCount, weightSum, reason }` (`status` as in `MfHoldingsStatus`) |
 
-House `status` is `done | skipped | partial | missing | failed`. `itiUrl` must be
-`https://itiamc.com/admin/pdf/<epoch>-ITIMF_Monthly_Portfolio_<DDMMYYYY>.xlsx` (or `www.`),
-with the date equal to the target month-end; anything else is rejected before any request.
+House `status` is `done | skipped | partial | missing | failed`. **`ingest` (ITI's manual path)**:
+the link is validated before any request — https only, host exactly `itiamc.com` or
+`www.itiamc.com`, no credentials/query/fragment, path exactly
+`/admin/pdf/<digits>-ITIMF_Monthly_Portfolio_<DDMMYYYY>.xlsx`, and the filename date must be a
+month-end within the last 3 months (so August can be backfilled). Then: no redirects followed,
+≤ 6 MB, must start with the zip/`.xlsx` signature, and the sheet's own portfolio date must equal the
+filename date (else `status: 'stale'`, nothing written). It then takes the same
+parse → check → replace path as the job (re-pasting a link replaces that month, idempotent).
+Invalid input → `400`; a bad/old link (404, HTML page, wrong date, failed check) → `200 { ok: false, status, reason }`.
 Hosting forwards `/api/*` to the function with a 60 s limit, so a refresh should be limited with
 `houses` if the AMCs are slow.
 
@@ -290,10 +297,20 @@ real 30-Sep-2026 disclosures cut down to the held schemes' sheets (the ABSL file
 BIFF8 `.xls`); regenerate with `node scripts/build-mf-holdings-fixtures.mjs <absl.xls> <sbi.xlsx> <iti.xlsx>`.
 Tests mock `fetch`; none touch the network.
 
-**Not built (design sketch).** A manual-upload fallback would be one more `refresh`-style action
-`ingest { house, fileName, contentBase64 }` (≤ ~12 MB, size-checked before decoding) that feeds
-the same `parse → check → merge → write` path as the fetchers (`runMfHoldings` already takes the
-buffer from a pluggable `fetch`), plus a file picker in the Invest tab.
+**Failure modes (all tested).** ABSL: listing 500 (the `month=&year=0` params missing, or the Sitecore
+accordion id changed → fallback above), listing not JSON / no `AccordionList`, month not listed yet
+(`missing`), link on an unexpected host or not a `.zip`, zip with > 3 entries / oversized / no spreadsheet /
+corrupt, sheet code renamed or title mismatch (that fund fails; Index is not trusted for another
+sheet). SBI: 404 = not published yet (`missing`); wrong day suffix would also 404; sheet missing or
+title of another sub-plan → that sub-plan fails alone. ITI: link not supplied (`missing`), bad link,
+redirect, HTML instead of xlsx, wrong filename date, sheet renamed. Everywhere: truncated downloads
+(fewer bytes than `Content-Length`, or an unreadable workbook), duplicate ISINs (aggregated), `NIL`/blank/
+`$0.00%` weights, fraction↔percent mix-ups (unit read from the GRAND TOTAL; a sum far outside 90-102
+still fails the fund), and a stale file (the AMC still serves last month's → `stale`).
+
+**Not built.** A generic file-upload fallback (`ingest { house, fileName, contentBase64 }`, ≤ ~12 MB checked
+before decoding, feeding the same parse → check → merge → write path) — ITI's pasted-link `ingest` covers
+the one house that needs a manual step.
 
 ## Seeding & imports
 

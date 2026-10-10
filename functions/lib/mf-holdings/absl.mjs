@@ -15,11 +15,14 @@ import { parseHouseWorkbook } from './_workbook.mjs';
 
 export const DEFAULT_UNIT = 'fraction';
 
+// The "Monthly Portfolio" accordion id (found as data-accordian-api on the portfolio page).
 // `&month=&year=0` is required: without it the endpoint answers HTTP 500.
-export const ABSL_LISTING_URL = 'https://mutualfund.adityabirlacapital.com/postlogin/CustomApi/Resources/FactsheetAccordionById'
-  + '?id=3ccab227-9de5-4494-b78d-2b4f7c0c054a'
-  + '&ctype=%2Fsitecore%2Fcontent%2FRoot%2FBSL%2FLibrary%2FLists%2FFAQ%2FCustomer%20Types%2FIndividual'
-  + '&month=&year=0';
+const BASE = 'https://mutualfund.adityabirlacapital.com';
+const ACCORDION_ID = '3ccab227-9de5-4494-b78d-2b4f7c0c054a';
+const CTYPE = '%2Fsitecore%2Fcontent%2FRoot%2FBSL%2FLibrary%2FLists%2FFAQ%2FCustomer%20Types%2FIndividual';
+const accordionUrl = (id) => `${BASE}/postlogin/CustomApi/Resources/FactsheetAccordionById?id=${id}&ctype=${CTYPE}&month=&year=0`;
+export const ABSL_LISTING_URL = accordionUrl(ACCORDION_ID);
+const PORTFOLIO_PAGE_URL = `${BASE}/forms-and-downloads/portfolio`;
 
 const ALLOWED_HOSTS = ['mutualfund.adityabirlacapital.com', 'abcscprod.azureedge.net'];
 const MAX_ZIP_BYTES = 12_000_000;
@@ -60,24 +63,60 @@ function extractSpreadsheet(zip, maxUnzipBytes) {
   return { fileName: sheet.name.split(/[\\/]/).pop(), buffer: Buffer.from(data) };
 }
 
-/** @returns {Promise<{fileName:string, buffer:Buffer}>} */
-export async function fetchAbsl({ asOf, fetchImpl, sleep, maxUnzipBytes = MAX_UNZIP_BYTES } = {}) {
-  const client = makeClient({ fetchImpl, sleep, allowedHosts: ALLOWED_HOSTS });
+const isMonthly = (i) => itemDate(i?.ResourceLink) !== null;
 
-  let listing;
+/** One accordion listing → its items, or an MfFetchError('failed') naming the cause. */
+async function loadListing(client, url) {
+  let res;
   try {
-    listing = await client.get(ABSL_LISTING_URL, { maxBytes: 2_000_000, accept: 'application/json' });
+    res = await client.get(url, { maxBytes: 2_000_000, accept: 'application/json' });
   } catch (e) {
     if (e instanceof MfFetchError) throw new MfFetchError('failed', `ABSL listing: ${e.message}`);
     throw e;
   }
   let items;
   try {
-    items = JSON.parse(listing.buffer.toString('utf8'))?.AccordionList;
+    items = JSON.parse(res.buffer.toString('utf8'))?.AccordionList;
   } catch {
     throw new MfFetchError('failed', 'ABSL listing is not JSON (endpoint changed?)');
   }
   if (!Array.isArray(items)) throw new MfFetchError('failed', 'ABSL listing has no AccordionList (endpoint changed?)');
+  return items;
+}
+
+/**
+ * Fallback if the hard-coded accordion id stops working: read the portfolio page's
+ * static HTML for its data-accordian-api links and try each (at most 4) until one
+ * lists "Monthly Portfolios as on …" items.
+ */
+async function discoverListing(client) {
+  const page = await client.get(PORTFOLIO_PAGE_URL, { maxBytes: 2_000_000, accept: 'text/html' });
+  const ids = [...new Set([...page.buffer.toString('utf8').matchAll(/data-accordian-api="[^"]*FactsheetAccordionById\?id=([0-9a-f-]{36})/gi)].map(m => m[1].toLowerCase()))]
+    .filter(id => id !== ACCORDION_ID).slice(0, 4);
+  for (const id of ids) {
+    try {
+      const items = await loadListing(client, accordionUrl(id));
+      if (items.some(isMonthly)) return items;
+    } catch { /* try the next accordion */ }
+  }
+  throw new MfFetchError('failed', 'ABSL: no accordion on the portfolio page lists monthly portfolios (page changed?)');
+}
+
+/** @returns {Promise<{fileName:string, buffer:Buffer}>} */
+export async function fetchAbsl({ asOf, fetchImpl, sleep, maxUnzipBytes = MAX_UNZIP_BYTES } = {}) {
+  const client = makeClient({ fetchImpl, sleep, allowedHosts: ALLOWED_HOSTS });
+
+  let items = null;
+  let primaryError = null;
+  try {
+    items = await loadListing(client, ABSL_LISTING_URL);
+  } catch (e) {
+    if (!(e instanceof MfFetchError)) throw e;
+    primaryError = e;
+  }
+  if (!items || !items.some(isMonthly)) {
+    try { items = await discoverListing(client); } catch (e) { throw primaryError || e; }   // report the primary failure first
+  }
 
   const hit = items.find(i => itemDate(i?.ResourceLink) === asOf);
   if (!hit) throw new MfFetchError('missing', `ABSL listing has no "Monthly Portfolios as on" entry for ${asOf} yet`);

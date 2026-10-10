@@ -10,9 +10,14 @@
  *                     /api/mf-nav). POST /api/mf-holdings
  *                       { action: 'status' }
  *                       { action: 'refresh', asOf?, houses?, force?, itiUrl? }
- *                     `asOf` backfills a month-end (≤ 3 months back); `itiUrl` is
- *                     this month's ITI file link (ITI's listing is encrypted, so
- *                     that house is semi-manual — see lib/mf-holdings/iti.mjs).
+ *                       { action: 'ingest', house: 'iti', url }
+ *                     `asOf` backfills a month-end (≤ 3 months back). ITI's listing
+ *                     is encrypted, so that house is semi-manual: `ingest` takes a
+ *                     pasted file link (strictly validated; the filename date must
+ *                     be a month-end within the last 3 months and match the file's
+ *                     own portfolio date) and runs the same parse → check → replace
+ *                     path as the job. Returns { ok, fundKey, asOf, status,
+ *                     rowCount, weightSum, reason }. See lib/mf-holdings/iti.mjs.
  *
  * Output: Invest sheet tabs MfHoldings + MfHoldingsStatus (contract documented in
  * lib/_mf-holdings.mjs and docs/INVEST.md). Failures keep the previous month's
@@ -35,7 +40,7 @@ import {
 } from './lib/_mf-holdings.mjs';
 import { ABSL } from './lib/mf-holdings/absl.mjs';
 import { SBI } from './lib/mf-holdings/sbi.mjs';
-import { ITI } from './lib/mf-holdings/iti.mjs';
+import { ITI, validateItiUrl } from './lib/mf-holdings/iti.mjs';
 
 const IMPL = { absl: ABSL, sbi: SBI, iti: ITI };
 const HOLDINGS_TAB = 'MfHoldings';
@@ -165,6 +170,31 @@ export const mfHoldings = onRequest(
             console.log(`mf-holdings: on-demand refresh for ${v.email}`, JSON.stringify(result));
             const { status } = await io.read();
             return sendJson(res, 200, { action: 'refresh', ...result, status }, corsOrigin);
+          } finally {
+            running = false;
+          }
+        }
+
+        case 'ingest': {
+          if (body.house !== 'iti') return bad("ingest is only supported for house 'iti'");
+          if (typeof body.url !== 'string' || body.url.length > 300) return bad('url must be a string of at most 300 characters');
+          const u = validateItiUrl(body.url);
+          if (!u.ok) return sendJson(res, 400, { ok: false, error: u.reason, reason: u.reason }, corsOrigin);
+          const a = validateAsOf(u.asOf, now);
+          if (!a.ok) return sendJson(res, 400, { ok: false, error: a.reason, reason: a.reason }, corsOrigin);
+          if (running) return sendJson(res, 409, { error: 'A refresh is already running', retryable: true }, corsOrigin);
+
+          running = true;
+          try {
+            // force: re-pasting a link replaces that month's rows (idempotent).
+            const result = await runMfHoldings({ io, impl: IMPL, now, asOf: u.asOf, houses: ['iti'], force: true, params: { itiUrl: body.url } });
+            await reportFailures(result);
+            const fundKey = 'iti-small-cap';
+            const d = result.houses.iti?.details?.[fundKey] || { status: 'failed', asOf: u.asOf, rowCount: 0, weightSum: 0, reason: 'no result' };
+            console.log(`mf-holdings: ITI ingest ${u.asOf} for ${v.email}: ${d.status}`);
+            return sendJson(res, 200, {
+              ok: d.status === 'ok', fundKey, asOf: d.asOf, status: d.status, rowCount: d.rowCount, weightSum: d.weightSum, reason: d.reason || '',
+            }, corsOrigin);
           } finally {
             running = false;
           }

@@ -182,7 +182,7 @@ function statusFromStored(fundKey, holdings, prev, { status, reason, now }) {
  * @param {string[]} [p.houses]  limit to these fund houses
  * @param {boolean} [p.force]    re-ingest even if the month is already stored
  * @param {object} [p.params]    extra per-house fetch inputs (e.g. { itiUrl })
- * @returns {Promise<{target, houses: Record<string,{status, funds: Record<string,string>}>, wrote: boolean}>}
+ * @returns {Promise<{target, houses: Record<string,{status, funds: Record<string,string>, details}>, wrote: boolean}>}
  */
 export async function runMfHoldings({ io, impl, now = new Date(), asOf, houses, force = false, fetchImpl, sleep, params = {} }) {
   if (asOf !== undefined) {
@@ -212,6 +212,7 @@ export async function runMfHoldings({ io, impl, now = new Date(), asOf, houses, 
     const funds = fundsOfHouse(house).filter(f => force || !hasRows(f.fundKey));
     if (funds.length === 0) { result.houses[house] = { status: 'skipped', funds: {} }; continue; }
     const outcomes = {};
+    const details = {};      // per-fund { status, asOf, rowCount, weightSum, reason } for this run
     const impls = impl[house];
     let parsed = null;
     try {
@@ -220,8 +221,12 @@ export async function runMfHoldings({ io, impl, now = new Date(), asOf, houses, 
     } catch (e) {
       const kind = e instanceof MfFetchError ? e.kind : 'failed';
       const reason = e?.message || String(e);
-      for (const f of funds) { markFund(f.fundKey, kind, reason); outcomes[f.fundKey] = kind; }
-      result.houses[house] = { status: kind, funds: outcomes, reason };
+      for (const f of funds) {
+        markFund(f.fundKey, kind, reason);
+        outcomes[f.fundKey] = kind;
+        details[f.fundKey] = { status: kind, asOf: target, rowCount: 0, weightSum: 0, reason };
+      }
+      result.houses[house] = { status: kind, funds: outcomes, details, reason };
       continue;
     }
 
@@ -229,6 +234,7 @@ export async function runMfHoldings({ io, impl, now = new Date(), asOf, houses, 
     for (const f of funds) {
       const p = parsed[f.fundKey] || { fundKey: f.fundKey, error: 'fund missing from the parsed workbook' };
       const check = checkFund(p, { target });
+      details[f.fundKey] = { status: check.status, asOf: p.asOf || target, rowCount: p.rows?.length || 0, weightSum: check.weightSum, reason: check.reason };
       if (check.status === 'ok') {
         fresh[f.fundKey] = { asOf: p.asOf, rows: p.rows, sourceFile: p.sourceFile };
         outcomes[f.fundKey] = 'ok';
@@ -247,7 +253,7 @@ export async function runMfHoldings({ io, impl, now = new Date(), asOf, houses, 
       }
     }
     const vals = Object.values(outcomes);
-    result.houses[house] = { status: vals.every(v => v === 'ok') ? 'done' : vals.some(v => v === 'ok') ? 'partial' : 'failed', funds: outcomes };
+    result.houses[house] = { status: vals.every(v => v === 'ok') ? 'done' : vals.some(v => v === 'ok') ? 'partial' : 'failed', funds: outcomes, details };
   }
 
   if (dirty) {

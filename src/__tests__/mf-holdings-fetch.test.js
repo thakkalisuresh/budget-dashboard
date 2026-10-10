@@ -134,6 +134,32 @@ describe('ABSL fetch', () => {
     await expect(run(Buffer.from('not a zip'))).rejects.toThrow(/zip/i);
   });
 
+  const PAGE = 'https://mutualfund.adityabirlacapital.com/forms-and-downloads/portfolio';
+  const acc = (id) => `https://mutualfund.adityabirlacapital.com/postlogin/CustomApi/Resources/FactsheetAccordionById?id=${id}&ctype=%2Fsitecore%2Fcontent%2FRoot%2FBSL%2FLibrary%2FLists%2FFAQ%2FCustomer%20Types%2FIndividual&month=&year=0`;
+  const HTML = ['56e98138-8200-4188-9119-90870c17498e', '12341969-e855-4a80-b20a-dfb63e2268d4', 'aaaaaaaa-1111-2222-3333-444444444444']
+    .map(id => `<li data-accordian-api="/postlogin/CustomApi/Resources/FactsheetAccordionById?id=${id}&amp;ctype=x">`).join('');
+
+  it('if the hard-coded accordion id breaks, discovers the monthly accordion from the portfolio page', async () => {
+    const f = router({
+      [ABSL_LISTING_URL]: status(500),
+      [PAGE]: ok(HTML),
+      [acc('56e98138-8200-4188-9119-90870c17498e')]: ok(JSON.stringify({ AccordionList: [{ ResourceLink: 'Half Yearly as on Mar 31, 2026', pdfUrl: 'https://abcscprod.azureedge.net/h.zip' }] })),
+      [acc('12341969-e855-4a80-b20a-dfb63e2268d4')]: ok(JSON.stringify(LISTING)),
+      [SEP_ZIP]: ok(zipOf({ 'a.xls': new Uint8Array(fx('absl.xls')) })),
+    });
+    const file = await fetchAbsl({ asOf: '2026-09-30', fetchImpl: f, sleep: noSleep });
+    expect(file.fileName).toBe('a.xls');
+    expect(f.calls.map(c => c.url)).toEqual([ABSL_LISTING_URL, PAGE, acc('56e98138-8200-4188-9119-90870c17498e'), acc('12341969-e855-4a80-b20a-dfb63e2268d4'), SEP_ZIP]);
+  });
+
+  it('reports the primary failure when discovery finds nothing either; a merely-unpublished month never triggers discovery', async () => {
+    const dead = router({ [ABSL_LISTING_URL]: status(500), [PAGE]: ok('<html>no accordions</html>') });
+    await expect(fetchAbsl({ asOf: '2026-09-30', fetchImpl: dead, sleep: noSleep })).rejects.toMatchObject({ kind: 'failed', message: expect.stringContaining('500') });
+    const none = router({ [ABSL_LISTING_URL]: ok(JSON.stringify(LISTING)) });
+    await expect(fetchAbsl({ asOf: '2026-10-31', fetchImpl: none, sleep: noSleep })).rejects.toMatchObject({ kind: 'missing' });
+    expect(none.calls).toHaveLength(1);
+  });
+
   it('does not accept path-traversal member names as the file name', async () => {
     const f = router({ [ABSL_LISTING_URL]: ok(JSON.stringify(LISTING)), [SEP_ZIP]: ok(zipOf({ '../../etc/x.xls': new Uint8Array(fx('absl.xls')) })) });
     const file = await fetchAbsl({ asOf: '2026-09-30', fetchImpl: f, sleep: noSleep });
@@ -189,7 +215,7 @@ describe('ITI fetch (semi-manual: the listing API is encrypted)', () => {
 
   it('without a URL it is "missing" with an actionable reason, and never fetches', async () => {
     const f = router({});
-    await expect(fetchIti({ asOf: '2026-09-30', fetchImpl: f, sleep: noSleep })).rejects.toMatchObject({ kind: 'missing', message: expect.stringContaining('itiUrl') });
+    await expect(fetchIti({ asOf: '2026-09-30', fetchImpl: f, sleep: noSleep })).rejects.toMatchObject({ kind: 'missing', message: expect.stringContaining('awaiting manual link') });
     expect(f).not.toHaveBeenCalled();
   });
 
@@ -201,6 +227,21 @@ describe('ITI fetch (semi-manual: the listing API is encrypted)', () => {
     const g = router({});
     await expect(fetchIti({ asOf: '2026-09-30', itiUrl: 'https://evil.example/a.xlsx', fetchImpl: g, sleep: noSleep })).rejects.toMatchObject({ kind: 'failed' });
     expect(g).not.toHaveBeenCalled();
+  });
+
+  it('without asOf, returns the filename date (ISO) for backfill validation', () => {
+    expect(validateItiUrl(URL_OK)).toEqual({ ok: true, asOf: '2026-09-30' });
+    expect(validateItiUrl('https://itiamc.com/admin/pdf/1791539984-ITIMF_Monthly_Portfolio_31082026.xlsx')).toEqual({ ok: true, asOf: '2026-08-31' });
+  });
+
+  it('does not follow redirects, rejects non-xlsx bodies and oversized files', async () => {
+    const redirect = router({ [URL_OK]: () => new Response(null, { status: 302, headers: { location: 'https://evil.example/x.xlsx' } }) });
+    await expect(fetchIti({ asOf: '2026-09-30', itiUrl: URL_OK, fetchImpl: redirect, sleep: noSleep })).rejects.toThrow(/redirect/i);
+    expect(redirect.calls[0].init.redirect).toBe('manual');
+    const html = router({ [URL_OK]: () => ok('<html>maintenance</html>') });
+    await expect(fetchIti({ asOf: '2026-09-30', itiUrl: URL_OK, fetchImpl: html, sleep: noSleep })).rejects.toThrow(/signature|xlsx/i);
+    const big = router({ [URL_OK]: () => ok(Buffer.alloc(10), { 'content-length': '7000000' }) });
+    await expect(fetchIti({ asOf: '2026-09-30', itiUrl: URL_OK, fetchImpl: big, sleep: noSleep })).rejects.toThrow(/too large/);
   });
 
   it('exposes MfFetchError for fetchers', () => {

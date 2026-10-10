@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import process from 'node:process';
 
 vi.stubEnv('ALLOWED_EMAILS', 'nair.sabarish97@gmail.com');
 
@@ -22,8 +25,10 @@ vi.mock('../../functions/lib/_invest-sheets.mjs', () => ({
 vi.mock('../../functions/lib/_error-log.mjs', () => ({ reportError: reportMock }));
 vi.mock('firebase-functions/v2/scheduler', () => ({ onSchedule: (_opts, fn) => fn }));
 
+const itiFile = { body: null, status: 200 };
 vi.stubGlobal('fetch', vi.fn(async (url) => {
   if (String(url).includes('oauth2/v3/userinfo')) return { ok: true, json: async () => ({ email: 'nair.sabarish97@gmail.com' }) };
+  if (String(url).startsWith('https://itiamc.com/admin/pdf/')) return new Response(itiFile.body, { status: itiFile.status });
   throw new Error(`unexpected network call in test: ${url}`);
 }));
 
@@ -101,7 +106,7 @@ describe('mf-holdings endpoint — behaviour', () => {
     expect(r.json.houses.iti.status).toBe('missing');
     const s = r.json.status.find(x => x.fundKey === 'iti-small-cap');
     expect(s).toMatchObject({ status: 'missing' });
-    expect(s.reason).toMatch(/itiUrl/);
+    expect(s.reason).toMatch(/awaiting manual link/);
     expect(reportMock).not.toHaveBeenCalled();          // "not published / not supplied" is not an error
   });
 
@@ -124,6 +129,64 @@ describe('mf-holdings endpoint — behaviour', () => {
     expect(second.json.retryable).toBe(true);
     release();
     expect((await first).status).toBe(200);
+  });
+});
+
+const ITI_SEP = 'https://itiamc.com/admin/pdf/1791539984-ITIMF_Monthly_Portfolio_30092026.xlsx';
+const ITI_AUG = 'https://itiamc.com/admin/pdf/1788000000-ITIMF_Monthly_Portfolio_31082026.xlsx';
+
+describe('mf-holdings ingest (ITI pasted link)', () => {
+  beforeEach(() => {
+    itiFile.body = readFileSync(resolve(process.cwd(), 'src/__tests__/fixtures/mf-holdings/iti.xlsx'));
+    itiFile.status = 200;
+  });
+
+  it('400s a bad house, a non-string / over-long / invalid / off-allowlist url, and a non-month-end or too-old date', async () => {
+    const bads = [
+      { house: 'sbi', url: ITI_SEP }, { house: 'iti' }, { house: 'iti', url: 5 }, { house: 'iti', url: 'x'.repeat(301) },
+      { house: 'iti', url: 'http://itiamc.com/admin/pdf/1791539984-ITIMF_Monthly_Portfolio_30092026.xlsx' },
+      { house: 'iti', url: 'https://evil.example/admin/pdf/1791539984-ITIMF_Monthly_Portfolio_30092026.xlsx' },
+      { house: 'iti', url: 'https://itiamc.com/admin/pdf/1791539984-ITIMF_Monthly_Portfolio_15092026.xlsx' },
+      { house: 'iti', url: 'https://itiamc.com/admin/pdf/1791539984-ITIMF_Monthly_Portfolio_30062026.xlsx' },
+      { house: 'iti', url: 'https://itiamc.com/admin/pdf/1791539984-ITIMF_Monthly_Portfolio_31102026.xlsx' },
+    ];
+    for (const b of bads) expect((await post({ action: 'ingest', ...b })).status, JSON.stringify(b)).toBe(400);
+    expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining('evil.example'), expect.anything());
+  });
+
+  it('downloads, parses, checks and stores the month, returning the documented shape', async () => {
+    const r = await post({ action: 'ingest', house: 'iti', url: ITI_SEP });
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({ ok: true, fundKey: 'iti-small-cap', asOf: '2026-09-30', status: 'ok', reason: '' });
+    expect(r.json.rowCount).toBeGreaterThan(50);
+    expect(r.json.weightSum).toBeGreaterThan(99);
+    expect(store.tabs.MfHoldings.rows.length).toBe(r.json.rowCount);
+    expect(store.tabs.MfHoldingsStatus.rows[0][2]).toBe('ok');
+  });
+
+  it('is idempotent: pasting the same link again replaces, not duplicates', async () => {
+    await post({ action: 'ingest', house: 'iti', url: ITI_SEP });
+    const n = store.tabs.MfHoldings.rows.length;
+    const again = await post({ action: 'ingest', house: 'iti', url: ITI_SEP });
+    expect(again.json.ok).toBe(true);
+    expect(store.tabs.MfHoldings.rows.length).toBe(n);
+  });
+
+  it('a link whose filename date disagrees with the file\'s own portfolio date is stale/not-ok and writes nothing', async () => {
+    const r = await post({ action: 'ingest', house: 'iti', url: ITI_AUG });
+    expect(r.status).toBe(200);
+    expect(r.json).toMatchObject({ ok: false, status: 'stale' });
+    expect(r.json.reason).toMatch(/2026-09-30.*2026-08-31/);
+    expect(store.tabs.MfHoldings.rows).toHaveLength(0);
+  });
+
+  it('reports a 404 (wrong/old link) as ok:false status missing, and an HTML page as failed', async () => {
+    itiFile.status = 404;
+    expect((await post({ action: 'ingest', house: 'iti', url: ITI_SEP })).json).toMatchObject({ ok: false, status: 'missing' });
+    itiFile.status = 200; itiFile.body = '<html>nope</html>';
+    const r = await post({ action: 'ingest', house: 'iti', url: ITI_SEP });
+    expect(r.json).toMatchObject({ ok: false, status: 'failed' });
+    expect(r.json.reason).toMatch(/xlsx/);
   });
 });
 

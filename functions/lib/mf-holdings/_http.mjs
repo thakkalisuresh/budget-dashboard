@@ -47,7 +47,7 @@ async function readCapped(res, maxBytes) {
 export function makeClient({ fetchImpl = fetch, sleep = defaultSleep, minGapMs = MIN_GAP_MS, timeoutMs = TIMEOUT_MS, allowedHosts } = {}) {
   const lastAt = new Map();
   /** GET url → { buffer, headers }. 404 → MfFetchError('missing'); other non-2xx → 'failed'. */
-  async function get(url, { maxBytes = 12_000_000, accept = '*/*', headers = {} } = {}) {
+  async function get(url, { maxBytes = 12_000_000, accept = '*/*', headers = {}, follow = true } = {}) {
     const u = new URL(url);
     if (u.protocol !== 'https:') throw new MfFetchError('failed', `refusing non-https URL ${u.origin}`);
     if (allowedHosts && !allowedHosts.includes(u.hostname)) throw new MfFetchError('failed', `host ${u.hostname} is not allowed`);
@@ -60,7 +60,7 @@ export function makeClient({ fetchImpl = fetch, sleep = defaultSleep, minGapMs =
         method: 'GET',
         headers: { 'User-Agent': USER_AGENT, Accept: accept, ...headers },
         signal: AbortSignal.timeout(timeoutMs),
-        redirect: 'follow',
+        redirect: follow ? 'follow' : 'manual',
       });
     } catch (e) {
       throw new MfFetchError('failed', `${u.hostname}: ${e?.name === 'TimeoutError' ? 'request timed out' : e?.message || 'network error'}`);
@@ -71,6 +71,7 @@ export function makeClient({ fetchImpl = fetch, sleep = defaultSleep, minGapMs =
         throw new MfFetchError('failed', `redirected to disallowed host ${final.hostname}`);
       }
     }
+    if (res.status >= 300 && res.status < 400) throw new MfFetchError('failed', `${u.hostname}: unexpected redirect (HTTP ${res.status}); redirects are not followed`);
     if (res.status === 404) throw new MfFetchError('missing', `${u.hostname}${u.pathname.length > 60 ? '…' : u.pathname}: not published yet (HTTP 404)`);
     if (!res.ok) throw new MfFetchError('failed', `${u.hostname}: HTTP ${res.status}`);
     return { buffer: await readCapped(res, maxBytes), headers: res.headers };
