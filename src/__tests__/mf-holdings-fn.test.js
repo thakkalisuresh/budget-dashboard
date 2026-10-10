@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import process from 'node:process';
 
-vi.stubEnv('ALLOWED_EMAILS', 'nair.sabarish97@gmail.com');
+vi.stubEnv('ALLOWED_EMAILS', 'nair.sabarish97@gmail.com,viewer@example.com');
+vi.stubEnv('VIEWER_EMAILS', 'viewer@example.com');
 
 const { store, reportMock, sheetIdMock } = vi.hoisted(() => ({
   store: { tabs: {}, calls: [] },
@@ -29,9 +30,11 @@ const itiFile = { body: null, status: 200 };
 const ITI_SEP = 'https://itiamc.com/admin/pdf/1791539984-ITIMF_Monthly_Portfolio_30092026.xlsx';
 vi.stubGlobal('fetch', vi.fn(async (url, init) => {
   if (String(url).includes('oauth2/v3/userinfo')) {
-    // A read-only household viewer (VIEWER_EMAILS) is a valid Google user but NOT in ALLOWED_EMAILS.
-    const viewer = /viewer-token/.test(init?.headers?.Authorization || '');
-    return { ok: true, json: async () => ({ email: viewer ? 'viewer@example.com' : 'nair.sabarish97@gmail.com' }) };
+    // viewer-token → a read-only household member (in ALLOWED_EMAILS and VIEWER_EMAILS);
+    // stranger-token → a valid Google user who is in neither.
+    const auth = init?.headers?.Authorization || '';
+    const email = /viewer-token/.test(auth) ? 'viewer@example.com' : /stranger-token/.test(auth) ? 'stranger@example.com' : 'nair.sabarish97@gmail.com';
+    return { ok: true, json: async () => ({ email }) };
   }
   if (String(url).startsWith('https://itiamc.com/admin/pdf/')) return new Response(itiFile.body, { status: itiFile.status });
   throw new Error(`unexpected network call in test: ${url}`);
@@ -74,12 +77,28 @@ describe('mf-holdings endpoint — gates & validation', () => {
     expect((await call(req({ method: 'GET' }))).status).toBe(405);
   });
 
-  it('rejects read-only viewers (not in ALLOWED_EMAILS) on every action, including status and refresh', async () => {
-    for (const body of [{ action: 'status' }, { action: 'refresh' }, { action: 'refresh', houses: ['iti'], itiUrl: ITI_SEP }, { action: 'ingest', house: 'iti', url: ITI_SEP }]) {
-      const r = await call(req({ auth: 'Bearer viewer-token', body }));
-      expect(r.status, JSON.stringify(body)).toBe(401);
+  it('rejects a Google user who is not in ALLOWED_EMAILS on every action', async () => {
+    for (const body of [{ action: 'status' }, { action: 'refresh' }, { action: 'ingest', house: 'iti', url: ITI_SEP }]) {
+      expect((await call(req({ auth: 'Bearer stranger-token', body }))).status, JSON.stringify(body)).toBe(401);
     }
-    expect(store.calls).toEqual([]);       // nothing read or written
+    expect(store.calls).toEqual([]);
+  });
+
+  it('lets read-only viewers call status but answers 403 on refresh and ingest (no read, no write)', async () => {
+    const viewer = (body) => call(req({ auth: 'Bearer viewer-token', body }));
+    expect((await viewer({ action: 'status' })).status).toBe(200);
+    store.calls = [];
+    for (const body of [{ action: 'refresh' }, { action: 'refresh', houses: ['iti'], itiUrl: ITI_SEP }, { action: 'ingest', house: 'iti', url: ITI_SEP }, { action: 'ingest', house: 'nope' }]) {
+      const r = await viewer(body);
+      expect(r.status, JSON.stringify(body)).toBe(403);
+      expect(r.json).toEqual({ ok: false, error: 'Read-only users cannot load holdings' });
+    }
+    expect(store.calls).toEqual([]);
+    expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining('itiamc.com'), expect.anything());
+  });
+
+  it('owners are unaffected by the viewer gate', async () => {
+    expect((await post({ action: 'refresh', houses: ['iti'] })).status).toBe(200);
   });
 
   it('answers the CORS preflight', async () => {

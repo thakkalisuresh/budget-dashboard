@@ -24,13 +24,16 @@
  * rows and are recorded per fund; they are also logged via reportError (INV-001
  * with a `stage` tag — no new error code, no Telegram/push).
  *
- * Secrets: the same Sheets/Drive bundle every Invest function uses. No new
- * secret or param (the User-Agent is a constant), so non-interactive deploys are
+ * Viewers (VIEWER_EMAILS, read-only household members) may call `status` only;
+ * `refresh` and `ingest` write to the household's sheet and answer 403.
+ *
+ * Secrets: the same Sheets/Drive bundle every Invest function uses (+ the existing
+ * VIEWER_EMAILS binding on the HTTP function). No new secret or param (the User-Agent is a constant), so non-interactive deploys are
  * unaffected.
  */
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { onRequest } from 'firebase-functions/v2/https';
-import { SHEETS_DRIVE_SECRETS } from './lib/secrets.mjs';
+import { SHEETS_DRIVE_SECRETS, VIEWER_EMAILS } from './lib/secrets.mjs';
 import { corsOriginFor, hasValidSecFetchSite, sendJson, verifyBearer } from './lib/http-common.mjs';
 import { getInvestSheetId, ensureInvestTabsServer, readInvestTabs, replaceInvestRows } from './lib/_invest-sheets.mjs';
 import { reportError } from './lib/_error-log.mjs';
@@ -110,8 +113,12 @@ export const mfHoldingsRefresh = onSchedule(
 
 let running = false;
 
+/** Read-only household viewers (VIEWER_EMAILS ⊆ ALLOWED_EMAILS, same detection as verify-user). */
+const isViewer = (email) => String(VIEWER_EMAILS.value() || '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean).includes(String(email || '').toLowerCase());
+const READ_ONLY_ERROR = 'Read-only users cannot load holdings';
+
 export const mfHoldings = onRequest(
-  { region: 'us-central1', secrets: [...SHEETS_DRIVE_SECRETS], maxInstances: 1, timeoutSeconds: 300, memory: '1GiB', cors: false },
+  { region: 'us-central1', secrets: [...SHEETS_DRIVE_SECRETS, VIEWER_EMAILS], maxInstances: 1, timeoutSeconds: 300, memory: '1GiB', cors: false },
   async (req, res) => {
     const corsOrigin = corsOriginFor(req);
 
@@ -149,6 +156,7 @@ export const mfHoldings = onRequest(
         }
 
         case 'refresh': {
+          if (isViewer(v.email)) return sendJson(res, 403, { ok: false, error: READ_ONLY_ERROR }, corsOrigin);
           if (body.asOf !== undefined) {
             const a = validateAsOf(body.asOf, now);
             if (!a.ok) return bad(a.reason);
@@ -176,6 +184,7 @@ export const mfHoldings = onRequest(
         }
 
         case 'ingest': {
+          if (isViewer(v.email)) return sendJson(res, 403, { ok: false, error: READ_ONLY_ERROR }, corsOrigin);
           if (body.house !== 'iti') return bad("ingest is only supported for house 'iti'");
           if (typeof body.url !== 'string' || body.url.length > 300) return bad('url must be a string of at most 300 characters');
           const u = validateItiUrl(body.url);

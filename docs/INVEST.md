@@ -255,7 +255,7 @@ bounded response size (streamed, aborted at the cap), https + host allowlist (al
 redirects).
 
 **On-demand endpoint** `POST /api/mf-holdings` (same auth stack as `/api/mf-nav`: allowlisted
-origin, `sec-fetch-site`, Google bearer + `ALLOWED_EMAILS`; 300 s / 1 GiB; one refresh at a
+origin, `sec-fetch-site`, Google bearer + `ALLOWED_EMAILS`; **read-only viewers (`VIEWER_EMAILS`) get `403 {ok:false, error:'Read-only users cannot load holdings'}` on `refresh`/`ingest` and may only call `status`**, because those write to the household sheet with the server's credentials; 300 s / 1 GiB; one refresh at a
 time → `409 {retryable:true}`):
 
 | action | request | response |
@@ -289,7 +289,7 @@ a newer version (check `cdn.sheetjs.com` and the advisories). `fflate` 0.8.3 (MI
 download. Parsing ABSL's 8 MB, 105-sheet `.xls` takes ~160 ms and ~120 MB of RSS, hence 1 GiB.
 
 **Secrets.** No new secret or param: the functions bind `SHEETS_DRIVE_SECRETS` (which includes
-`ALLOWED_EMAILS`) and the User-Agent is a constant, so non-interactive deploys are unaffected
+`ALLOWED_EMAILS`), the HTTP function also the existing `VIEWER_EMAILS` (read via `.value()`), and the User-Agent is a constant, so non-interactive deploys are unaffected
 (`functionSecrets.test.js` covers both entry points).
 
 **Fixtures / tests.** `src/__tests__/fixtures/mf-holdings/{absl.xls,sbi.xlsx,iti.xlsx}` are the
