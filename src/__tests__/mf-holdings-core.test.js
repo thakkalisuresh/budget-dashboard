@@ -39,10 +39,10 @@ describe('date window logic (IST)', () => {
     expect(targetAsOf(new Date('2026-10-31T10:00:00Z'))).toBe('2026-09-30');
   });
 
-  it('runs only on days 8-12', () => {
+  it('runs only on days 8-20', () => {
     const d = (day) => new Date(`2026-10-${String(day).padStart(2, '0')}T06:00:00Z`);
-    expect([7, 8, 12, 13].map(x => inRunWindow(d(x)))).toEqual([false, true, true, false]);
-    expect(inRunWindow(new Date('2026-10-12T20:00:00Z'))).toBe(false); // 13th in IST
+    expect([7, 8, 12, 13, 20, 21].map(x => inRunWindow(d(x)))).toEqual([false, true, true, true, true, false]);
+    expect(inRunWindow(new Date('2026-10-20T20:00:00Z'))).toBe(false); // 21st in IST
   });
 
   it('validates a backfill as-of: month-end, not after target, within the last 3 months', () => {

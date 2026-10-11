@@ -46,10 +46,17 @@ export function targetAsOf(now = new Date()) {
   return iso(Date.UTC(y, m, 0));
 }
 
-/** Days 8-12 of the (IST) month: the window in which the scheduled job does any work. */
+/** First and last day of the (IST) month on which the scheduled job does any work. */
+export const RUN_WINDOW = { from: 8, to: 20 };
+
+/**
+ * Days 8-20: AMCs usually publish by the 7th-9th, but a late file or a transient
+ * download failure on one day must not cost the whole month. Houses already
+ * ingested are skipped, so the extra days cost nothing.
+ */
 export function inRunWindow(now = new Date()) {
   const { day } = istParts(now);
-  return day >= 8 && day <= 12;
+  return day >= RUN_WINDOW.from && day <= RUN_WINDOW.to;
 }
 
 /** A manual / backfill as-of must be a real month-end, not after the target, within 3 months. */

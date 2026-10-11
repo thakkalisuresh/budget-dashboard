@@ -234,13 +234,13 @@ describe('sheetsIo round trip', () => {
 });
 
 describe('scheduled job', () => {
-  it('does nothing outside the day 8-12 window', async () => {
-    vi.setSystemTime(new Date('2026-10-20T06:00:00Z'));
+  it('does nothing outside the day 8-20 window', async () => {
+    vi.setSystemTime(new Date('2026-10-21T06:00:00Z'));
     await mfHoldingsRefresh({});
     expect(store.calls).toEqual([]);
   });
 
-  it('inside the window it runs once for the previous month-end and records per-house status', async () => {
+  it('inside the window (day 8-20) it runs once for the previous month-end and records per-house status', async () => {
     const miss = vi.fn(async () => { const { MfFetchError } = await import('../../functions/lib/_mf-holdings.mjs'); throw new MfFetchError('missing', 'not published yet (HTTP 404)'); });
     const impl = { absl: { fetch: miss, parse: vi.fn() }, sbi: { fetch: miss, parse: vi.fn() }, iti: { fetch: miss, parse: vi.fn() } };
     const memory = { holdings: [], status: [] };

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import process from 'node:process';
 import { zipSync } from 'fflate';
-import { makeClient, USER_AGENT } from '../../functions/lib/mf-holdings/_http.mjs';
+import { makeClient, USER_AGENT, describeNetworkError } from '../../functions/lib/mf-holdings/_http.mjs';
 import { fetchAbsl, ABSL_LISTING_URL } from '../../functions/lib/mf-holdings/absl.mjs';
 import { fetchSbi, sbiUrl } from '../../functions/lib/mf-holdings/sbi.mjs';
 import { fetchIti, validateItiUrl } from '../../functions/lib/mf-holdings/iti.mjs';
@@ -89,14 +89,16 @@ const LISTING = {
     { ResourceLink: 'Monthly Portfolio of Debt Oriented Close Ended /FMPs/Interval Schemes as on September 30, 2012', pdfUrl: 'https://abcscprod.azureedge.net/x/fmp.zip' },
   ],
 };
-const SEP_ZIP = 'https://abcscprod.azureedge.net/-/media/bsl/files/resources/monthly-portfolio/2026/30092026_abslmf_monthlydisclosure.zip';
+const SEP_PATH = '/-/media/bsl/files/resources/monthly-portfolio/2026/30092026_abslmf_monthlydisclosure.zip';
+const SEP_ZIP = `https://mutualfund.adityabirlacapital.com${SEP_PATH}`;          // origin host: tried first
+const SEP_CDN = `https://abcscprod.azureedge.net${SEP_PATH}`;                       // the listing's (retired) CDN link
 const zipOf = (files) => Buffer.from(zipSync(files));
 
 describe('ABSL fetch', () => {
   it('reads the listing, finds the target month, unzips the .xls and the result parses', async () => {
     const f = router({ [ABSL_LISTING_URL]: ok(JSON.stringify(LISTING)), [SEP_ZIP]: ok(zipOf({ '30092026_ABSLMF_MonthlyDisclosure.xls': new Uint8Array(fx('absl.xls')) })) });
     const file = await fetchAbsl({ asOf: '2026-09-30', fetchImpl: f, sleep: noSleep });
-    expect(f.calls.map(c => c.url)).toEqual([ABSL_LISTING_URL, SEP_ZIP]);
+    expect(f.calls.map(c => c.url)).toEqual([ABSL_LISTING_URL, SEP_ZIP]);   // served by the origin host, CDN never needed
     expect(file.fileName).toBe('30092026_ABSLMF_MonthlyDisclosure.xls');
     const out = parseAbslWorkbook(file.buffer, { fileName: file.fileName });
     expect(out['absl-flexi-cap'].sourceFile).toBe('absl:30092026_ABSLMF_MonthlyDisclosure.xls#BSLEQTY');
@@ -149,7 +151,7 @@ describe('ABSL fetch', () => {
     });
     const file = await fetchAbsl({ asOf: '2026-09-30', fetchImpl: f, sleep: noSleep });
     expect(file.fileName).toBe('a.xls');
-    expect(f.calls.map(c => c.url)).toEqual([ABSL_LISTING_URL, PAGE, acc('56e98138-8200-4188-9119-90870c17498e'), acc('12341969-e855-4a80-b20a-dfb63e2268d4'), SEP_ZIP]);
+    expect(f.calls.map(c => c.url)).toEqual([ABSL_LISTING_URL, ABSL_LISTING_URL, PAGE, acc('56e98138-8200-4188-9119-90870c17498e'), acc('12341969-e855-4a80-b20a-dfb63e2268d4'), SEP_ZIP]);   // 1 retry of the primary listing
   });
 
   it('reports the primary failure when discovery finds nothing either; a merely-unpublished month never triggers discovery', async () => {
@@ -247,5 +249,101 @@ describe('ITI fetch (semi-manual: the listing API is encrypted)', () => {
   it('exposes MfFetchError for fetchers', () => {
     expect(new MfFetchError('missing', 'x').kind).toBe('missing');
     expect(new MfFetchError('weird', 'x').kind).toBe('failed');
+  });
+});
+
+/** undici-style failure: a generic "fetch failed" with the real reason on `cause`. */
+const netError = (code, msg = code) => Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error(msg), { code }) });
+
+describe('network failure diagnostics and retries', () => {
+  it('surfaces the undici cause code instead of a bare "fetch failed"', () => {
+    expect(describeNetworkError(netError('ENOTFOUND', 'getaddrinfo ENOTFOUND abcscprod.azureedge.net')))
+      .toBe('fetch failed [ENOTFOUND] getaddrinfo ENOTFOUND abcscprod.azureedge.net');
+    expect(describeNetworkError(netError('UND_ERR_CONNECT_TIMEOUT'))).toBe('fetch failed [UND_ERR_CONNECT_TIMEOUT]');
+    expect(describeNetworkError(Object.assign(new Error('x'), { name: 'TimeoutError' }))).toBe('request timed out');
+  });
+
+  it('failure messages carry the phase, host and cause', async () => {
+    const c = makeClient({ fetchImpl: async () => { throw netError('ECONNRESET'); }, sleep: noSleep });
+    await expect(c.get('https://a.example/x', { phase: 'download' })).rejects.toThrow('download a.example: fetch failed [ECONNRESET]');
+    const c2 = makeClient({ fetchImpl: router({ 'https://a.example/x': status(503) }), sleep: noSleep });
+    await expect(c2.get('https://a.example/x', { phase: 'listing' })).rejects.toThrow('listing a.example: HTTP 503');
+  });
+
+  it('reports how many bytes arrived when the body stream dies mid-download', async () => {
+    const body = new ReadableStream({
+      start(ctl) { ctl.enqueue(new Uint8Array(1234)); },
+      pull() { throw netError('ECONNRESET'); },
+    });
+    const c = makeClient({ fetchImpl: async () => new Response(body), sleep: noSleep });
+    await expect(c.get('https://a.example/x', { phase: 'download' })).rejects.toThrow(/download a\.example: body read failed after 1234 bytes: .*ECONNRESET/);
+  });
+
+  it('retries a transient failure once with backoff, then succeeds', async () => {
+    let n = 0;
+    const sleep = vi.fn(async () => {});
+    const c = makeClient({ fetchImpl: async () => { if (n++ === 0) throw netError('ECONNRESET'); return ok('fine'); }, sleep, retryDelayMs: 1500 });
+    const r = await c.get('https://a.example/x', { retries: 1 });
+    expect(r.buffer.toString()).toBe('fine');
+    expect(n).toBe(2);
+    expect(sleep).toHaveBeenCalledWith(1500);
+  });
+
+  it('gives up after the retries and says how many attempts were made; never retries 404 / oversize / redirects', async () => {
+    let n = 0;
+    const c = makeClient({ fetchImpl: async () => { n++; throw netError('ETIMEDOUT'); }, sleep: noSleep });
+    await expect(c.get('https://a.example/x', { retries: 1 })).rejects.toThrow(/ETIMEDOUT.*after 2 attempts/);
+    expect(n).toBe(2);
+    const f404 = router({});
+    await expect(makeClient({ fetchImpl: f404, sleep: noSleep }).get('https://a.example/y', { retries: 3 })).rejects.toMatchObject({ kind: 'missing' });
+    expect(f404.calls).toHaveLength(1);
+    const big = router({ 'https://a.example/b': () => ok(Buffer.alloc(50)) });
+    await expect(makeClient({ fetchImpl: big, sleep: noSleep }).get('https://a.example/b', { retries: 3, maxBytes: 10 })).rejects.toThrow(/exceeded/);
+    expect(big.calls).toHaveLength(1);
+  });
+});
+
+describe('ABSL download host fallback (azureedge.net was retired)', () => {
+  const run = (routes, opts = {}) => fetchAbsl({ asOf: '2026-09-30', fetchImpl: router({ [ABSL_LISTING_URL]: ok(JSON.stringify(LISTING)), ...routes }), sleep: noSleep, ...opts });
+  const zip = () => ok(zipOf({ '30092026_ABSLMF_MonthlyDisclosure.xls': new Uint8Array(fx('absl.xls')) }));
+  const dead = (host) => () => { throw netError('ENOTFOUND', `getaddrinfo ENOTFOUND ${host}`); };
+
+  it('downloads from the ABSL origin host and never touches the dead CDN host', async () => {
+    const f = router({ [ABSL_LISTING_URL]: ok(JSON.stringify(LISTING)), [SEP_ZIP]: zip, [SEP_CDN]: dead('abcscprod.azureedge.net') });
+    await fetchAbsl({ asOf: '2026-09-30', fetchImpl: f, sleep: noSleep });
+    expect(f.calls.map(c => c.url)).toEqual([ABSL_LISTING_URL, SEP_ZIP]);
+  });
+
+  it('falls back to the link as listed when the origin host fails', async () => {
+    const f = router({ [ABSL_LISTING_URL]: ok(JSON.stringify(LISTING)), [SEP_ZIP]: () => { throw netError('ECONNRESET'); }, [SEP_CDN]: zip });
+    const file = await fetchAbsl({ asOf: '2026-09-30', fetchImpl: f, sleep: noSleep });
+    expect(file.fileName).toBe('30092026_ABSLMF_MonthlyDisclosure.xls');
+    expect(f.calls.map(c => c.url)).toEqual([ABSL_LISTING_URL, SEP_ZIP, SEP_ZIP, SEP_CDN]);   // origin tried twice (1 retry), then the CDN link
+  });
+
+  it('retries the origin once on a transient error before giving up on it', async () => {
+    let n = 0;
+    const f = router({ [ABSL_LISTING_URL]: ok(JSON.stringify(LISTING)), [SEP_ZIP]: () => (n++ === 0 ? (() => { throw netError('ETIMEDOUT'); })() : zip()) });
+    await fetchAbsl({ asOf: '2026-09-30', fetchImpl: f, sleep: noSleep });
+    expect(f.calls.filter(c => c.url === SEP_ZIP)).toHaveLength(2);
+    expect(f.calls.some(c => c.url === SEP_CDN)).toBe(false);
+  });
+
+  it('when every host fails, the reason names each host, phase and cause (self-explaining)', async () => {
+    await expect(run({ [SEP_ZIP]: () => { throw netError('ECONNRESET'); }, [SEP_CDN]: dead('abcscprod.azureedge.net') })).rejects.toMatchObject({
+      kind: 'failed',
+      message: expect.stringMatching(/ABSL zip download failed: download mutualfund\.adityabirlacapital\.com: fetch failed \[ECONNRESET\].*\| download abcscprod\.azureedge\.net: fetch failed \[ENOTFOUND\] getaddrinfo ENOTFOUND abcscprod\.azureedge\.net/),
+    });
+  });
+
+  it('is "missing" only when every host answers 404', async () => {
+    await expect(run({})).rejects.toMatchObject({ kind: 'missing' });
+    await expect(run({ [SEP_ZIP]: status(404), [SEP_CDN]: dead('x') })).rejects.toMatchObject({ kind: 'failed' });
+  });
+
+  it('a downloaded-but-corrupt zip is a failure of the file, not a reason to try another host', async () => {
+    const f = router({ [ABSL_LISTING_URL]: ok(JSON.stringify(LISTING)), [SEP_ZIP]: () => ok('not a zip'), [SEP_CDN]: zip });
+    await expect(fetchAbsl({ asOf: '2026-09-30', fetchImpl: f, sleep: noSleep })).rejects.toThrow(/zip/i);
+    expect(f.calls.some(c => c.url === SEP_CDN)).toBe(false);
   });
 });
