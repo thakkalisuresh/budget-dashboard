@@ -323,7 +323,7 @@ describe('ensureInvestTabs', () => {
       json: { sheets: ['Accounts', 'Activities', 'Snapshots', 'RateWatch'].map(t => ({ properties: { title: t } })) },
     });
     const added = await ensureInvestTabs('inv123', 'tok');
-    expect(added).toEqual(['EtfHoldings', 'CusipMap', 'RateHistory', 'SipPlans', 'MfHoldings', 'MfHoldingsStatus']);
+    expect(added).toEqual(['EtfHoldings', 'CusipMap', 'RateHistory', 'SipPlans', 'MfHoldings', 'MfHoldingsStatus', 'MfPeersConfig', 'MfPeers', 'MfTer', 'MfPeersSeries', 'MfPeersRun']);
 
     const batch = calls.find(c => c.url.includes(':batchUpdate'));
     expect(batch.body.requests).toEqual([
@@ -333,6 +333,7 @@ describe('ensureInvestTabs', () => {
       { addSheet: { properties: { title: 'SipPlans' } } },
       { addSheet: { properties: { title: 'MfHoldings' } } },
       { addSheet: { properties: { title: 'MfHoldingsStatus' } } },
+      ...['MfPeersConfig', 'MfPeers', 'MfTer', 'MfPeersSeries', 'MfPeersRun'].map(title => ({ addSheet: { properties: { title } } })),
     ]);
     const header = calls.find(c => c.method === 'PUT' && c.url.includes('EtfHoldings'));
     expect(header.body.values[0]).toEqual(INVEST_TABS.EtfHoldings);

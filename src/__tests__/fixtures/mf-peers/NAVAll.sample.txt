@@ -1,0 +1,14 @@
+Scheme Code;ISIN Div Payout/ ISIN Growth;ISIN Div Reinvestment;Scheme Name;Plan;Option;Net Asset Value;Date
+120564;INF209K01XX1;-;Aditya Birla Sun Life Flexi Cap Fund;Direct Plan;GROWTH;2108.34;09-Oct-2026
+103166;INF209K01AJ8;-;Aditya Birla Sun Life Flexi Cap Fund;Regular Plan;GROWTH;1868.58;09-Oct-2026
+153124;INF209KC1373;-;Aditya Birla Sun Life Conglomerate Fund;Direct Plan;GROWTH;10.22;09-Oct-2026
+153127;INF209KC1399;-;Aditya Birla Sun Life Conglomerate Fund;Regular Plan;GROWTH;9.97;09-Oct-2026
+153867;INF109K1A427;-;ICICI Prudential Conglomerate Fund;Direct Plan;Growth;9.63;09-Oct-2026
+153865;INF109K1A393;-;ICICI Prudential Conglomerate Fund;Regular Plan;Growth;9.53;09-Oct-2026
+147919;INF00XX01747;-;ITI Small Cap Fund;Direct Plan;Growth Option;37.2823;09-Oct-2026
+147920;INF00XX01713;-;ITI Small Cap Fund;Regular Plan;Growth Option;32.9929;09-Oct-2026
+120828;INF966L01689;-;Quant Small Cap Fund;Direct Plan;Growth Option;312.2613;09-Oct-2026
+153132;INF277KA1DA2;-;Tata BSE Select Business Groups Index Fund;Direct Plan;Growth Option;9.3839;09-Oct-2026
+153134;INF277KA1CX6;-;Tata BSE Select Business Groups Index Fund;Regular Plan;Growth Option;9.2502;09-Oct-2026
+148685;INF200KA1S97;-;SBI Retirement Benefit Fund - Aggressive Hybrid Plan;Direct Plan;Growth;20.0289;09-Oct-2026
+148695;INF200KA1S71;-;SBI Retirement Benefit Fund - Aggressive Hybrid Plan;Regular Plan;Growth;18.7818;09-Oct-2026

@@ -48,3 +48,6 @@ export { rateWatch } from './rate-watch.mjs';
 
 // Invest tab — monthly AMC holdings for the household's Indian MFs (scheduled days 8-12 IST + on-demand).
 export { mfHoldingsRefresh, mfHoldings } from './mf-holdings.mjs';
+
+// Invest tab — fund vs peers data for the household's Indian MFs (scheduled weekly held + monthly peers/TER, + on-demand).
+export { mfPeersHeldRefresh, mfPeersMonthlyRefresh, mfPeers } from './mf-peers.mjs';

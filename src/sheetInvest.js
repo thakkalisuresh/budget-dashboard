@@ -78,6 +78,19 @@ export const INVEST_TABS = {
   // 0-100 of NAV; `industry` carries the rating on debt rows. Status: ok|stale|failed|missing.
   MfHoldings: ['asOf', 'fundKey', 'isin', 'name', 'industry', 'assetClass', 'weightPct', 'marketValueInrLakh', 'sourceFile'],
   MfHoldingsStatus: ['fundKey', 'asOf', 'status', 'checkedAt', 'rowCount', 'weightSum', 'reason', 'sourceFile'],
+  // Fund vs peers (Phase 2 slice 2; written server-side by functions/mf-peers.mjs, columns pinned
+  // equal to functions/lib/_mf-peers.mjs by a test). MfPeersConfig is the user's to edit (seeded from
+  // the approved peer lists only while empty, never overwritten). All return/vol/drawdown/TER figures
+  // are PERCENT numbers, blank when not computable. Readers map columns by header name.
+  MfPeersConfig: ['categoryKey', 'role', 'fundKey', 'amc', 'name', 'directCode', 'regularCode', 'isin', 'launch', 'note', 'weakMatch', 'active', 'comparisonJson'],
+  MfPeers: [
+    'asOf', 'categoryKey', 'role', 'fundKey', 'code', 'plan', 'name', 'firstNavDate', 'lastNavDate', 'nav',
+    'ret1yPct', 'ret3yPct', 'ret5yPct', 'volPct', 'maxDrawdownPct', 'rollingBeatPeerMedianPct', 'historyDays', 'status', 'reason',
+    'rollingWindows', 'windowStartDate', 'retWindowPct', 'windowReturnBasis', 'volWindowPct', 'maxDrawdownWindowPct', 'fetchedAt',
+  ],
+  MfTer: ['asOf', 'code', 'plan', 'name', 'terPct', 'berPct', 'matchedName', 'matched', 'terDate', 'reason'],
+  MfPeersSeries: ['code', 'plan', 'asOf', 'lastMonthEnd', 'n', 'navsCsv'],
+  MfPeersRun: ['scope', 'cycle', 'startedAt', 'finishedAt', 'done', 'total', 'cursorNote', 'lastError'],
 };
 
 // INR_RECEIVED = INR credited to the NRO account (mf_in only; amount in INR,
