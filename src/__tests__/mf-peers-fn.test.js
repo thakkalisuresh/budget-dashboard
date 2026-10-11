@@ -176,7 +176,7 @@ describe('scheduled functions', () => {
     expect(store.tabs.MfPeers.rows).toHaveLength(2);
     expect(store.tabs.MfPeersRun.rows.map((r) => r[0])).toEqual(['held']);
   });
-  it('monthly run does peers then ter; with no peers configured it still completes', async () => {
+  it('monthly run does peers then ter; a scope with nothing to refresh (no peers configured) is a no-op and TER still runs', async () => {
     store.tabs.MfPeersConfig.rows = [[...CONFIG_ROW]];
     vi.setSystemTime(new Date('2026-10-03T03:00:00+05:30'));
     getText.mockImplementation(async (url) => {
@@ -185,9 +185,16 @@ describe('scheduled functions', () => {
       return { status: 200, text: JSON.stringify({ data: [], meta: { pageCount: 0 } }) };
     });
     await mfPeersMonthlyRefresh();
-    expect(store.tabs.MfPeersRun.rows.map((r) => r[0])).toEqual(['peers', 'ter']);
+    expect(store.tabs.MfPeersRun.rows.map((r) => r[0])).toEqual(['ter']);
     expect(store.tabs.MfTer.rows).toHaveLength(2);
     expect(store.tabs.MfTer.rows[0][7]).toBe(false);
+  });
+  it('both schedules fire DAILY and a second tick in the same cycle does nothing', async () => {
+    await mfPeersHeldRefresh();
+    const n = getText.mock.calls.length; const writes = store.calls.length;
+    await mfPeersHeldRefresh();
+    expect(getText.mock.calls.length).toBe(n);
+    expect(store.calls.length).toBe(writes + 1); // only the status/ensure read
   });
   it('a crash is reported with the run stage and never thrown out of the scheduler', async () => {
     sheetIdMock.mockRejectedValue(new Error('sheets down'));

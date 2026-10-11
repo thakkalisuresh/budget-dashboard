@@ -342,6 +342,12 @@ export async function runScope({ scope, io, deps, now = new Date(), force = fals
     return !!r && r.fetchedAt !== '' && Date.parse(r.fetchedAt) >= startMs && r.status !== 'failed';
   };
 
+  // Daily schedules rely on this: a cycle that is already complete is a cheap no-op (no NAVAll download,
+  // no mfapi call, no sheet write). Never-run or incomplete → run a budgeted slice and resume tomorrow.
+  if (!force && scoped.every(isDone)) {
+    return { ...result, done: true, completed: scoped.length, skipped: scoped.length };
+  }
+
   let navAll;
   try {
     navAll = await deps.getNavAll();

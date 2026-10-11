@@ -2,12 +2,15 @@
  * Cloud Functions — "Fund vs peers" data for the household's Indian mutual funds
  * (Invest tab, Phase 2 slice 2).
  *
- *  mfPeersHeldRefresh     scheduled, Sundays 04:00 IST. Refreshes the HELD funds (both plans) and
- *                         every row of any common-window category (conglomerate), then recomputes the
- *                         rolling-beat share from the stored month-end series of the peers.
- *  mfPeersMonthlyRefresh  scheduled, days 2-6 of each month 03:00 IST. Refreshes the PEERS (and the
- *                         benchmark twin) then the TER feed. Resumable: a code already refreshed in
- *                         the current month is skipped, so a daily retry only does the leftovers.
+ *  mfPeersHeldRefresh     scheduled DAILY 04:00 IST, but weekly in effect: the first run of each IST week
+ *                         (Sunday-based) refreshes the HELD funds (both plans) and every row of any
+ *                         common-window category (conglomerate), then recomputes the rolling-beat share
+ *                         from the stored month-end series. The rest of the week it is a no-op (nothing
+ *                         fetched or written); with no held rows yet it runs on the very next tick.
+ *  mfPeersMonthlyRefresh  scheduled DAILY 03:00 IST, monthly in effect: refreshes the PEERS (and the
+ *                         benchmark twin) then the TER feed once per calendar month; a complete month is a
+ *                         no-op. Resumable: a code already refreshed this month is skipped, so a failed
+ *                         or time-boxed day is simply retried the next day.
  *  mfPeers                authenticated on-demand endpoint (same auth stack as /api/mf-holdings).
  *                           POST /api/mf-peers { action: 'status' }
  *                           POST /api/mf-peers { action: 'refresh', scope: 'held'|'peers'|'ter'|'all', force? }
@@ -108,7 +111,7 @@ export async function runScopes({ scopes, now = new Date(), force = false, budge
 }
 
 export const mfPeersHeldRefresh = onSchedule(
-  { schedule: '0 4 * * 0', timeZone: 'Asia/Kolkata', region: 'us-central1', secrets: [...SHEETS_DRIVE_SECRETS], maxInstances: 1, timeoutSeconds: 540, memory: '512MiB' },
+  { schedule: '0 4 * * *', timeZone: 'Asia/Kolkata', region: 'us-central1', secrets: [...SHEETS_DRIVE_SECRETS], maxInstances: 1, timeoutSeconds: 540, memory: '512MiB' },
   async () => {
     try { await runScopes({ scopes: ['held'], budgetMs: DEFAULT_BUDGET_MS }); }
     catch (e) { console.error('mf-peers: held run failed', e?.message); await reportError('INV-001', e, { stage: 'mf-peers-held-run' }); }
@@ -116,7 +119,7 @@ export const mfPeersHeldRefresh = onSchedule(
 );
 
 export const mfPeersMonthlyRefresh = onSchedule(
-  { schedule: '0 3 2-6 * *', timeZone: 'Asia/Kolkata', region: 'us-central1', secrets: [...SHEETS_DRIVE_SECRETS], maxInstances: 1, timeoutSeconds: 540, memory: '512MiB' },
+  { schedule: '0 3 * * *', timeZone: 'Asia/Kolkata', region: 'us-central1', secrets: [...SHEETS_DRIVE_SECRETS], maxInstances: 1, timeoutSeconds: 540, memory: '512MiB' },
   async () => {
     try { await runScopes({ scopes: ['peers', 'ter'], budgetMs: DEFAULT_BUDGET_MS }); }
     catch (e) { console.error('mf-peers: monthly run failed', e?.message); await reportError('INV-001', e, { stage: 'mf-peers-monthly-run' }); }

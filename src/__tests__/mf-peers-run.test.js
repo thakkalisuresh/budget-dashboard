@@ -278,6 +278,63 @@ describe('idempotence, retention, resume', () => {
   });
 });
 
+describe('daily schedules: no-op / first run / resume', () => {
+  it('a complete cycle is a true no-op: no NAVAll download, no request, no sheet write', async () => {
+    const m = memIo({ config: [FLEXI[0]] });
+    const deps = makeDeps({ bodies: flexiBodies(), codes: FLEXI_CODES });
+    await runScope({ scope: 'held', io: m.io, deps, now: NOW });
+    const navAll = vi.fn(deps.getNavAll); const calls = deps.client.getText.mock.calls.length; const writes = m.calls.length;
+    const r = await runScope({ scope: 'held', io: m.io, deps: { ...deps, getNavAll: navAll }, now: new Date('2026-10-14T04:00:00+05:30') });
+    expect(r).toMatchObject({ done: true, skipped: 2, completed: 2, ok: 0, failed: 0 });
+    expect(navAll).not.toHaveBeenCalled();
+    expect(deps.client.getText.mock.calls.length).toBe(calls);
+    expect(m.calls.length).toBe(writes);
+  });
+  it('the next IST week (Sunday) is a new cycle and refreshes again', async () => {
+    const m = memIo({ config: [FLEXI[0]] });
+    const deps = makeDeps({ bodies: flexiBodies(), codes: FLEXI_CODES });
+    await runScope({ scope: 'held', io: m.io, deps, now: NOW });
+    const calls = deps.client.getText.mock.calls.length;
+    await runScope({ scope: 'held', io: m.io, deps, now: new Date('2026-10-17T04:00:00+05:30') }); // Saturday: still the same cycle
+    expect(deps.client.getText.mock.calls.length).toBe(calls);
+    const r = await runScope({ scope: 'held', io: m.io, deps, now: new Date('2026-10-18T04:00:00+05:30') });
+    expect(r.ok).toBe(2);
+    expect(byCode(rowsOf(m), '1001').map((x) => x.asOf)).toEqual(['2026-10-18', '2026-10-11']);
+  });
+  it('first run: no held rows yet → runs on the very first tick, whatever day it is', async () => {
+    const m = memIo({ config: [FLEXI[0]] });
+    const deps = makeDeps({ bodies: flexiBodies(), codes: FLEXI_CODES });
+    const r = await runScope({ scope: 'held', io: m.io, deps, now: new Date('2026-10-14T04:00:00+05:30') }); // a Wednesday
+    expect(r).toMatchObject({ ok: 2, done: true });
+    expect(rowsOf(m)).toHaveLength(2);
+  });
+  it('peers: a month completes over several daily ticks (budget → resume), then stays quiet until the 1st', async () => {
+    const m = memIo({ config: FLEXI });
+    const deps = makeDeps({ bodies: flexiBodies(), codes: FLEXI_CODES, clockStep: 100 });
+    const day = (d) => new Date(`2026-10-${d}T03:00:00+05:30`);
+    const r1 = await runScope({ scope: 'peers', io: m.io, deps, now: day('12'), budgetMs: 450 });
+    expect(r1.done).toBe(false);
+    const r2 = await runScope({ scope: 'peers', io: m.io, deps, now: day('13'), budgetMs: 450 });
+    expect(r2).toMatchObject({ done: true, skipped: 5, ok: 5 });
+    const calls = deps.client.getText.mock.calls.length;
+    for (const d of ['14', '20', '31']) expect((await runScope({ scope: 'peers', io: m.io, deps, now: day(d), budgetMs: 450 })).done).toBe(true);
+    expect(deps.client.getText.mock.calls.length).toBe(calls);
+    const nov = await runScope({ scope: 'peers', io: m.io, deps, now: new Date('2026-11-01T03:00:00+05:30'), budgetMs: 450 });
+    expect(nov.done).toBe(false); // a new month is a new cycle
+    expect(nov.ok).toBe(5);
+  });
+  it('a failed code never counts as done, so the daily tick retries it (and only it)', async () => {
+    const m = memIo({ config: [FLEXI[0], FLEXI[1]] });
+    const b = flexiBodies();
+    const deps = makeDeps({ bodies: { ...b, 2001: [new PeersFetchError({ phase: 'nav-fetch', host: 'api.mfapi.in', status: 502 }), new PeersFetchError({ phase: 'nav-fetch', host: 'api.mfapi.in', status: 502 }), b.default] }, codes: FLEXI_CODES });
+    await runScope({ scope: 'peers', io: m.io, deps, now: new Date('2026-10-12T03:00:00+05:30') });
+    deps.seen.length = 0;
+    const r = await runScope({ scope: 'peers', io: m.io, deps, now: new Date('2026-10-13T03:00:00+05:30') });
+    expect(r.ok).toBe(1);
+    expect(new Set(deps.seen)).toEqual(new Set(['2001']));
+  });
+});
+
 describe('rolling beat (held rows, from the stored month-end series)', () => {
   it('peers monthly then held weekly: the held rows get the share of rolling 1y windows that beat the peer median; the benchmark is excluded', async () => {
     const m = memIo({ config: FLEXI });

@@ -475,9 +475,16 @@ reached; will resume", counts failures/stale and carries the spot-check result.
 
 | Function | When | Does |
 |---|---|---|
-| `mfPeersHeldRefresh` | Sundays 04:00 IST | held funds (both plans) + every row of a common-window category; then rolling beat from `MfPeersSeries` |
-| `mfPeersMonthlyRefresh` | days 2-6, 03:00 IST | peers + benchmark (≈ 100 codes) then the TER feed; daily retries only redo what is not yet done this cycle |
+| `mfPeersHeldRefresh` | **daily** 04:00 IST (weekly in effect) | the first run of each IST week (Sunday-based cycle `W<sunday>`) refreshes held funds (both plans) + every row of a common-window category, then recomputes the rolling beat from `MfPeersSeries`; the rest of the week it is a no-op |
+| `mfPeersMonthlyRefresh` | **daily** 03:00 IST (monthly in effect) | once per calendar month: peers + benchmark (≈ 100 codes) then the TER feed; a complete month is a no-op |
 | `mfPeers` (HTTP) | on demand | see below |
+
+**Daily ticks, cheap no-ops.** Both jobs fire every day so a fresh deploy gets data on the first night and a failed or
+time-boxed day is retried the next one, with no waiting for a "window". A scope whose cycle is already complete (every target
+refreshed inside the cycle) returns before downloading NAVAll or touching mfapi/AMFI and writes nothing. A never-run or incomplete
+cycle runs a budgeted slice and resumes on the next tick (only the codes not yet done are fetched; a failed code never counts as
+done). With no rows at all (first deploy) it runs on the very next tick, whatever the weekday/day of month. TER's own cycle is
+likewise per calendar month (a finished month is skipped unless `force`).
 
 Calls are ≤ 1 request/second per host with an honest `User-Agent` (`Fundient-household-dashboard/1.0 (private personal use)`).
 Per code: NAVAll must still list the code (so both plan codes are live), mfapi's body must parse completely (mfapi silently
