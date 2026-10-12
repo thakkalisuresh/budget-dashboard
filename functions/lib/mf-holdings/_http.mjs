@@ -20,19 +20,25 @@ async function readCapped(res, maxBytes) {
   if (Number.isFinite(declared) && declared > maxBytes) throw new MfFetchError('failed', `response too large (${declared} > ${maxBytes} bytes)`);
   const chunks = [];
   let total = 0;
-  if (res.body && typeof res.body.getReader === 'function') {
-    const reader = res.body.getReader();
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maxBytes) { await reader.cancel().catch(() => {}); throw new MfFetchError('failed', `response exceeded ${maxBytes} bytes`); }
-      chunks.push(value);
+  try {
+    if (res.body && typeof res.body.getReader === 'function') {
+      const reader = res.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > maxBytes) { await reader.cancel().catch(() => {}); throw new MfFetchError('failed', `response exceeded ${maxBytes} bytes`); }
+        chunks.push(value);
+      }
+    } else {
+      const ab = Buffer.from(await res.arrayBuffer());
+      if (ab.length > maxBytes) throw new MfFetchError('failed', `response exceeded ${maxBytes} bytes`);
+      chunks.push(ab); total = ab.length;
     }
-  } else {
-    const ab = Buffer.from(await res.arrayBuffer());
-    if (ab.length > maxBytes) throw new MfFetchError('failed', `response exceeded ${maxBytes} bytes`);
-    chunks.push(ab); total = ab.length;
+  } catch (e) {
+    if (e instanceof MfFetchError) throw e;
+    // The connection dropped mid-body: say how far it got.
+    throw new MfFetchError('failed', `body read failed after ${total} bytes: ${describeNetworkError(e)}`);
   }
   const buffer = Buffer.concat(chunks, total);
   if (Number.isFinite(declared) && declared > 0 && buffer.length < declared && !res.headers.get('content-encoding')) {
@@ -42,39 +48,79 @@ async function readCapped(res, maxBytes) {
 }
 
 /**
+ * undici reports every network problem as the useless "fetch failed" and keeps
+ * the real reason on `err.cause` (ENOTFOUND, ECONNRESET, UND_ERR_CONNECT_TIMEOUT,
+ * certificate errors, ...). Surface it, otherwise a deploy-only failure is
+ * undiagnosable.
+ */
+export function describeNetworkError(e) {
+  if (e?.name === 'TimeoutError' || e?.name === 'AbortError') return 'request timed out';
+  const cause = e?.cause;
+  const code = cause?.code || e?.code;
+  const detail = cause?.message && cause.message !== e?.message && cause.message !== code ? cause.message : '';
+  return [e?.message || 'network error', code && `[${code}]`, detail].filter(Boolean).join(' ');
+}
+
+/**
  * @param {{fetchImpl?:Function, sleep?:Function, minGapMs?:number, timeoutMs?:number, allowedHosts?:string[]}} o
  */
-export function makeClient({ fetchImpl = fetch, sleep = defaultSleep, minGapMs = MIN_GAP_MS, timeoutMs = TIMEOUT_MS, allowedHosts } = {}) {
+export function makeClient({ fetchImpl = fetch, sleep = defaultSleep, minGapMs = MIN_GAP_MS, timeoutMs = TIMEOUT_MS, allowedHosts, retryDelayMs = 2000 } = {}) {
   const lastAt = new Map();
-  /** GET url → { buffer, headers }. 404 → MfFetchError('missing'); other non-2xx → 'failed'. */
-  async function get(url, { maxBytes = 12_000_000, accept = '*/*', headers = {}, follow = true } = {}) {
+  /**
+   * GET url → { buffer, headers }. 404 → MfFetchError('missing'); other non-2xx → 'failed'.
+   * Failure messages carry the phase, host, status / network cause and bytes read.
+   * `retries` retries transient problems (network error, timeout, 5xx, truncation)
+   * with a growing backoff; 404s, redirects, size and allow-list violations never retry.
+   */
+  async function get(url, { maxBytes = 12_000_000, accept = '*/*', headers = {}, follow = true, phase = '', retries = 0 } = {}) {
     const u = new URL(url);
     if (u.protocol !== 'https:') throw new MfFetchError('failed', `refusing non-https URL ${u.origin}`);
     if (allowedHosts && !allowedHosts.includes(u.hostname)) throw new MfFetchError('failed', `host ${u.hostname} is not allowed`);
-    const wait = (lastAt.get(u.hostname) ?? 0) + minGapMs - Date.now();
-    if (wait > 0) await sleep(wait);
-    lastAt.set(u.hostname, Date.now());
-    let res;
-    try {
-      res = await fetchImpl(url, {
-        method: 'GET',
-        headers: { 'User-Agent': USER_AGENT, Accept: accept, ...headers },
-        signal: AbortSignal.timeout(timeoutMs),
-        redirect: follow ? 'follow' : 'manual',
-      });
-    } catch (e) {
-      throw new MfFetchError('failed', `${u.hostname}: ${e?.name === 'TimeoutError' ? 'request timed out' : e?.message || 'network error'}`);
-    }
-    if (res.url) {
-      const final = new URL(res.url);
-      if (final.protocol !== 'https:' || (allowedHosts && !allowedHosts.includes(final.hostname))) {
-        throw new MfFetchError('failed', `redirected to disallowed host ${final.hostname}`);
+    const tag = phase ? `${phase} ${u.hostname}` : u.hostname;
+
+    const once = async () => {
+      const wait = (lastAt.get(u.hostname) ?? 0) + minGapMs - Date.now();
+      if (wait > 0) await sleep(wait);
+      lastAt.set(u.hostname, Date.now());
+      let res;
+      try {
+        res = await fetchImpl(url, {
+          method: 'GET',
+          headers: { 'User-Agent': USER_AGENT, Accept: accept, ...headers },
+          signal: AbortSignal.timeout(timeoutMs),
+          redirect: follow ? 'follow' : 'manual',
+        });
+      } catch (e) {
+        throw new MfFetchError('failed', `${tag}: ${describeNetworkError(e)}`);
+      }
+      if (res.url) {
+        const final = new URL(res.url);
+        if (final.protocol !== 'https:' || (allowedHosts && !allowedHosts.includes(final.hostname))) {
+          throw new MfFetchError('failed', `${tag}: redirected to disallowed host ${final.hostname}`);
+        }
+      }
+      if (res.status >= 300 && res.status < 400) throw new MfFetchError('failed', `${tag}: unexpected redirect (HTTP ${res.status}); redirects are not followed`);
+      if (res.status === 404) throw new MfFetchError('missing', `${tag}${u.pathname.length > 60 ? '' : u.pathname}: not published yet (HTTP 404)`);
+      if (!res.ok) throw new MfFetchError('failed', `${tag}: HTTP ${res.status}`);
+      try {
+        return { buffer: await readCapped(res, maxBytes), headers: res.headers };
+      } catch (e) {
+        throw e instanceof MfFetchError ? new MfFetchError(e.kind, `${tag}: ${e.message}`) : e;
+      }
+    };
+
+    const transient = (e) => e instanceof MfFetchError && e.kind === 'failed'
+      && !/too large|exceeded|redirect|not allowed|non-https/.test(e.message);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await once();
+      } catch (e) {
+        if (attempt >= retries || !transient(e)) {
+          throw attempt > 0 && e instanceof MfFetchError ? new MfFetchError(e.kind, `${e.message} (after ${attempt + 1} attempts)`) : e;
+        }
+        await sleep(retryDelayMs * (attempt + 1));
       }
     }
-    if (res.status >= 300 && res.status < 400) throw new MfFetchError('failed', `${u.hostname}: unexpected redirect (HTTP ${res.status}); redirects are not followed`);
-    if (res.status === 404) throw new MfFetchError('missing', `${u.hostname}${u.pathname.length > 60 ? '…' : u.pathname}: not published yet (HTTP 404)`);
-    if (!res.ok) throw new MfFetchError('failed', `${u.hostname}: HTTP ${res.status}`);
-    return { buffer: await readCapped(res, maxBytes), headers: res.headers };
   }
   return { get };
 }

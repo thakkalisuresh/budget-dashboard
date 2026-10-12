@@ -46,5 +46,5 @@ export { openfigi } from './openfigi.mjs';
 // Invest tab — bi-weekly HYSA rate watch (scheduled; 1st & 15th).
 export { rateWatch } from './rate-watch.mjs';
 
-// Invest tab — monthly AMC holdings for the household's Indian MFs (scheduled days 8-12 IST + on-demand).
+// Invest tab — monthly AMC holdings for the household's Indian MFs (scheduled days 8-20 IST + on-demand).
 export { mfHoldingsRefresh, mfHoldings } from './mf-holdings.mjs';

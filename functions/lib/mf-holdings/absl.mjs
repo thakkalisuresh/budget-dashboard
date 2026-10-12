@@ -24,7 +24,13 @@ const accordionUrl = (id) => `${BASE}/postlogin/CustomApi/Resources/FactsheetAcc
 export const ABSL_LISTING_URL = accordionUrl(ACCORDION_ID);
 const PORTFOLIO_PAGE_URL = `${BASE}/forms-and-downloads/portfolio`;
 
-const ALLOWED_HOSTS = ['mutualfund.adityabirlacapital.com', 'abcscprod.azureedge.net'];
+// abcscprod.azureedge.net is the listing's historical download host, but Microsoft retired the
+// azureedge.net domain (it no longer resolves: ENOTFOUND — the cause of the first real run's
+// "fetch failed"). The same /-/media/... path is served by the ABSL origin host, so that is
+// tried first and the CDN link only as a fallback.
+const ORIGIN_HOST = 'mutualfund.adityabirlacapital.com';
+const CDN_HOST = 'abcscprod.azureedge.net';
+const ALLOWED_HOSTS = [ORIGIN_HOST, CDN_HOST];
 const MAX_ZIP_BYTES = 12_000_000;
 const MAX_UNZIP_BYTES = 40_000_000;
 const MAX_ZIP_ENTRIES = 3;
@@ -69,7 +75,7 @@ const isMonthly = (i) => itemDate(i?.ResourceLink) !== null;
 async function loadListing(client, url) {
   let res;
   try {
-    res = await client.get(url, { maxBytes: 2_000_000, accept: 'application/json' });
+    res = await client.get(url, { maxBytes: 2_000_000, accept: 'application/json', phase: 'listing', retries: 1 });
   } catch (e) {
     if (e instanceof MfFetchError) throw new MfFetchError('failed', `ABSL listing: ${e.message}`);
     throw e;
@@ -126,7 +132,27 @@ export async function fetchAbsl({ asOf, fetchImpl, sleep, maxUnzipBytes = MAX_UN
   if (url.protocol !== 'https:' || !ALLOWED_HOSTS.includes(url.hostname)) throw new MfFetchError('failed', `ABSL link points at an unexpected host (${url.hostname})`);
   if (!/\.zip$/i.test(url.pathname)) throw new MfFetchError('failed', 'ABSL link is not a .zip');
 
-  const zip = await client.get(url.href, { maxBytes: MAX_ZIP_BYTES, accept: 'application/zip,*/*' });
+  // Origin host first (same path as the listing's CDN link), then the link exactly as listed.
+  const origin = new URL(url.href);
+  origin.hostname = ORIGIN_HOST;
+  const candidates = [...new Set([origin.href, url.href])];
+
+  const problems = [];
+  const kinds = [];
+  let zip = null;
+  for (const candidate of candidates) {
+    try {
+      zip = await client.get(candidate, { maxBytes: MAX_ZIP_BYTES, accept: 'application/zip,*/*', phase: 'download', retries: 1 });
+      break;
+    } catch (e) {
+      if (!(e instanceof MfFetchError)) throw e;
+      problems.push(e.message);
+      kinds.push(e.kind);
+    }
+  }
+  if (!zip) {
+    throw new MfFetchError(kinds.every(k => k === 'missing') ? 'missing' : 'failed', `ABSL zip download failed: ${problems.join(' | ')}`);
+  }
   return extractSpreadsheet(zip.buffer, maxUnzipBytes);
 }
 

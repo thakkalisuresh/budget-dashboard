@@ -2,10 +2,10 @@
  * Cloud Functions — monthly AMC holdings for the household's Indian mutual funds
  * (Invest tab, Phase 2 portfolio health).
  *
- *  mfHoldingsRefresh  scheduled, 02:00 IST on days 8-12 of each month. Targets
+ *  mfHoldingsRefresh  scheduled, 02:00 IST on days 8-20 of each month. Targets
  *                     the previous month-end; each fund house that already has
  *                     that month stored is skipped, the rest are retried daily
- *                     until the 12th. One house failing never blocks the others.
+ *                     until the 20th. One house failing never blocks the others.
  *  mfHoldings         authenticated on-demand endpoint (same auth stack as
  *                     /api/mf-nav). POST /api/mf-holdings
  *                       { action: 'status' }
@@ -91,7 +91,7 @@ export async function runMonthlyHoldings({ now = new Date(), io, impl = IMPL } =
 
 export const mfHoldingsRefresh = onSchedule(
   {
-    schedule: '0 2 8-12 * *',
+    schedule: '0 2 8-20 * *',
     timeZone: 'Asia/Kolkata',
     region: 'us-central1',
     secrets: [...SHEETS_DRIVE_SECRETS],
@@ -101,7 +101,7 @@ export const mfHoldingsRefresh = onSchedule(
   },
   async () => {
     const now = new Date();
-    if (!inRunWindow(now)) { console.log('mf-holdings: outside the day 8-12 window; skipping'); return; }
+    if (!inRunWindow(now)) { console.log('mf-holdings: outside the day 8-20 window; skipping'); return; }
     try {
       await runMonthlyHoldings({ now });
     } catch (e) {

@@ -306,7 +306,7 @@ at most 5% of weight unclassified. The sheet is located by its code **and** the 
 text in its first rows; a mismatch fails that fund with a clear reason — another sheet is
 never picked silently.
 
-**Job.** `mfHoldingsRefresh` runs at 02:00 IST on days 8-12 each month and targets the
+**Job.** `mfHoldingsRefresh` runs at 02:00 IST on days 8-20 each month (files normally appear by the 7th-9th; the wide window absorbs a late file or a transient download failure and costs nothing, since finished houses are skipped) and targets the
 previous month-end. Per fund house: skipped if all its funds already have rows for the
 target month, otherwise fetched, parsed, checked and merged; each house runs in its own
 try/catch, so one failing never blocks the others. Failures (not "not published yet") are
@@ -315,7 +315,7 @@ no Telegram/push. Written in one pass at the end of the run (holdings, then stat
 
 | AMC | Fetch | Notes |
 |---|---|---|
-| ABSL | `GET` the JSON listing `…/FactsheetAccordionById?id=3ccab227-…&month=&year=0` (the `month`/`year` params are required), pick the item "Monthly Portfolios as on <date>" for the target, `GET` its ~2 MB zip (host allowlist: `abcscprod.azureedge.net`, `mutualfund.adityabirlacapital.com`), unzip the single legacy `.xls` in memory | File names change nearly monthly, so the link comes only from the listing. The accordion id is a constant; if that listing fails or has no monthly items, the job reads the portfolio page's `data-accordian-api` links and tries up to 4 other accordions (an unpublished month never triggers this). Zip guarded: ≤ 3 entries, ≤ 40 MB uncompressed. |
+| ABSL | `GET` the JSON listing `…/FactsheetAccordionById?id=3ccab227-…&month=&year=0` (the `month`/`year` params are required), pick the item "Monthly Portfolios as on <date>" for the target, `GET` its ~2 MB zip from the **ABSL origin host** (`mutualfund.adityabirlacapital.com`, same `/-/media/...` path) first and from the link as listed (`abcscprod.azureedge.net`) only as a fallback — Microsoft retired the `azureedge.net` domain (it no longer resolves, `ENOTFOUND`), which failed the first real run; one backoff retry per host, unzip the single legacy `.xls` in memory | File names change nearly monthly, so the link comes only from the listing. The accordion id is a constant; if that listing fails or has no monthly items, the job reads the portfolio page's `data-accordian-api` links and tries up to 4 other accordions (an unpublished month never triggers this). Zip guarded: ≤ 3 entries, ≤ 40 MB uncompressed. |
 | SBI | `GET` `www.sbimf.com/docs/default-source/scheme-portfolios/all-schemes-monthly-portfolio---as-on-<D><st/nd/rd/th>-<month>-<year>.xlsx`; 404 = not out yet | Sheets `SRBF-AHP`, `-AP`, `-CHP`, `-CP`. |
 | ITI | **Semi-manual.** The AMC's listing API is client-side-encrypted (`{"eData": ciphertext}`; we deliberately do not reverse it) and the file name contains the upload epoch, so it cannot be discovered | The owner pastes the link via `POST /api/mf-holdings {action:'ingest', house:'iti', url}` (see below). Until then the scheduled job records ITI as `missing` with reason "awaiting manual link". |
 
