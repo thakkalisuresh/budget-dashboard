@@ -165,15 +165,46 @@ describe('held run: validation, metrics, status', () => {
     expect(valuesToRun(m.s.run)[0].lastError).toMatch(/phase=nav-fetch/);
   });
 
-  it('stale (mfapi behind NAVAll after the retry) is marked stale, not failed, and the old row stays', async () => {
+  it('mfapi lagging AMFI over a weekend (Fri NAV, Mon NAVAll) is fine: status ok, blank reason, lastNavDate = mfapi\'s date', async () => {
+    const m = memIo({ config: [FLEXI[0]] });
+    const deps = makeDeps({ bodies: flexiBodies(), codes: FLEXI_CODES, navDate: '2026-10-12' });
+    const r = await runScope({ scope: 'held', io: m.io, deps, now: NOW });
+    expect(r).toMatchObject({ ok: 2, stale: 0, failed: 0 });
+    expect(rowsOf(m)[0]).toMatchObject({ status: 'ok', reason: '', lastNavDate: NAV_DATE });
+  });
+
+  it('a lag beyond the 5-day tolerance is stale, with no retry, and the previous good row stays', async () => {
     const m = memIo({ config: [FLEXI[0]] });
     await runScope({ scope: 'held', io: m.io, deps: makeDeps({ bodies: flexiBodies(), codes: FLEXI_CODES }), now: new Date('2026-10-04T04:00:00+05:30') });
-    const deps = makeDeps({ bodies: flexiBodies(), codes: FLEXI_CODES, navDate: '2026-10-10' }); // AMFI is one day ahead of what mfapi serves
+    const deps = makeDeps({ bodies: flexiBodies(), codes: FLEXI_CODES, navDate: '2026-10-16' }); // 7 days ahead of what mfapi serves
     const r = await runScope({ scope: 'held', io: m.io, deps, now: NOW });
     expect(r).toMatchObject({ stale: 2, failed: 0, ok: 0 });
+    expect(deps.seen).toEqual(['1001', '1002']); // one request each: no retry
+    expect(deps.sleep).not.toHaveBeenCalled();
     const rows = rowsOf(m);
-    expect(rows.every((x) => x.status === 'stale' && x.asOf === '2026-10-04')).toBe(true);
-    expect(rows[0].reason).toMatch(/older than AMFI NAVAll 2026-10-10/);
+    expect(rows.every((x) => x.status === 'stale' && x.asOf === '2026-10-04' && x.ret1yPct !== null)).toBe(true);
+    expect(rows[0].reason).toMatch(/7 days older than AMFI NAVAll 2026-10-16/);
+  });
+
+  it('with no previous good row a lag leaves a `pending` placeholder (never a stale row with empty metrics)', async () => {
+    const m = memIo({ config: [FLEXI[0]] });
+    const deps = makeDeps({ bodies: flexiBodies(), codes: FLEXI_CODES, navDate: '2026-10-20' });
+    await runScope({ scope: 'held', io: m.io, deps, now: NOW });
+    const rows = rowsOf(m);
+    expect(rows.map((x) => x.status)).toEqual(['pending', 'pending']);
+    expect(rows[0]).toMatchObject({ asOf: '', fetchedAt: '', ret1yPct: null });
+    expect(rows[0].reason).toMatch(/older than AMFI NAVAll 2026-10-20/);
+    // the next tick (source caught up) replaces the placeholders
+    const ok = makeDeps({ bodies: flexiBodies(), codes: FLEXI_CODES });
+    await runScope({ scope: 'held', io: m.io, deps: ok, now: new Date('2026-10-12T04:00:00+05:30') });
+    expect(rowsOf(m).map((x) => [x.status, x.asOf])).toEqual([['ok', '2026-10-12'], ['ok', '2026-10-12']]);
+  });
+
+  it('placeholders already on the sheet as `stale` (written before `pending` existed) are read as pending', async () => {
+    const stalePlaceholder = PEERS_COLUMNS.map((c) => (c === 'status' ? 'stale' : c === 'code' ? '1001' : c === 'plan' ? 'direct' : ''));
+    expect(valuesToPeers([stalePlaceholder])[0].status).toBe('pending');
+    const keep = PEERS_COLUMNS.map((c) => (c === 'status' ? 'stale' : c === 'code' ? '1001' : c === 'plan' ? 'direct' : c === 'asOf' ? '2026-10-04' : ''));
+    expect(valuesToPeers([keep])[0].status).toBe('stale');
   });
 
   it('a code missing from NAVAll fails (placeholder row, no asOf) and costs no request', async () => {
@@ -275,6 +306,35 @@ describe('idempotence, retention, resume', () => {
     await runScope({ scope: 'peers', io: m.io, deps, now: new Date('2026-10-02T03:00:00+05:30') });
     expect(m.calls.filter((c) => c === 'peers').length).toBeGreaterThanOrEqual(2);
     expect(rowsOf(m)).toHaveLength(28);
+  });
+});
+
+describe('lag circuit breaker', () => {
+  it('after 3 consecutive lag-stale codes the run stops fetching (no budget burned), says why, and the next tick finishes the cycle', async () => {
+    const m = memIo({ config: FLEXI });
+    const behind = makeDeps({ bodies: flexiBodies(), codes: FLEXI_CODES, navDate: '2026-10-20' });
+    const r1 = await runScope({ scope: 'peers', io: m.io, deps: behind, now: new Date('2026-10-12T03:00:00+05:30') });
+    expect(behind.seen).toHaveLength(3);
+    expect(r1).toMatchObject({ done: false, stale: 3, remaining: 7, ok: 0 });
+    const run = valuesToRun(m.s.run)[0];
+    expect(run.cursorNote).toMatch(/mfapi is 11 days behind AMFI NAVAll \(3 codes in a row\); paused until the next tick/);
+    expect(run.finishedAt).toBe('');
+    expect(rowsOf(m).filter((x) => x.status === 'pending')).toHaveLength(3);
+    const caughtUp = makeDeps({ bodies: flexiBodies(), codes: FLEXI_CODES });
+    const r2 = await runScope({ scope: 'peers', io: m.io, deps: caughtUp, now: new Date('2026-10-13T03:00:00+05:30') });
+    expect(r2).toMatchObject({ done: true, ok: 10, stale: 0 });
+    expect(rowsOf(m).every((x) => x.status === 'ok')).toBe(true);
+  });
+
+  it('a success resets the streak, and non-lag failures never trip the breaker', async () => {
+    const m = memIo({ config: FLEXI });
+    const b = flexiBodies();
+    const err = () => new PeersFetchError({ phase: 'nav-fetch', host: 'api.mfapi.in', status: 502 });
+    const bodies = { ...b };
+    for (const c of ['2001', '2002', '2003', '2004', '2005']) bodies[c] = [err(), err()];
+    const deps = makeDeps({ bodies, codes: FLEXI_CODES });
+    const r = await runScope({ scope: 'peers', io: m.io, deps, now: new Date('2026-10-12T03:00:00+05:30') });
+    expect(r).toMatchObject({ failed: 5, ok: 5, remaining: 0 }); // five real failures in a row did not pause the run
   });
 });
 

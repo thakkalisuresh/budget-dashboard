@@ -467,8 +467,10 @@ explicit `active=FALSE` always wins; the auto rule only narrows, it never re-ena
   (`asOf` and `fetchedAt` blank, blank metrics, `status` + `reason`). The latest **2 distinct `asOf` per (code, plan)**
   are kept; a re-run with the same asOf replaces that row (idempotent). `lastNavDate` is the data date and is on every
   row: the 3y figure moves ~1 point between consecutive NAV dates, so the card should show it.
-- `status` = `ok | stale | failed | insufficient-history` (history < 365 days; metrics that need longer stay blank).
-  `stale`: mfapi's newest NAV is older than AMFI's NAVAll date even after a retry. `reason` explains, and also lists
+- `status` = `ok | stale | failed | insufficient-history | pending` (history < 365 days; metrics that need longer stay blank).
+  `stale`: mfapi's newest NAV is **more than 5 calendar days older** than AMFI's NAVAll date (see *freshness* below); the
+  previous good row is kept. `pending`: the code has never loaded and the attempt was lag-stale: a placeholder row
+  (blank `asOf`, which the card ignores) carrying the reason, never a "stale" row with empty metrics. `reason` explains, and also lists
   data-quality flags that do not change `ok` (a NAV gap > 7 days or a one-day move > 15% inside the last 5 years,
   never silently dropped) and an AMFI spot-check mismatch. Failure reasons always carry
   `phase=<nav-check|nav-fetch|ter|spot-check> host=<host> status=<HTTP> cause=<err.cause.code: message>` (a bare
@@ -535,8 +537,14 @@ likewise per calendar month (a finished month is skipped unless `force`).
 
 Calls are ≤ 1 request/second per host with an honest `User-Agent` (`Fundient-household-dashboard/1.0 (private personal use)`).
 Per code: NAVAll must still list the code (so both plan codes are live), mfapi's body must parse completely (mfapi silently
-served 2 of 125 first downloads truncated: HTTP 200, JSON cut mid-record), and `data[0].date` must be ≥ the NAVAll date; otherwise
-**one retry after 5 s**, then the last good row is kept and marked `stale`/`failed`. Once per monthly cycle two codes' NAVs are
+served 2 of 125 first downloads truncated: HTTP 200, JSON cut mid-record), and its newest NAV must be **within the freshness tolerance**
+of the NAVAll date; a truncated/invalid body or a network error gets **one retry after 5 s**, then the last good row is kept
+and marked `stale`/`failed`. **Freshness is a lag tolerance, not equality:** mfapi.in trails AMFI by 1-3 days (weekends, its own
+refresh schedule; a Friday NAV against a Monday NAVAll is normal), so a newest NAV up to `MAX_NAV_LAG_DAYS` = **5 calendar
+days** older than the NAVAll date is accepted as `ok` (blank `reason`, `lastNavDate` = mfapi's date); more is `stale`. A lag is
+never retried (it does not fix itself in seconds). **Circuit breaker:** after 3 consecutive lag-stale codes the run stops
+fetching (the source is behind; the budget is not burned), records "mfapi is N days behind AMFI NAVAll (3 codes in a row);
+paused until the next tick" in `MfPeersRun.cursorNote`, and the next daily tick resumes. Once per monthly cycle two codes' NAVs are
 compared with AMFI's single-day history report (reason-only on a mismatch). Resumability: a slice stops at a time budget (360 s of
 the 540 s function timeout; sheet checkpoints every 25 codes), and a code is "done" in a cycle if its `fetchedAt` is inside it, so
 the next invocation only does the leftovers. Failures are logged once per scope via
@@ -547,7 +555,7 @@ is open to every authenticated household user; one refresh at a time → `409 {r
 
 | action | request | response |
 |---|---|---|
-| `status` | — | `{ run: [MfPeersRun rows], counts: { ok, stale, failed, insufficient-history } }` |
+| `status` | — | `{ run: [MfPeersRun rows], counts: { ok, stale, failed, insufficient-history, pending } }` |
 | `refresh` | `scope`: `held | peers | ter | all` (default `all` = peers, ter, held), `force?` (re-fetch even if done this cycle) | `{ done, remaining, scopes: [{ scope, cycle, total, completed, ok, stale, failed, skipped, remaining, done, failures (≤ 5), error }] }` |
 
 Hosting forwards `/api/*` with a 60 s limit, so one `refresh` call is a ~35 s slice (≈ 15 codes). **Repeat it until `done` is true**

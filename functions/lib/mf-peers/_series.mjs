@@ -3,19 +3,23 @@
  * from it (research §6 / the validation checklist):
  *   1. the body must parse completely (mfapi silently truncated 2 of 125 first
  *      downloads: HTTP 200 with the JSON cut mid-record);
- *   2. data[0].date must be >= the NAVAll date for that code; otherwise one
- *      retry after a pause, then the caller keeps the last good row and marks it stale;
+ *   2. freshness is a LAG TOLERANCE, not equality: mfapi.in trails AMFI's NAVAll by 1-3 days
+ *      (weekends, its own refresh schedule), so the newest NAV is accepted when it is at most
+ *      MAX_NAV_LAG_DAYS (5 calendar days) older than the NAVAll date; a larger lag is `stale`.
+ *      A lag is never retried (it does not fix itself in 5 seconds); only truncated/invalid
+ *      bodies and network errors get the one retry;
  *   3. the code must still be live in NAVAll (so a closed/merged code fails loudly).
- * Returns { series, navAllDate } or throws SeriesError(kind: 'stale'|'failed').
+ * Returns { series, navAllDate, lagDays } or throws SeriesError(kind: 'stale'|'failed').
  */
-import { cleanSeries } from './_metrics.mjs';
+import { cleanSeries, daysBetween } from './_metrics.mjs';
 import { PeersFetchError } from './_http.mjs';
 
 const MFAPI = 'https://api.mfapi.in/mf';
 export const RETRY_PAUSE_MS = 5000;
+export const MAX_NAV_LAG_DAYS = 5;
 
 export class SeriesError extends Error {
-  constructor(kind, message) { super(message); this.name = 'SeriesError'; this.kind = kind; }
+  constructor(kind, message, extra = {}) { super(message); this.name = 'SeriesError'; this.kind = kind; Object.assign(this, extra); }
 }
 
 const dmyToIso = (s) => { const m = /^(\d{2})-(\d{2})-(\d{4})$/.exec(s || ''); return m ? `${m[3]}-${m[2]}-${m[1]}` : null; };
@@ -32,9 +36,9 @@ export function parseMfapiBody(text) {
 
 /**
  * @param {string} code
- * @param {{ navAll: Map<string,{date:string|null}>, client: {getText:Function}, sleep: Function }} ctx
+ * @param {{ navAll: Map<string,{date:string|null}>, client: {getText:Function}, sleep: Function, maxLagDays?: number }} ctx
  */
-export async function fetchHistory(code, { navAll, client, sleep }) {
+export async function fetchHistory(code, { navAll, client, sleep, maxLagDays = MAX_NAV_LAG_DAYS }) {
   const na = navAll.get(String(code));
   if (!na) throw new SeriesError('failed', `phase=nav-check code ${code} is not in AMFI NAVAll (closed, merged or renamed?)`);
   let lastProblem = '';
@@ -49,9 +53,11 @@ export async function fetchHistory(code, { navAll, client, sleep }) {
       continue;
     }
     const newest = parsed.series[parsed.series.length - 1].date;
-    if (na.date && newest < na.date) { lastProblem = `phase=nav-fetch host=api.mfapi.in newest NAV ${newest} is older than AMFI NAVAll ${na.date}`; continue; }
-    return { series: parsed.series, navAllDate: na.date || null };
+    const lagDays = na.date && newest < na.date ? daysBetween(newest, na.date) : 0;
+    if (lagDays > maxLagDays) {
+      throw new SeriesError('stale', `phase=nav-fetch host=api.mfapi.in newest NAV ${newest} is ${lagDays} days older than AMFI NAVAll ${na.date} (tolerance ${maxLagDays})`, { lagDays });
+    }
+    return { series: parsed.series, navAllDate: na.date || null, lagDays };
   }
-  const lag = /older than AMFI NAVAll/.test(lastProblem);
-  throw new SeriesError(lag ? 'stale' : 'failed', `${lastProblem} (after 1 retry)`);
+  throw new SeriesError('failed', `${lastProblem} (after 1 retry)`);
 }
