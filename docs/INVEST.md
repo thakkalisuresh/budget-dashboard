@@ -196,6 +196,53 @@ always says *Ideas and observations from public data, not investment advice.*
 - **Tests:** `mfInsights.test.js` (fixture `__tests__/fixtures/mfHoldings.sample.json` = the same
   real files), `mfHoldingsApi.test.js`, category cases in `mf-nav-fn.test.js`.
 
+### Fund vs peers (`MfPeersCard.jsx`, pure logic in `mfPeers.js`)
+
+Card under *Portfolio health* (same visibility rule, read-only viewers included; it only reads).
+Compares each held fund with a fixed, performance-blind peer list on four areas: returns
+(1/3/5y), expense ratio, risk from NAV history (volatility, largest fall, 3y) and consistency
+(share of monthly rolling 1-year windows beating the peer median). Deterministic, no LLM; neutral
+wording only (ranks, medians, gaps: no buy/sell/switch/better/worse; `mfPeersWording.test.js`
+fails on verdict words). Always says *Observations from public data, not investment advice.*
+
+- **Peers** (approved 2026-10-10, research in `mf-phase2-research/`): flexi-cap 15, small-cap 15,
+  conglomerate 3 weak comparables (2 active funds + the Tata index fund as an "index twin"),
+  retirement per SBI sub-plan (aggressive 5, aggressive-hybrid 5, conservative-hybrid 6,
+  conservative 2). Chosen by category, age and size, not by returns; today's survivors only
+  (merged/closed funds are absent, so medians may lean high). PPFAS carries "includes overseas equity".
+- **Plan types:** Growth only; a Direct | Regular toggle per fund (default = the plan of the mapped scheme
+  from `useMfNav` `plan`, else Direct with a "plan held not confirmed" note). Ranks are always within the
+  same plan type. The TER row shows both plans, the peer medians and the gap in INR per INR 1 lakh per year
+  ((Regular TER − Direct TER) × 1000, total TER).
+- **Rank:** competition ranking over active `role=peer` rows plus the held fund that have data for that
+  figure ("3rd of 16", ties "joint 3rd"); 1st = highest for returns/consistency, lowest for TER, volatility,
+  largest fall (shown as a magnitude). Peer median leaves the held fund out. Fewer than `minPeersForRank`
+  (5) funds with data: value and median, no rank. The conglomerate gets no ranks at all: the held fund, each
+  comparable and the index twin over the common window (`windowStartDate`, labelled "cumulative since
+  27 Oct 2025", or "annualised since …" once the job flips `windowReturnBasis`; bases are never mixed).
+- **Position glyph:** range bar min..max with a median tick and ▲ above / ▼ below / ◆ at the median; the card
+  says it is a position on a number line, not a judgement. Neutral colours only; glyph + number, never colour alone.
+- **Skipped / n/a states:** SBI sub-plan unknown → "SBI sub-plan not confirmed", comparison skipped (same
+  detection as Portfolio health: `fundKeyFor`). A metric with no history → "not enough history"; unmatched or
+  missing TER (HDFC/Nippon are absent from the AMFI feed) → n/a, left out of medians; a `failed` peer is
+  excluded from ranks and listed; a failed/insufficient held row still renders with its `reason`; consistency
+  needs `minRollingWindows` (12) windows. NAV returns ignore the retirement lock-in (said once per retirement fund).
+- **Staleness:** by the row's `asOf` (job run date): held older than 14 days, peers older than 45 days →
+  amber "MAY BE OUT OF DATE" (ranks still shown); per-row `status` stale/failed shown regardless; each badge also
+  shows the NAV date. `MfPeersRun` (scope `peers`) gives the "peer data as of" badge and "still loading done/total".
+- **Limits** live in `DEFAULT_MF_PEER_THRESHOLDS` / `settings.mfPeerThresholds` (sanitised in `useSettings`;
+  no editing UI): `staleHeldDays` 14, `stalePeerDays` 45, `minPeersForRank` 5, `minRollingWindows` 12.
+- **Data source** (`mfPeersApi.js`, own `useMfPeers` hook, 10-min cache): Invest-sheet tabs `MfPeersConfig`,
+  `MfPeers`, `MfTer`, `MfPeersRun`, written by the peer-data job, never by the app. Columns are mapped by
+  **header name** from row 1 (order may change; `mfPeersApi.test.js` pins the name set, `mfPeers.test.js` the
+  agreed order). Latest `asOf` per (code, plan) only. Missing or empty tabs are a normal state ("peer data is
+  not available yet"); sign-in errors still surface. `MfPeersSeries` is the job's private tab and is never read.
+  Percent columns are percent numbers (13.71, not 0.1371). `role` held|peer|benchmark; `status`
+  ok|stale|failed|insufficient-history.
+- **Mock mode:** `mockMfPeers.js` has metrics computed from the real NAV histories of the approved lists as of
+  2026-10-09 (Quant Small Cap is marked failed on purpose). **Tests:** `mfPeers.test.js`, `mfPeersApi.test.js`,
+  `mfPeersCard.test.jsx`, `mfPeersWording.test.js`.
+
 ## Quotes ($0 by construction)
 
 `/api/quotes` (`functions/quotes.mjs`) proxies Finnhub so the API key never reaches
