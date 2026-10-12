@@ -103,7 +103,7 @@ export function rowsByHeader(values) {
 }
 
 const ROLES = ['held', 'peer', 'benchmark'];
-const STATUSES = ['ok', 'stale', 'failed', 'insufficient-history'];
+const STATUSES = ['ok', 'stale', 'failed', 'insufficient-history', 'pending'];
 
 export function parseConfigRows(objs) {
   const out = [];
@@ -126,7 +126,7 @@ export function parsePeerRows(objs) {
   for (const r of objs || []) {
     const asOf = toIsoDate(r.asOf); const code = text(r.code); const plan = asPlan(r.plan);
     const role = text(r.role).toLowerCase();
-    if (!asOf || !code || !plan || !ROLES.includes(role)) continue;
+    if (!code || !plan || !ROLES.includes(role)) continue; // placeholder rows (not loaded yet) have an empty asOf but carry a status/reason
     const status = text(r.status).toLowerCase();
     out.push({
       asOf, categoryKey: text(r.categoryKey), role, fundKey: text(r.fundKey), code, plan, name: text(r.name),
@@ -169,8 +169,26 @@ const latestBy = (rows, keyOf) => {
 };
 
 // ── per-category comparison ──────────────────────────────────────────────────
-function buildEntry({ cfgPeer, row, plan, ter, thresholds, today }) {
-  const stale = row ? (daysBetween(row.asOf, today) > (row.role === 'held' ? thresholds.staleHeldDays : thresholds.stalePeerDays)) || row.status === 'stale' : false;
+const hasMetrics = (row) => !!row && [row.ret1yPct, row.ret3yPct, row.ret5yPct, row.volPct, row.maxDrawdownPct, row.rollingBeatPeerMedianPct, row.retWindowPct, row.volWindowPct, row.maxDrawdownWindowPct].some(v => v != null);
+
+/**
+ * How a row should be read:
+ *  ok         has numbers (a `stale` row with numbers keeps them and is flagged)
+ *  not-loaded no row yet / `pending` / empty row while a refresh cycle is still running (neutral, not an error)
+ *  waiting    `stale` with no numbers (the job is waiting for fresh NAV data)
+ *  failed     `failed` (a real error), or no row at all once the cycle is complete
+ */
+export function loadStateOf(row, cycleComplete) {
+  if (!row) return cycleComplete ? 'failed' : 'not-loaded';
+  if (row.status === 'pending') return 'not-loaded';
+  if (row.status === 'failed') return 'failed';
+  if (row.status === 'stale') return hasMetrics(row) ? 'ok' : 'waiting';
+  if (!hasMetrics(row) && row.status !== 'insufficient-history' && !cycleComplete) return 'not-loaded';
+  return 'ok';
+}
+
+function buildEntry({ cfgPeer, row, plan, ter, thresholds, today, cycleComplete }) {
+  const stale = row && row.asOf ? (daysBetween(row.asOf, today) > (row.role === 'held' ? thresholds.staleHeldDays : thresholds.stalePeerDays)) || row.status === 'stale' : false;
   const values = {};
   for (const m of METRICS) {
     if (m.id === 'ter') { values.ter = ter && ter.matched !== false && ter.terPct != null ? ter.terPct : null; continue; }
@@ -181,17 +199,17 @@ function buildEntry({ cfgPeer, row, plan, ter, thresholds, today }) {
   }
   const win = {};
   for (const m of WINDOW_METRICS) { let v = row ? row[m.field] : null; if (v != null && m.magnitude) v = Math.abs(v); win[m.id] = v; }
-  const failed = !row || row.status === 'failed';
+  const load = loadStateOf(row, cycleComplete);
   return {
     code: row?.code || (plan === 'direct' ? cfgPeer?.directCode : cfgPeer?.regularCode) || '', name: cfgPeer?.name || row?.name || '', amc: cfgPeer?.amc || '',
-    role: cfgPeer?.role || row?.role, plan, note: cfgPeer?.note || '', weakMatch: !!cfgPeer?.weakMatch,
-    status: failed ? 'failed' : row.status, reason: row?.reason || (row ? '' : 'no data row'), asOf: row?.asOf || null, lastNavDate: row?.lastNavDate || null,
+    role: cfgPeer?.role || row?.role, plan, note: cfgPeer?.note || '', weakMatch: !!cfgPeer?.weakMatch, load,
+    status: row ? row.status : 'failed', reason: row?.reason || (row || load !== 'failed' ? '' : 'no data row'), asOf: row?.asOf || null, lastNavDate: row?.lastNavDate || null,
     firstNavDate: row?.firstNavDate || null, windowReturnBasis: row?.windowReturnBasis || '', stale, values, window: win, windowStartDate: row?.windowStartDate || null, rollingWindows: row?.rollingWindows ?? null,
   };
 }
 
 function compare(held, peers, thresholds) {
-  const usable = peers.filter(p => p.status !== 'failed');
+  const usable = peers.filter(p => p.load !== 'failed');
   const metrics = {};
   for (const m of METRICS) {
     const value = held.values[m.id];
@@ -221,6 +239,10 @@ function compare(held, peers, thresholds) {
 export function buildMfPeers({ funds = [], config = [], peerRows = [], terRows = [], run = {}, thresholds = null, today = new Date().toISOString().slice(0, 10) } = {}) {
   const t = sanitizeMfPeerThresholds(thresholds);
   const notes = [];
+  // A refresh cycle is "running" while MfPeersRun says done < total and no finishedAt; unknown run info = complete.
+  const prog = (r) => (r && r.total != null && r.done != null && r.done < r.total && !r.finishedAt ? { done: r.done, total: r.total } : null);
+  const peersProgress = prog(run?.peers) || prog(run?.held);
+  const cycleComplete = !peersProgress;
   const rows = latestBy(peerRows, r => `${r.code}|${r.plan}`);
   const ters = latestBy(terRows, r => `${r.code}|${r.plan}`);
   const activeCfg = config.filter(c => c.active !== false);
@@ -228,7 +250,8 @@ export function buildMfPeers({ funds = [], config = [], peerRows = [], terRows =
   const asOfAll = [];
 
   if (!activeCfg.length || !rows.size) {
-    return { today, thresholds: t, status: 'unavailable', funds: [], notes: [{ id: 'unavailable', kind: 'unavailable', message: 'Peer data is not available yet.' }], asOf: [], disclaimer: PEERS_DISCLAIMER };
+    const loadingMsg = peersProgress ? `Peer data is still loading (${peersProgress.done}/${peersProgress.total}).` : 'Peer data is not available yet.';
+    return { today, thresholds: t, status: 'unavailable', funds: [], notes: [{ id: 'unavailable', kind: 'unavailable', message: loadingMsg }], asOf: [], peersProgress, cycleComplete, peersFinishedAt: null, disclaimer: PEERS_DISCLAIMER };
   }
 
   for (const f of funds) {
@@ -248,7 +271,7 @@ export function buildMfPeers({ funds = [], config = [], peerRows = [], terRows =
     const comparison = cfgs.map(c => c.comparison).find(Boolean) || null;
     const isConglomerate = catKey === 'conglomerate' || !!comparison?.window;
     const codeFor = (c, plan) => (plan === 'direct' ? c.directCode : c.regularCode);
-    const mk = (c, plan) => { const code = codeFor(c, plan); return buildEntry({ cfgPeer: c, row: rows.get(`${code}|${plan}`), plan, ter: ters.get(`${code}|${plan}`), thresholds: t, today }); };
+    const mk = (c, plan) => { const code = codeFor(c, plan); return buildEntry({ cfgPeer: c, row: rows.get(`${code}|${plan}`), plan, ter: ters.get(`${code}|${plan}`), thresholds: t, today, cycleComplete }); };
 
     const plans = {};
     for (const plan of PLANS) {
@@ -257,12 +280,13 @@ export function buildMfPeers({ funds = [], config = [], peerRows = [], terRows =
       const bench = benchCfg ? mk(benchCfg, plan) : null;
       if (held.asOf) asOfAll.push(held.asOf);
       peers.forEach(p => p.asOf && asOfAll.push(p.asOf));
-      const peersNotLoaded = peers.length > 0 && !peers.some(p => p.asOf);
-      const excluded = peersNotLoaded ? [] : peers.filter(p => p.status === 'failed').map(p => ({ name: p.name, reason: p.reason || 'no data' }));
+      const peersNotLoaded = peers.length > 0 && !peers.some(p => p.load === 'ok' && hasMetrics(rows.get(`${p.code}|${plan}`)));
+      const excluded = peers.filter(p => p.load === 'failed').map(p => ({ name: p.name, reason: p.reason || 'no data' }));
       plans[plan] = {
         plan, held, peers, benchmark: bench, excluded, peersNotLoaded,
         metrics: isConglomerate ? null : compare(held, peers, t),
-        peerCount: peers.length, peersWithData: peers.filter(p => p.status !== 'failed').length,
+        peerCount: peers.length, peersWithData: peers.filter(p => p.load === 'ok').length,
+        notLoadedCount: peers.filter(p => p.load === 'not-loaded').length, waitingCount: peers.filter(p => p.load === 'waiting').length,
         peerStale: peers.some(p => p.stale),
       };
     }
@@ -291,9 +315,8 @@ export function buildMfPeers({ funds = [], config = [], peerRows = [], terRows =
 
   const asOf = [...new Set(asOfAll)].sort();
   const pr = run?.peers || null;
-  const peersProgress = pr && pr.total != null && pr.done != null && pr.done < pr.total ? { done: pr.done, total: pr.total } : null;
   const peersFinishedAt = pr?.finishedAt ? pr.finishedAt.slice(0, 10) : null;
-  return { today, thresholds: t, status: out.length ? 'ok' : 'no-funds', funds: out, notes, asOf, peersProgress, peersFinishedAt, disclaimer: PEERS_DISCLAIMER };
+  return { today, thresholds: t, status: out.length ? 'ok' : 'no-funds', funds: out, notes, asOf, peersProgress, cycleComplete, peersFinishedAt, disclaimer: PEERS_DISCLAIMER };
 }
 
 /** 'cumulative' | 'annualised' when every row with a window return agrees; 'mixed' (never shown side by side) otherwise; '' when none. */

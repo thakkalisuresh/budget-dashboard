@@ -224,9 +224,19 @@ fails on verdict words). Always says *Observations from public data, not investm
   says it is a position on a number line, not a judgement. Neutral colours only; glyph + number, never colour alone.
 - **Skipped / n/a states:** SBI sub-plan unknown → "SBI sub-plan not confirmed", comparison skipped (same
   detection as Portfolio health: `fundKeyFor`). A metric with no history → "not enough history"; unmatched or
-  missing TER (HDFC/Nippon are absent from the AMFI feed) → n/a, left out of medians; a `failed` peer is
-  excluded from ranks and listed; a failed/insufficient held row still renders with its `reason`; consistency
-  needs `minRollingWindows` (12) windows. NAV returns ignore the retirement lock-in (said once per retirement fund).
+  missing TER (HDFC/Nippon are absent from the AMFI feed) → n/a, left out of medians; consistency needs
+  `minRollingWindows` (12) windows. NAV returns ignore the retirement lock-in (said once per retirement fund).
+- **Load states** (`loadStateOf`, per row; the data job writes placeholder rows with an empty `asOf` and a
+  `status`/`reason` for codes it could not load, and `MfPeersRun` tells whether a refresh cycle is running):
+  `not-loaded` = no row, `status=pending`, or an empty row while the cycle runs (`MfPeersRun` `done < total`
+  with no `finishedAt`): neutral muted "Not loaded yet (peer data is loading, done/total)", not an error;
+  `waiting` = `status=stale` with no numbers: "Waiting for NAV data" with the `reason` only in a collapsed
+  "Details"; `failed` = `status=failed` (a real error), or no row at all once the cycle is complete: amber
+  "This fund's own data is unavailable (<reason>)", and a failed peer is left out of the ranks and listed.
+  Not-loaded and waiting peers are left out of the ranks without being called failures (a count is shown).
+  A `stale` row with numbers keeps them and is flagged. With no run info the cycle counts as complete.
+  TER and the Direct-vs-Regular gap render whenever the TER rows exist, even with no NAV metrics (also on the
+  conglomerate block).
 - **Staleness:** by the row's `asOf` (job run date): held older than 14 days, peers older than 45 days →
   amber "MAY BE OUT OF DATE" (ranks still shown); per-row `status` stale/failed shown regardless; each badge also
   shows the NAV date. `MfPeersRun` (scope `peers`) gives the "peer data as of" badge and "still loading done/total".
@@ -238,7 +248,7 @@ fails on verdict words). Always says *Observations from public data, not investm
   agreed order). Latest `asOf` per (code, plan) only. Missing or empty tabs are a normal state ("peer data is
   not available yet"); sign-in errors still surface. `MfPeersSeries` is the job's private tab and is never read.
   Percent columns are percent numbers (13.71, not 0.1371). `role` held|peer|benchmark; `status`
-  ok|stale|failed|insufficient-history.
+  ok|stale|failed|pending|insufficient-history.
 - **Mock mode:** `mockMfPeers.js` has metrics computed from the real NAV histories of the approved lists as of
   2026-10-09 (Quant Small Cap is marked failed on purpose). **Tests:** `mfPeers.test.js`, `mfPeersApi.test.js`,
   `mfPeersCard.test.jsx`, `mfPeersWording.test.js`.
