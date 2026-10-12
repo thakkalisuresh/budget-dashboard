@@ -36,6 +36,36 @@ const STATE_TEXT = {
   'no-peers': 'no peers with data yet',
   'too-few': 'too few peers with data for a rank',
 };
+/** Neutral wording for a row that has no numbers yet; `failed` is the only amber case. */
+function emptyTextFor(def, held) {
+  if (def?.id === 'ter') return 'n/a (not in the AMFI expense-ratio feed)';
+  if (held.load === 'not-loaded') return 'Not loaded yet';
+  if (held.load === 'waiting') return 'Waiting for NAV data';
+  if (held.load === 'failed') return 'Unavailable';
+  return STATE_TEXT['no-history'];
+}
+const progressText = (progress) => (progress ? `peer data is loading, ${progress.done}/${progress.total}` : 'peer data is loading');
+
+/** Muted status line for a not-loaded / waiting row, amber for a real failure; the reason sits in a collapsed detail. */
+function LoadNote({ e, progress, who = 'This fund’s own data' }) {
+  if (e.load === 'ok') return null;
+  if (e.load === 'not-loaded') return <p role="note" style={{ fontSize: 11, marginTop: 8, ...muted }}>Not loaded yet ({progressText(progress)}).</p>;
+  const waiting = e.load === 'waiting';
+  return (
+    <div role="note" style={{ marginTop: 8 }}>
+      <p style={{ fontSize: 11, color: waiting ? 'var(--color-text-muted)' : 'var(--color-warning)' }}>
+        {waiting ? 'Waiting for NAV data.' : `${who} is unavailable${e.reason ? ` (${e.reason})` : ''}.`}
+      </p>
+      {waiting && e.reason && (
+        <details style={{ marginTop: 2 }}>
+          <summary style={{ fontSize: 10.5, cursor: 'pointer', ...muted }}>Details</summary>
+          <p style={{ fontSize: 10.5, marginTop: 3, ...muted }}>{e.reason}</p>
+        </details>
+      )}
+    </div>
+  );
+}
+
 const GLYPH = { above: '▲', below: '▼', at: '◆' };
 const POSITION_TEXT = { above: 'above', below: 'below', at: 'at' };
 
@@ -59,7 +89,7 @@ function rankText(m) {
   return `${m.tied ? 'joint ' : ''}${ordinal(m.rank)} of ${m.of}`;
 }
 
-function MetricRow({ def, m, fmtVal }) {
+function MetricRow({ def, m, fmtVal, empty = STATE_TEXT['no-history'] }) {
   const dirText = def.direction === 'high' ? '1st = highest' : '1st = lowest';
   return (
     <li style={{ listStyle: 'none', padding: '9px 0', borderTop: '1px solid var(--sur-6)' }}>
@@ -68,7 +98,7 @@ function MetricRow({ def, m, fmtVal }) {
         <b className="tabular-nums" style={{ fontSize: 13, color: 'var(--color-text)', flexShrink: 0 }}>{fmtVal(m.value)}</b>
       </div>
       {m.value == null || m.state === 'no-history' ? (
-        <p style={{ fontSize: 10.5, marginTop: 3, ...muted }}>{STATE_TEXT['no-history']}</p>
+        <p style={{ fontSize: 10.5, marginTop: 3, ...muted }}>{empty}</p>
       ) : (
         <>
           <RangeBar m={m} />
@@ -78,7 +108,7 @@ function MetricRow({ def, m, fmtVal }) {
           <p style={{ fontSize: 11, marginTop: 2, color: 'var(--color-text-secondary)' }}>
             {m.rank != null
               ? <><b>{rankText(m)}</b> <span style={muted}>({dirText}; {m.withData} funds with data)</span></>
-              : <span style={muted}>{STATE_TEXT[m.state] || ''}{m.withData ? ` (${m.withData} with data)` : ''}</span>}
+              : <span style={muted}>{STATE_TEXT[m.state] || ''}{m.state === 'too-few' && m.withData ? ` (${m.withData} with data)` : ''}</span>}
           </p>
         </>
       )}
@@ -118,12 +148,12 @@ function CostBlock({ fund, plan }) {
           </p>
         ) : <p style={{ fontSize: 11, marginTop: 8, ...muted }}>The Direct-vs-Regular gap needs a TER for both plans (n/a for one of them).</p>}
       </li>
-      <MetricRow def={METRICS.find(x => x.id === 'ter')} m={m} fmtVal={fmtTer} />
+      <MetricRow def={METRICS.find(x => x.id === 'ter')} m={m} fmtVal={fmtTer} empty={emptyTextFor({ id: 'ter' }, p.held)} />
     </Group>
   );
 }
 
-function CommonWindow({ fund, plan }) {
+function CommonWindow({ fund, plan, progress }) {
   const p = fund.plans[plan];
   const rows = [p.held, ...p.peers, ...(p.benchmark ? [p.benchmark] : [])];
   const basis = fund.windowBasis;
@@ -151,17 +181,23 @@ function CommonWindow({ fund, plan }) {
             <p className="tabular-nums" style={{ fontSize: 10.5, marginTop: 2, ...muted }}>
               Volatility {fmt(e.window.volWindow)} · largest fall {fmt(e.window.mddWindow)} · TER {fmtTer(e.values.ter)}{e.lastNavDate ? ` · NAV to ${fmtAsOf(e.lastNavDate)}` : ''}
             </p>
-            {(e.status !== 'ok' || (e.window.retWindow == null && e.reason)) && <p style={{ fontSize: 10.5, marginTop: 2, color: 'var(--color-warning)' }}>{e.status !== 'ok' ? `${e.status}. ` : ''}{e.reason}</p>}
+            {e.load !== 'ok' ? <LoadNote e={e} progress={progress} who="This fund’s data" />
+              : e.window.retWindow == null && e.reason ? <p style={{ fontSize: 10.5, marginTop: 2, ...muted }}>{e.reason}</p> : null}
             {e.note && <p style={{ fontSize: 10.5, marginTop: 2, ...muted }}>{e.note}</p>}
           </li>
         ))}
       </ul>
+      {fund.costGap && (
+        <p style={{ fontSize: 11.5, marginTop: 8, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
+          Expense ratio of this fund: Direct {fmtTer(fund.costGap.directPct)}, Regular {fmtTer(fund.costGap.regularPct)}. Regular is {fund.costGap.gapPct.toFixed(2)} points a year above Direct: about <b>INR {fund.costGap.inrPerLakhPerYear.toLocaleString('en-IN')}</b> a year for every INR 1 lakh invested.
+        </p>
+      )}
       <p style={{ fontSize: 10.5, marginTop: 8, ...muted }}>The index fund tracks the benchmark family of this fund; it is shown for reference, not as a peer.</p>
     </div>
   );
 }
 
-function FundBlock({ fund }) {
+function FundBlock({ fund, progress }) {
   const [plan, setPlan] = useState(fund.defaultPlan);
   const p = fund.plans[plan];
   const held = p.held;
@@ -185,9 +221,9 @@ function FundBlock({ fund }) {
         </div>
       </div>
       <p style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-        <span style={{ ...badge, color: staleH ? 'var(--color-warning)' : 'var(--color-text-muted)', background: staleH ? 'oklch(75% 0.15 75 / 14%)' : 'var(--sur-8)' }}>
+        {held.asOf && <span style={{ ...badge, color: staleH ? 'var(--color-warning)' : 'var(--color-text-muted)', background: staleH ? 'oklch(75% 0.15 75 / 14%)' : 'var(--sur-8)' }}>
           THIS FUND · {fmtAsOf(held.asOf)}{held.lastNavDate ? ` · NAV ${fmtAsOf(held.lastNavDate)}` : ''}{staleH ? ' · MAY BE OUT OF DATE' : ''}
-        </span>
+        </span>}
         {p.peers.some(x => x.asOf) && (
           <span style={{ ...badge, color: p.peerStale ? 'var(--color-warning)' : 'var(--color-text-muted)', background: p.peerStale ? 'oklch(75% 0.15 75 / 14%)' : 'var(--sur-8)' }}>
             PEERS · {fmtAsOf(p.peers.map(x => x.asOf).filter(Boolean).sort().slice(-1)[0])} · NAV to {fmtAsOf(p.peers.map(x => x.lastNavDate).filter(Boolean).sort().slice(-1)[0])}{p.peerStale ? ' · MAY BE OUT OF DATE' : ''}
@@ -195,22 +231,29 @@ function FundBlock({ fund }) {
         )}
       </p>
       {!fund.heldPlanConfirmed && <p style={{ fontSize: 10.5, marginTop: 6, ...muted }}>Plan held not confirmed; showing {PLAN_LABELS[fund.defaultPlan]} first.</p>}
-      {held.status === 'failed' || held.status === 'insufficient-history' ? (
-        <p role="note" style={{ fontSize: 11, marginTop: 8, color: 'var(--color-warning)' }}>This fund’s own data is {held.status === 'failed' ? 'unavailable' : 'too short'}{held.reason ? ` (${held.reason})` : ''}; figures below show n/a where they depend on it.</p>
-      ) : held.status === 'stale' ? (
+      {fund.kind !== 'common-window' && <LoadNote e={held} progress={progress} />}
+      {held.load === 'ok' && held.status === 'insufficient-history' && (
+        <p role="note" style={{ fontSize: 11, marginTop: 8, ...muted }}>This fund’s history is too short for some figures{held.reason ? ` (${held.reason})` : ''}.</p>
+      )}
+      {held.load === 'ok' && held.status === 'stale' && (
         <p role="note" style={{ fontSize: 11, marginTop: 8, color: 'var(--color-warning)' }}>The latest refresh for this fund did not complete{held.reason ? ` (${held.reason})` : ''}; showing the last good numbers.</p>
-      ) : null}
-      {p.peersNotLoaded && <p role="note" style={{ fontSize: 11, marginTop: 8, ...muted }}>Peer data for this fund has not loaded yet.</p>}
+      )}
+      {p.peersNotLoaded && fund.kind !== 'common-window' && held.load === 'ok' && <p role="note" style={{ fontSize: 11, marginTop: 8, ...muted }}>Not loaded yet ({progressText(progress)}): the peers for this fund have no figures so far.</p>}
+      {!p.peersNotLoaded && fund.kind !== 'common-window' && (p.notLoadedCount > 0 || p.waitingCount > 0) && (
+        <p role="note" style={{ fontSize: 10.5, marginTop: 6, ...muted }}>
+          {p.notLoadedCount > 0 ? `${p.notLoadedCount} peer${p.notLoadedCount === 1 ? '' : 's'} not loaded yet` : ''}{p.notLoadedCount > 0 && p.waitingCount > 0 ? '; ' : ''}{p.waitingCount > 0 ? `${p.waitingCount} waiting for NAV data` : ''} (left out of the ranks until then).
+        </p>
+      )}
 
       <div style={{ marginTop: 10 }}>
-        {fund.kind === 'common-window' ? <CommonWindow fund={fund} plan={plan} /> : p.metrics && (
+        {fund.kind === 'common-window' ? <CommonWindow fund={fund} plan={plan} progress={progress} /> : p.metrics && (
           <>
             <Group title="Returns vs peers">
-              {['ret1y', 'ret3y', 'ret5y'].map(id => <MetricRow key={id} def={METRICS.find(x => x.id === id)} m={p.metrics[id]} fmtVal={fmt} />)}
+              {['ret1y', 'ret3y', 'ret5y'].map(id => <MetricRow key={id} def={METRICS.find(x => x.id === id)} m={p.metrics[id]} fmtVal={fmt} empty={emptyTextFor(null, held)} />)}
             </Group>
             <CostBlock fund={fund} plan={plan} />
             <Group title="Risk from NAV history (3 years)">
-              {['vol', 'mdd'].map(id => <MetricRow key={id} def={METRICS.find(x => x.id === id)} m={p.metrics[id]} fmtVal={fmt} />)}
+              {['vol', 'mdd'].map(id => <MetricRow key={id} def={METRICS.find(x => x.id === id)} m={p.metrics[id]} fmtVal={fmt} empty={emptyTextFor(null, held)} />)}
             </Group>
             <Group title="Consistency">
               <li style={{ listStyle: 'none', padding: '9px 0', borderTop: '1px solid var(--sur-6)' }}>
@@ -218,7 +261,7 @@ function FundBlock({ fund }) {
                   <p style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }}>
                     Beat the peer median in <b className="tabular-nums" style={{ color: 'var(--color-text)' }}>{Math.round(p.metrics.rolling.value)}%</b> of {held.rollingWindows} monthly rolling 1-year windows.
                   </p>
-                ) : <p style={{ fontSize: 11.5, ...muted }}>Rolling 1-year windows: not enough history.</p>}
+                ) : <p style={{ fontSize: 11.5, ...muted }}>{held.load === 'ok' ? 'Rolling 1-year windows: not enough history.' : `Rolling 1-year windows: ${emptyTextFor(null, held).toLowerCase()}.`}</p>}
               </li>
             </Group>
           </>
@@ -294,7 +337,7 @@ export function PeersView({ res, loading = false }) {
         <div style={{ padding: '14px 16px' }}>
           {res.status === 'unavailable' ? (
             <p role="note" style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
-              {loading ? 'Looking for peer data…' : 'Peer data is not available yet. It is prepared by a scheduled job and will appear here once it has run.'}
+              {loading ? 'Looking for peer data…' : res.peersProgress ? `${res.notes.find(n => n.kind === 'unavailable')?.message || ''} Figures appear as the scheduled job loads them.` : 'Peer data is not available yet. It is prepared by a scheduled job and will appear here once it has run.'}
             </p>
           ) : (
             <>
@@ -313,7 +356,7 @@ export function PeersView({ res, loading = false }) {
           )}
         </div>
 
-        {res.funds.map(f => <FundBlock key={f.fundKey} fund={f} />)}
+        {res.funds.map(f => <FundBlock key={f.fundKey} fund={f} progress={res.peersProgress} />)}
 
         {res.notes.filter(n => n.kind !== 'unavailable').length > 0 && (
           <div style={section}>

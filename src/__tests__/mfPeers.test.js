@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildMfPeers, parseConfigRows, parsePeerRows, parseTerRows, parseRunRows, rowsByHeader, rankOf, median, ordinal, sanitizeMfPeerThresholds,
+import { loadStateOf, buildMfPeers, parseConfigRows, parsePeerRows, parseTerRows, parseRunRows, rowsByHeader, rankOf, median, ordinal, sanitizeMfPeerThresholds,
   MF_PEERS_COLUMNS, MF_PEERS_CONFIG_COLUMNS, MF_TER_COLUMNS } from '../mfPeers.js';
 
 const TODAY = '2026-10-10';
@@ -234,5 +234,45 @@ describe('partial data (only some rows or tabs exist)', () => {
     const h = run(d).funds[0].plans.direct.held;
     expect(h).toMatchObject({ stale: true, status: 'stale', reason: 'fetch failed' });
     expect(h.values.ret3y).toBe(13);
+  });
+});
+
+describe('load states', () => {
+  const r = (o) => ({ status: 'ok', ret3yPct: 10, ...o });
+  it('no row: not loaded while the cycle runs, failed once it is complete', () => {
+    expect(loadStateOf(undefined, false)).toBe('not-loaded');
+    expect(loadStateOf(undefined, true)).toBe('failed');
+  });
+  it('pending is not loaded; failed is failed even mid-cycle', () => {
+    expect(loadStateOf(r({ status: 'pending', ret3yPct: null }), true)).toBe('not-loaded');
+    expect(loadStateOf(r({ status: 'failed', ret3yPct: null, reason: 'x' }), false)).toBe('failed');
+  });
+  it('stale: waiting without metrics, ok (flagged) with metrics', () => {
+    expect(loadStateOf(r({ status: 'stale', ret3yPct: null }), true)).toBe('waiting');
+    expect(loadStateOf(r({ status: 'stale' }), true)).toBe('ok');
+  });
+  it('an empty ok row is not loaded mid-cycle, plain no-history once complete; insufficient-history is ok', () => {
+    expect(loadStateOf(r({ ret3yPct: null }), false)).toBe('not-loaded');
+    expect(loadStateOf(r({ ret3yPct: null }), true)).toBe('ok');
+    expect(loadStateOf(r({ status: 'insufficient-history', ret3yPct: null }), false)).toBe('ok');
+  });
+  it('placeholder rows with an empty asOf survive parsing and keep their reason', () => {
+    const [row] = parsePeerRows([{ asOf: '', code: '1', plan: 'direct', role: 'held', status: 'stale', reason: 'phase=nav-fetch' }]);
+    expect(row).toMatchObject({ status: 'stale', reason: 'phase=nav-fetch', asOf: '' });
+    expect(parsePeerRows([{ asOf: '', code: '1', plan: 'direct', role: 'peer', status: 'pending' }])[0].status).toBe('pending');
+  });
+  it('run progress drives cycleComplete; finishedAt or done == total completes it; unknown run info counts as complete', () => {
+    const base = { funds: [heldFund], ...flexi(), today: TODAY };
+    expect(buildMfPeers({ ...base, run: { peers: { done: 4, total: 96, finishedAt: '' } } }).cycleComplete).toBe(false);
+    expect(buildMfPeers({ ...base, run: { peers: { done: 96, total: 96, finishedAt: '' } } }).cycleComplete).toBe(true);
+    expect(buildMfPeers({ ...base, run: { peers: { done: 4, total: 96, finishedAt: '2026-10-12T02:00:00Z' } } }).cycleComplete).toBe(true);
+    expect(buildMfPeers({ ...base }).cycleComplete).toBe(true);
+  });
+  it('no rows at all while loading says so; excluded lists only real failures', () => {
+    expect(buildMfPeers({ funds: [heldFund], config: flexi().config, peerRows: [], run: { peers: { done: 0, total: 96, finishedAt: '' } }, today: TODAY }).notes[0].message).toMatch(/still loading \(0\/96\)/);
+    const d = flexi(); d.peerRows = d.peerRows.map(x => (x.code === '11' ? { ...x, status: 'pending', ret3yPct: null, volPct: null, maxDrawdownPct: null } : x.code === '12' ? { ...x, status: 'failed', reason: 'boom' } : x));
+    const p = run(d, { run: { peers: { done: 50, total: 96, finishedAt: '' } } }).funds[0].plans.direct;
+    expect(p.excluded).toEqual([{ name: 'Peer 2', reason: 'boom' }]);
+    expect(p.notLoadedCount).toBe(1);
   });
 });
