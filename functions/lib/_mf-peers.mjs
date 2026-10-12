@@ -42,7 +42,7 @@ export const RUN_COLUMNS = ['scope', 'cycle', 'startedAt', 'finishedAt', 'done',
 
 export const SCOPES = ['held', 'peers', 'ter'];
 export const ROLES = ['held', 'peer', 'benchmark'];
-export const STATUSES = ['ok', 'stale', 'failed', 'insufficient-history'];
+export const STATUSES = ['ok', 'stale', 'failed', 'insufficient-history', 'pending'];
 export const PLANS = ['direct', 'regular'];
 
 export const TAB = { config: 'MfPeersConfig', peers: 'MfPeers', ter: 'MfTer', series: 'MfPeersSeries', run: 'MfPeersRun' };
@@ -52,6 +52,8 @@ const CHECKPOINT_EVERY = 25;
 /** Scheduled slice budget; the 540 s timeout leaves room for the in-flight code (<= ~70 s) and the TER pass. */
 export const DEFAULT_BUDGET_MS = 360_000;
 const MIN_HISTORY_DAYS = 365;
+/** After this many consecutive lag-stale codes the run stops fetching (the source is behind; the next tick retries). */
+export const LAG_BREAKER = 3;
 
 /* ── IST calendar (the AMCs and AMFI publish on Indian days) ──────────────── */
 const IST_MS = 5.5 * 3_600_000;
@@ -117,6 +119,8 @@ export function valuesToPeers(values) {
     PEERS_COLUMNS.forEach((c, i) => { o[c] = v[i] === undefined ? '' : v[i]; });
     for (const c of ['asOf', 'categoryKey', 'role', 'fundKey', 'code', 'plan', 'name', 'firstNavDate', 'lastNavDate', 'status', 'reason', 'windowStartDate', 'windowReturnBasis', 'fetchedAt']) o[c] = str(o[c]);
     for (const c of ['nav', 'ret1yPct', 'ret3yPct', 'ret5yPct', 'volPct', 'maxDrawdownPct', 'rollingBeatPeerMedianPct', 'historyDays', 'rollingWindows', 'retWindowPct', 'volWindowPct', 'maxDrawdownWindowPct']) o[c] = numOrNull(o[c]);
+    // rows written before `pending` existed: a stale placeholder with nothing ever loaded
+    if (o.status === 'stale' && o.asOf === '') o.status = 'pending';
     return o;
   });
 }
@@ -256,11 +260,18 @@ export function upsertSuccess(store, row) {
 export function markProblem(store, t, status, reason) {
   const k = keyOf(t.code, t.plan);
   const list = store.get(k) || [];
-  if (list.length) { list[0] = { ...list[0], status, reason }; store.set(k, list); return; }
+  if (list.length) {
+    // a placeholder (nothing ever loaded) is `pending`, never a `stale` row with empty metrics
+    list[0] = { ...list[0], status: list[0].asOf === '' && status === 'stale' ? 'pending' : status, reason };
+    store.set(k, list);
+    return;
+  }
+  // never a "stale" row with empty metrics: with nothing loaded yet the honest state is `pending`
+  const placeholder = status === 'stale' ? 'pending' : status;
   store.set(k, [{
     asOf: '', categoryKey: t.categoryKey, role: t.role, fundKey: t.fundKey, code: t.code, plan: t.plan, name: t.name,
     firstNavDate: '', lastNavDate: '', nav: null, ret1yPct: null, ret3yPct: null, ret5yPct: null, volPct: null, maxDrawdownPct: null,
-    rollingBeatPeerMedianPct: null, rollingWindows: null, historyDays: null, status, reason,
+    rollingBeatPeerMedianPct: null, rollingWindows: null, historyDays: null, status: placeholder, reason,
     windowStartDate: '', retWindowPct: null, windowReturnBasis: '', volWindowPct: null, maxDrawdownWindowPct: null, fetchedAt: '',
   }]);
 }
@@ -367,23 +378,29 @@ export async function runScope({ scope, io, deps, now = new Date(), force = fals
   };
 
   let budgetHit = false;
+  let lagStreak = 0;
+  let paused = '';
   const samples = [];
   for (const t of scoped) {
     if (!force && isDone(t)) { result.skipped++; continue; }
     if (clock() >= deadline) { budgetHit = true; result.remaining++; continue; }
+    if (paused) { result.remaining++; continue; }
     try {
-      const { series } = await fetchHistory(t.code, { navAll, client: deps.client, sleep: deps.sleep });
+      const { series } = await fetchHistory(t.code, { navAll, client: deps.client, sleep: deps.sleep, maxLagDays: deps.maxNavLagDays });
+      lagStreak = 0;
       const row = computeRow(t, series, { today, nowIso });
       upsertSuccess(store, row);
       const monthEnd = lastCompletedMonthEnd(row.lastNavDate);
       const navs = monthEndNavs(series, monthEnd, SERIES_MONTHS);
       seriesStore.set(keyOf(t.code, t.plan), { code: t.code, plan: t.plan, asOf: today, lastMonthEnd: monthEnd, n: navs.length, navsCsv: encodeNavs(navs) });
       result.ok++;
-      if (scope === 'peers' && samples.length < 2 && row.lastNavDate === navAll.get(String(t.code))?.date && (!samples[0] || samples[0].date === row.lastNavDate)) samples.push({ code: t.code, plan: t.plan, date: row.lastNavDate, nav: row.nav });
+      if (scope === 'peers' && samples.length < 2 && (!samples[0] || samples[0].date === row.lastNavDate)) samples.push({ code: t.code, plan: t.plan, date: row.lastNavDate, nav: row.nav });
       if (++sinceCheckpoint.n >= CHECKPOINT_EVERY) { await persist(); sinceCheckpoint.n = 0; }
     } catch (e) {
       const stale = e instanceof SeriesError && e.kind === 'stale';
       const reason = e?.message || String(e);
+      lagStreak = stale ? lagStreak + 1 : 0;
+      if (lagStreak >= LAG_BREAKER && !paused) paused = `mfapi is ${e.lagDays} days behind AMFI NAVAll (${LAG_BREAKER} codes in a row); paused until the next tick`;
       markProblem(store, t, stale ? 'stale' : 'failed', reason);
       result[stale ? 'stale' : 'failed']++;
       result.failures.push({ code: t.code, plan: t.plan, status: stale ? 'stale' : 'failed', reason });
@@ -401,8 +418,8 @@ export async function runScope({ scope, io, deps, now = new Date(), force = fals
   await persist();
 
   result.completed = scoped.filter(isDone).length;
-  result.done = !budgetHit && result.completed === scoped.length;
-  const note = [budgetHit ? 'time budget reached; will resume' : '', spotNote, result.failed ? `${result.failed} failed` : '', result.stale ? `${result.stale} stale` : ''].filter(Boolean).join('; ');
+  result.done = !budgetHit && !paused && result.completed === scoped.length;
+  const note = [budgetHit ? 'time budget reached; will resume' : '', paused, spotNote, result.failed ? `${result.failed} failed` : '', result.stale ? `${result.stale} stale` : ''].filter(Boolean).join('; ');
   await saveRun({ done: result.completed, total: scoped.length, finishedAt: result.done ? nowIso : '', cursorNote: note, lastError: result.failures[0]?.reason || '' });
   return result;
 }

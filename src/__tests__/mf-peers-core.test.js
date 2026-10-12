@@ -9,7 +9,7 @@ import {
   valuesToPeers, peersToValues, upsertSuccess, markProblem,
 } from '../../functions/lib/_mf-peers.mjs';
 import { makeClient, causeOf, PeersFetchError, USER_AGENT } from '../../functions/lib/mf-peers/_http.mjs';
-import { fetchHistory, parseMfapiBody, SeriesError } from '../../functions/lib/mf-peers/_series.mjs';
+import { fetchHistory, parseMfapiBody, SeriesError, MAX_NAV_LAG_DAYS } from '../../functions/lib/mf-peers/_series.mjs';
 import { normName, indexTerRows, matchTer, loadTerIndex, resolveCategoryIds, FALLBACK_CATEGORY_IDS } from '../../functions/lib/mf-peers/_ter.mjs';
 import { KNOWN_NO_TER, TER_NAME_ALIAS, BENCHMARK_CODES } from '../../functions/lib/mf-peers/_seed.mjs';
 import { spotCheck } from '../../functions/lib/mf-peers/_spotcheck.mjs';
@@ -209,14 +209,30 @@ describe('mfapi history validation', () => {
   it('a body that stays truncated fails with phase/host in the reason', async () => {
     await expect(fetchHistory('147919', { navAll, client: clientOf(truncated), sleep: async () => {} })).rejects.toMatchObject({ kind: 'failed', message: expect.stringMatching(/phase=nav-fetch host=api\.mfapi\.in truncated or invalid JSON body \(after 1 retry\)/) });
   });
-  it('data[0].date older than the NAVAll date → one retry, then stale (not failed)', async () => {
-    const lag = good.replace('"09-10-2026"', '"08-10-2026"').replace(/\{"date":"08-10-2026","nav":"36\.98990"\},/, '');
-    const client = clientOf(lag);
-    const err = await fetchHistory('147919', { navAll, client, sleep: async () => {} }).catch((e) => e);
+  it('freshness is a lag TOLERANCE: a Friday NAV against a Monday NAVAll (3 days) is accepted, with the mfapi date kept', async () => {
+    const monday = new Map([['147919', { date: '2026-10-12' }]]);
+    const client = clientOf(good);
+    const r = await fetchHistory('147919', { navAll: monday, client, sleep: async () => {} });
+    expect(r.lagDays).toBe(3);
+    expect(r.series[r.series.length - 1].date).toBe('2026-10-09');
+    expect(client.getText).toHaveBeenCalledTimes(1);
+  });
+  it('the tolerance is 5 calendar days inclusive and configurable; a 6-day lag is stale', async () => {
+    expect(MAX_NAV_LAG_DAYS).toBe(5);
+    const at = (d) => new Map([['147919', { date: d }]]);
+    expect((await fetchHistory('147919', { navAll: at('2026-10-14'), client: clientOf(good), sleep: async () => {} })).lagDays).toBe(5);
+    const err = await fetchHistory('147919', { navAll: at('2026-10-15'), client: clientOf(good), sleep: async () => {} }).catch((e) => e);
     expect(err).toBeInstanceOf(SeriesError);
     expect(err.kind).toBe('stale');
-    expect(err.message).toMatch(/newest NAV 2026-10-08 is older than AMFI NAVAll 2026-10-09/);
-    expect(client.getText).toHaveBeenCalledTimes(2);
+    expect(err.lagDays).toBe(6);
+    expect(err.message).toMatch(/newest NAV 2026-10-09 is 6 days older than AMFI NAVAll 2026-10-15 \(tolerance 5\)/);
+    expect((await fetchHistory('147919', { navAll: at('2026-10-15'), client: clientOf(good), sleep: async () => {}, maxLagDays: 7 })).lagDays).toBe(6);
+  });
+  it('a lag is NEVER retried or slept on (only truncation / network errors are)', async () => {
+    const sleep = vi.fn(async () => {}); const client = clientOf(good);
+    await fetchHistory('147919', { navAll: new Map([['147919', { date: '2026-10-30' }]]), client, sleep }).catch(() => {});
+    expect(client.getText).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
   });
   it('a code missing from NAVAll fails without any request', async () => {
     const client = clientOf(good);
