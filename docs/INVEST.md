@@ -21,6 +21,7 @@ its id stored in `UserSettings` as `settings.investSheetId` (readable server-sid
 | `RateWatch` | scan log written by the Phase-2 scheduled function; the Rate-watch card shows an empty state until the first run |
 | `MfHoldings` | monthly AMC portfolio lines for the household's Indian funds, one row per holding per fund per `asOf` (server-written; latest + previous month kept). See *Indian MF holdings* below |
 | `MfHoldingsStatus` | one row per `fundKey`: what is stored and whether the last attempt succeeded (`ok`/`stale`/`failed`/`missing`) |
+| `MfPeersConfig` `MfPeers` `MfTer` `MfPeersSeries` `MfPeersRun` | Fund-vs-peers data (server-written; `MfPeersConfig` is the user's to edit). See *Indian MF fund vs peers* below |
 
 ## Indian mutual funds (`mf_in`)
 
@@ -380,6 +381,139 @@ still fails the fund), and a stale file (the AMC still serves last month's → `
 **Not built.** A generic file-upload fallback (`ingest { house, fileName, contentBase64 }`, ≤ ~12 MB checked
 before decoding, feeding the same parse → check → merge → write path) — ITI's pasted-link `ingest` covers
 the one house that needs a manual step.
+
+## Indian MF fund vs peers (weekly held, monthly peers + TER, $0, no keys)
+
+Phase 2 slice 2 data side (the card/engine reads these tabs). Everything is derived from free sources:
+mfapi.in NAV history (validated against AMFI's NAVAll), and AMFI's TER feed. **Raw NAV series are never
+stored in Sheets**, only derived rows plus a compact month-end series. Code: `functions/mf-peers.mjs`
+(2 schedules + HTTP), `functions/lib/_mf-peers.mjs` (contract + orchestration),
+`functions/lib/mf-peers/{_metrics,_series,_ter,_http,_spotcheck,_seed}.mjs`. The sheet columns are
+pinned equal to `INVEST_TABS` by a test; the card maps columns by **header name** (row 1).
+**Every return / volatility / drawdown / TER figure is a PERCENT number (13.71, not 0.1371), blank when
+not computable (never 0).**
+
+**`MfPeersConfig`** — `categoryKey | role | fundKey | amc | name | directCode | regularCode | isin | launch | note | weakMatch | active | comparisonJson`.
+One row per scheme (Direct + Regular Growth codes). Seeded from the approved lists (`_seed.mjs`, from
+`peers.approved.json`, 2026-10-10) **only while the tab has no data rows; the job never rewrites it afterwards**,
+so the user's edits stand. `role` = `held | peer | benchmark`. Held `fundKey`s are the MfHoldings job's
+(`absl-flexi-cap`, `iti-small-cap`, `absl-conglomerate`, `sbi-retirement-aggressive-hybrid`, `-aggressive`,
+`-conservative-hybrid`, `-conservative`; the research spelled the SBI ones `sbi-ret-*`); peers/benchmark get
+`peer-<directCode>`. `categoryKey` ∈ `flexi-cap, small-cap, conglomerate, retirement-aggressive-hybrid,
+retirement-aggressive, retirement-conservative-hybrid, retirement-conservative`. `note` ("includes overseas
+equity") and `weakMatch` are labels only. `comparisonJson` (conglomerate rows) is
+`{"window":"common-since-2025-10-27","benchmarkProxyCode":"153132","label":"weak comparability","thematicMedian":false}`.
+The benchmark twin (Tata BSE Select Business Groups Index Fund Direct, 153132) is `role=benchmark`: fetched and
+computed like the others, excluded from peer medians and ranks.
+`active` (blank = TRUE): FALSE on a held row skips the whole category; FALSE on a peer skips that peer. **SBI
+sub-plan:** which of the four is held is not known, so all four seed active (~120 calls per full cycle).
+If the `SipPlans` row `sbi-retirement` is mapped to one of the 8 SBI codes (or its name says Aggressive Hybrid /
+Aggressive / Conservative Hybrid / Conservative), only that sub-plan's category is processed. Precedence: an
+explicit `active=FALSE` always wins; the auto rule only narrows, it never re-enables.
+
+**`MfPeers`** — one row per (code, plan), `plan` = `direct | regular` (Growth only):
+`asOf | categoryKey | role | fundKey | code | plan | name | firstNavDate | lastNavDate | nav | ret1yPct | ret3yPct | ret5yPct | volPct | maxDrawdownPct | rollingBeatPeerMedianPct | historyDays | status | reason | rollingWindows | windowStartDate | retWindowPct | windowReturnBasis | volWindowPct | maxDrawdownWindowPct | fetchedAt`.
+
+- `asOf` = the job run date (IST) of that row's **last successful refresh**; `fetchedAt` the instant. A failed or
+  stale code keeps its last good row and only `status`/`reason` change (asOf/fetchedAt are never bumped), so the card
+  can judge staleness from `asOf` (14 days held / 45 days peers). A code that has never succeeded gets a placeholder
+  (`asOf` and `fetchedAt` blank, blank metrics, `status` + `reason`). The latest **2 distinct `asOf` per (code, plan)**
+  are kept; a re-run with the same asOf replaces that row (idempotent). `lastNavDate` is the data date and is on every
+  row: the 3y figure moves ~1 point between consecutive NAV dates, so the card should show it.
+- `status` = `ok | stale | failed | insufficient-history` (history < 365 days; metrics that need longer stay blank).
+  `stale`: mfapi's newest NAV is older than AMFI's NAVAll date even after a retry. `reason` explains, and also lists
+  data-quality flags that do not change `ok` (a NAV gap > 7 days or a one-day move > 15% inside the last 5 years,
+  never silently dropped) and an AMFI spot-check mismatch. Failure reasons always carry
+  `phase=<nav-check|nav-fetch|ter|spot-check> host=<host> status=<HTTP> cause=<err.cause.code: message>` (a bare
+  "fetch failed" was undiagnosable from GCP).
+- **Convention (as AMFI does it):** the start NAV is the NAV **on or before the same calendar day N years before the end
+  date** (the end date is the series' last NAV, `lastNavDate`); annualised as `(end/start)^(365/days) - 1`, so a 1y figure
+  over a 365-day span is the plain point-to-point return. Blank when history is shorter than N years or the start NAV is
+  more than 7 days before the target. `volPct` = sample stdev of daily **log** returns over the last 3y × √252 (blank if
+  the window is shorter than 1 year); `maxDrawdownPct` = peak-to-trough on NAV over the last 5y (blank under 180 days).
+  Anything older than the window (e.g. Quant Small Cap's 2015 one-day spike) never touches a windowed metric.
+- **Rolling beat** (`rollingBeatPeerMedianPct` + `rollingWindows`, held rows only): the share of the last 25
+  month-end-stepped rolling 1-year windows in which the held fund's return beat the median of the **peers'** (role `peer`,
+  active, same plan, benchmark excluded) returns for the same window. Blank when fewer than 12 usable windows or fewer
+  than 3 peers had data; `rollingWindows` is the number of windows actually used. It is computed from `MfPeersSeries`, so
+  the weekly held run never refetches peers, and stays blank until the first peers run has completed. **Conglomerate has
+  no rolling beat** (ICICI's history starts 2025-10-27, so there are no 1-year windows until ~Oct 2027); both columns stay blank.
+- **Conglomerate common-window columns** (only rows whose category has `comparisonJson.window`, i.e. held + peers +
+  benchmark): `windowStartDate` (2025-10-27), `retWindowPct` (annualised only if the window spans ≥ 365 days, else the
+  plain cumulative return; `windowReturnBasis` = exactly `cumulative` or `annualised`; the card should not compare rows
+  with different bases), `volWindowPct`, `maxDrawdownWindowPct`. If a series has no NAV on or before the window start,
+  all four are blank and `reason` says so; a shorter window is never used silently. The weekly run refreshes **every**
+  conglomerate row (≈ 6-8 extra calls) so all rows share one `lastNavDate` and flip basis together.
+
+**`MfPeersSeries`** — `code | plan | asOf | lastMonthEnd | n | navsCsv`: up to 61 month-end NAVs (the NAV on or before
+each calendar month-end), oldest → newest, blank before a fund's first NAV, for every fetched code. This is what lets the
+weekly held run recompute the rolling beat with one extra sheet read instead of ~100 peer fetches.
+
+**`MfTer`** — `asOf | code | plan | name | terPct | berPct | matchedName | matched | terDate | reason`: one row per tracked
+code and plan, replaced as a whole each month. `terPct`/`berPct` are percent (Regular and Direct columns of AMFI's feed);
+`terDate` is the feed row's own date (latest row dated ≤ today; future-dated rows are ignored). Unmatched ⇒
+`matched=FALSE`, blank values, `reason`. AMFI's feed (`www.amfiindia.com/api/populate-te-rdata-revised`) has one row per
+scheme **per day**, no AMFI scheme code, 100 rows/page, sorted by name then date; the job pages through the Small Cap /
+Flexi Cap / Retirement / Thematic categories (ids resolved at run time from `populate-sub-category` for both AMFI label
+families, constants 77/78/48/84 as a fallback) and joins by **normalised scheme name** (lowercase, `&` = and, punctuation and
+fund/plan/scheme removed), which must be exactly one scheme (else `ambiguous`). `TER_NAME_ALIAS` (keyed by direct code)
+maps the two Axis retirement schemes that AMFI spells "Axis Retirement Fund - …"; `KNOWN_NO_TER` lists schemes with no
+usable feed row (HDFC and Nippon post nothing under the 2026 regime; the benchmark twin sits in the Index Funds category,
+which is not fetched). A test pins that every tracked scheme is matched, alias-matched or in `KNOWN_NO_TER`, so a new gap is
+a visible failure and a `reason`, never a silent n/a. The previous month is fetched only if a tracked scheme found no row in
+the current one. An unreachable feed never fails the job: each scheme becomes `matched=FALSE` with
+`reason: "AMFI TER feed unavailable: <phase/host/cause>"`, except that previously matched values are kept (their `asOf` shows
+their age). The TER regime changed in April 2026 (BER + brokerage + transaction cost + levies): values are not comparable
+with pre-April-2026 figures.
+
+**`MfPeersRun`** — `scope | cycle | startedAt | finishedAt | done | total | cursorNote | lastError`: one row per scope
+(`held | peers | ter`). `cycle` is `W<sunday>` for held (the IST week) and `YYYY-MM` for peers/ter. `done`/`total` count
+codes refreshed in this cycle; `finishedAt` is set only when the cycle is complete; `cursorNote` says "time budget
+reached; will resume", counts failures/stale and carries the spot-check result.
+
+**Jobs.**
+
+| Function | When | Does |
+|---|---|---|
+| `mfPeersHeldRefresh` | **daily** 04:00 IST (weekly in effect) | the first run of each IST week (Sunday-based cycle `W<sunday>`) refreshes held funds (both plans) + every row of a common-window category, then recomputes the rolling beat from `MfPeersSeries`; the rest of the week it is a no-op |
+| `mfPeersMonthlyRefresh` | **daily** 03:00 IST (monthly in effect) | once per calendar month: peers + benchmark (≈ 100 codes) then the TER feed; a complete month is a no-op |
+| `mfPeers` (HTTP) | on demand | see below |
+
+**Daily ticks, cheap no-ops.** Both jobs fire every day so a fresh deploy gets data on the first night and a failed or
+time-boxed day is retried the next one, with no waiting for a "window". A scope whose cycle is already complete (every target
+refreshed inside the cycle) returns before downloading NAVAll or touching mfapi/AMFI and writes nothing. A never-run or incomplete
+cycle runs a budgeted slice and resumes on the next tick (only the codes not yet done are fetched; a failed code never counts as
+done). With no rows at all (first deploy) it runs on the very next tick, whatever the weekday/day of month. TER's own cycle is
+likewise per calendar month (a finished month is skipped unless `force`).
+
+Calls are ≤ 1 request/second per host with an honest `User-Agent` (`Fundient-household-dashboard/1.0 (private personal use)`).
+Per code: NAVAll must still list the code (so both plan codes are live), mfapi's body must parse completely (mfapi silently
+served 2 of 125 first downloads truncated: HTTP 200, JSON cut mid-record), and `data[0].date` must be ≥ the NAVAll date; otherwise
+**one retry after 5 s**, then the last good row is kept and marked `stale`/`failed`. Once per monthly cycle two codes' NAVs are
+compared with AMFI's single-day history report (reason-only on a mismatch). Resumability: a slice stops at a time budget (360 s of
+the 540 s function timeout; sheet checkpoints every 25 codes), and a code is "done" in a cycle if its `fetchedAt` is inside it, so
+the next invocation only does the leftovers. Failures are logged once per scope via
+`reportError('INV-001', …, { stage: 'mf-peers-<held|peers|ter>' })` (no new error code, no Telegram/push). All writes are `RAW`.
+
+**On-demand endpoint** `POST /api/mf-peers` (same auth stack as `/api/mf-holdings`; **read-only viewers get `403` on `refresh`**, `status`
+is open to every authenticated household user; one refresh at a time → `409 {retryable:true}`):
+
+| action | request | response |
+|---|---|---|
+| `status` | — | `{ run: [MfPeersRun rows], counts: { ok, stale, failed, insufficient-history } }` |
+| `refresh` | `scope`: `held | peers | ter | all` (default `all` = peers, ter, held), `force?` (re-fetch even if done this cycle) | `{ done, remaining, scopes: [{ scope, cycle, total, completed, ok, stale, failed, skipped, remaining, done, failures (≤ 5), error }] }` |
+
+Hosting forwards `/api/*` with a 60 s limit, so one `refresh` call is a ~35 s slice (≈ 15 codes). **Repeat it until `done` is true**
+(the first full peers cycle is ~7 calls).
+
+**Cost.** Held weekly ≈ 20 calls; peers monthly ≈ 100 mfapi calls + ≈ 10 TER pages + 1 AMFI NAV report ≈ 4-5 minutes at 1 req/s.
+AMFI's TER API and mfapi.in carry no licence/SLA; the first run from Google Cloud is the proof that AMFI's TER host is reachable
+from GCP IPs (an unreachable feed degrades to `matched=FALSE` rows, never a failed job).
+
+**Tests.** `mf-peers-metrics` (hand-computed values, window clipping, rolling beat), `mf-peers-core` (seed, targets, SBI narrowing,
+column pins, http diagnostics, truncation retry, TER join + coverage pin), `mf-peers-run` (orchestration against an in-memory sheet:
+retention, idempotence, resume, stale/failed, conglomerate window, TER), `mf-peers-fn` (endpoint gates, viewer 403, 409). Fixtures:
+`src/__tests__/fixtures/mf-peers/` (trimmed from the research samples; nothing touches the network).
 
 ## Seeding & imports
 
