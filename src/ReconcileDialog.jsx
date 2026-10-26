@@ -490,7 +490,7 @@ function initDecisions(annotated) {
   return d;
 }
 
-export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onComplete, smartRules = [], cardRules = [], reconciledFingerprints = [], onAddFingerprints }) {
+export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onComplete, smartRules = [], cardRules = [], reconciledFingerprints = [], onAddFingerprints, onInvestContribution }) {
   const [step, setStep]             = useState('upload'); // 'upload'|'deduping'|'deduped'|'review'|'importing'|'done'
   const [files, setFiles]           = useState([]);
   const [dragging, setDragging]     = useState(false);
@@ -623,6 +623,8 @@ export function ReconcileDialog({ monthName, sheetId, accessToken, onClose, onCo
           const vendor   = (d.vendor || tx.vendor).trim();
           const card     = applyCardRules(vendor, category, cardRules) || '';
           await addOrUpdateExpense(category, vendor, tx.amount, accessToken, sheetId, monthName, 'import', null, card);
+          // Mirror Investment-category imports into the Invest tab (fire-and-forget)
+          if (category === 'Investment') onInvestContribution?.({ vendor, amount: tx.amount, txDate: tx.date || null });
           imported++;
         } else if (d.action === 'apply' && tx.matchedCategory && tx.matchedVendor) {
           const rows = await fetchDetailRows(tx.matchedCategory, accessToken, sheetId);

@@ -113,6 +113,18 @@ jobs:
         run: npm ci
         working-directory: functions
 
+      # SEC EDGAR fair-access contact for the etfHoldings function. The real
+      # User-Agent lives in a repo variable (Settings → Secrets and variables →
+      # Actions → Variables) rather than the gitignored functions/.env, so it
+      # survives CI deploys instead of falling back to the generic in-code
+      # default (which SEC may throttle). Unset variable → step is skipped and
+      # the code default applies, so nothing breaks before the variable is added.
+      - name: Write functions env (EDGAR contact)
+        if: steps.secret.outputs.present == 'true' && vars.EDGAR_USER_AGENT != ''
+        env:
+          EDGAR_UA: ${{ vars.EDGAR_USER_AGENT }}
+        run: echo "EDGAR_USER_AGENT=$EDGAR_UA" >> functions/.env
+
       - name: Write service account key
         if: steps.secret.outputs.present == 'true'
         env:

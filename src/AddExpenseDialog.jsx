@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Plus, Zap, Sparkles, MapPin, Loader2 } from 'lucide-react';
 import { CATEGORIES, fetchDetailRows, checkExistingExpense, markNonMonthly, todayIso } from './sheetsApi.js';
 import { addOrUpdateExpense } from './useExpense.js';
+import { computeInstallments, installmentLabel, makeSplitPlan, markPlaced } from './splitPlans.js';
 import { applySmartRules, applyCardRules } from './smartRules.js';
 import { DEFAULT_SETTINGS } from './useSettings.js';
 import { resolveMCC } from './vendorMCC.js';
@@ -28,7 +29,7 @@ const VENDOR_EXAMPLES = {
   'Wi-Fi':         'e.g. Comcast, AT&T…',
 };
 
-export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess, categories: categoriesProp, onSaveRecurring, onSaveTransactionNote, smartRules = [], cardRules = [], cards = DEFAULT_SETTINGS.cards, prefillCategory = null, lockCategory = false, prefillVendor = '', prefillAmount = '', geoTagEnabled = false, geoPrivacyBlur = true }) {
+export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onSuccess, categories: categoriesProp, onSaveRecurring, onSaveSplitPlan, onSaveTransactionNote, onInvestContribution, smartRules = [], cardRules = [], cards = DEFAULT_SETTINGS.cards, prefillCategory = null, lockCategory = false, prefillVendor = '', prefillAmount = '', geoTagEnabled = false, geoPrivacyBlur = true, currencySymbol = '$' }) {
   // This dialog only exists while it's open, and everything in it is unsaved —
   // hold the update gate back so a deploy can't reload a half-typed expense away.
   useBusyWhile(true);
@@ -44,6 +45,8 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
   const [txDate, setTxDate]             = useState(todayIso);
   const [isNonMonthly, setIsNonMonthly] = useState(false);
   const [isRecurring, setIsRecurring]   = useState(false);
+  const [isSplit, setIsSplit]           = useState(false);
+  const [splitCount, setSplitCount]     = useState(3);
   const [saving, setSaving]             = useState(false);
   const submittingRef = useRef(false);
   const [error, setError]               = useState('');
@@ -205,30 +208,49 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
     }, 50);
   };
 
+  // When splitting, only the first installment is written now (as "Vendor 1/N"
+  // at total/N); the rest live in the saved plan and land as future months are
+  // created. These resolve the write to installment 1 vs. the plain full amount.
+  const splitMonths = () => Math.max(2, parseInt(splitCount, 10) || 0);
+  const resolveWrite = (amt) => {
+    if (!isSplit) return { vendor: vendor.trim(), amount: amt, source: 'manual' };
+    const n = splitMonths();
+    return { vendor: installmentLabel(vendor.trim(), 1, n), amount: computeInstallments(amt, n)[0], source: 'split' };
+  };
+  const buildPlan = (amt) => markPlaced(
+    makeSplitPlan({ category, vendor: vendor.trim(), totalAmount: amt, installments: splitMonths(), card: paymentMethod, startMonth: monthName }),
+    1,
+  );
+
   const doSave = async () => {
     const amt = parseFloat(amount);
+    const w = resolveWrite(amt);
     setSaving(true);
     setDupWarning(false);
     try {
       const effectiveBM = (paymentMethod === CSR && TRAVEL_MCCS.has(resolveMCC(vendor.trim(), category))) ? bookingMethod : '';
-      const result = await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'manual', txDate, paymentMethod, effectiveBM);
+      const result = await addOrUpdateExpense(category, w.vendor, w.amount, accessToken, sheetId, monthName, w.source, txDate, paymentMethod, effectiveBM);
       if (result?.queued) {
-        if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
+        if (isSplit) onSaveSplitPlan?.(buildPlan(amt));
+        else if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
         setQueued(true);
         setSaving(false);
-        onSuccess?.({ queued: true, category, vendor: vendor.trim(), amount: amt });
+        onSuccess?.({ queued: true, category, vendor: w.vendor, amount: w.amount });
         setTimeout(onClose, 1800);
         return;
       }
-      if (isNonMonthly) await markNonMonthly(sheetId, accessToken, vendor.trim(), amt);
-      if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
+      if (isSplit) onSaveSplitPlan?.(buildPlan(amt));
+      else if (isNonMonthly) await markNonMonthly(sheetId, accessToken, vendor.trim(), amt);
+      if (!isSplit && isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
+      // Mirror Investment-category spend into the Invest tab (fire-and-forget)
+      if (category === 'Investment') onInvestContribution?.({ vendor: vendor.trim(), amount: w.amount, txDate });
       // Save transaction note/tags/location if provided
       if ((txNote.trim() || txTags.length > 0 || geoLocation) && onSaveTransactionNote) {
-        const key = txNoteKey(sheetId, category, vendor, amt);
+        const key = txNoteKey(sheetId, category, w.vendor, w.amount);
         onSaveTransactionNote(key, {
           note: txNote.trim(),
           tags: txTags,
-          ...(geoLocation ? { location: { ...geoLocation, vendor: vendor.trim(), category, amount: amt } } : {}),
+          ...(geoLocation ? { location: { ...geoLocation, vendor: w.vendor, category, amount: w.amount } } : {}),
         });
       }
       onSuccess?.();
@@ -242,24 +264,28 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
 
   const doSaveAndAnother = async () => {
     const amt = parseFloat(amount);
+    const w = resolveWrite(amt);
     setSaving(true);
     setDupWarning(false);
     try {
       const effectiveBM = (paymentMethod === CSR && TRAVEL_MCCS.has(resolveMCC(vendor.trim(), category))) ? bookingMethod : '';
-      const result = await addOrUpdateExpense(category, vendor.trim(), amt, accessToken, sheetId, monthName, 'manual', txDate, paymentMethod, effectiveBM);
+      const result = await addOrUpdateExpense(category, w.vendor, w.amount, accessToken, sheetId, monthName, w.source, txDate, paymentMethod, effectiveBM);
       if (result?.queued) {
-        if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
-        onSuccess?.({ queued: true, category, vendor: vendor.trim(), amount: amt });
+        if (isSplit) onSaveSplitPlan?.(buildPlan(amt));
+        else if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
+        onSuccess?.({ queued: true, category, vendor: w.vendor, amount: w.amount });
       } else {
-        if (isNonMonthly) await markNonMonthly(sheetId, accessToken, vendor.trim(), amt);
-        if (isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
+        if (isSplit) onSaveSplitPlan?.(buildPlan(amt));
+        else if (isNonMonthly) await markNonMonthly(sheetId, accessToken, vendor.trim(), amt);
+        if (!isSplit && isRecurring) onSaveRecurring?.({ category, vendor: vendor.trim(), amount: amt });
+        if (category === 'Investment') onInvestContribution?.({ vendor: vendor.trim(), amount: w.amount, txDate });
         // Save transaction note/tags/location if provided
         if ((txNote.trim() || txTags.length > 0 || geoLocation) && onSaveTransactionNote) {
-          const key = txNoteKey(sheetId, category, vendor, amt);
+          const key = txNoteKey(sheetId, category, w.vendor, w.amount);
           onSaveTransactionNote(key, {
             note: txNote.trim(),
             tags: txTags,
-            ...(geoLocation ? { location: { ...geoLocation, vendor: vendor.trim(), category, amount: amt } } : {}),
+            ...(geoLocation ? { location: { ...geoLocation, vendor: w.vendor, category, amount: w.amount } } : {}),
           });
         }
         onSuccess?.();
@@ -268,6 +294,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
       setVendor('');
       setAmount('');
       setIsNonMonthly(false);
+      setIsSplit(false);
       setError('');
       setDupWarning(false);
       setShowNote(false);
@@ -297,11 +324,13 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) { setError('Please enter a valid amount greater than 0.'); submittingRef.current = false; return; }
 
-    // Duplicate check
-    setSaving(true);
-    const isDuplicate = await checkExistingExpense(category, vendor.trim(), amt, accessToken, sheetId);
-    setSaving(false);
-    if (isDuplicate) { setDupWarning(true); submittingRef.current = false; return; }
+    // Duplicate check — skipped for a split, whose "Vendor 1/N" row is always new
+    if (!isSplit) {
+      setSaving(true);
+      const isDuplicate = await checkExistingExpense(category, vendor.trim(), amt, accessToken, sheetId);
+      setSaving(false);
+      if (isDuplicate) { setDupWarning(true); submittingRef.current = false; return; }
+    }
 
     await doSave();
     submittingRef.current = false;
@@ -539,7 +568,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                   <input
                     type="checkbox"
                     checked={isNonMonthly}
-                    onChange={e => { setIsNonMonthly(e.target.checked); if (e.target.checked) setIsRecurring(false); }}
+                    onChange={e => { setIsNonMonthly(e.target.checked); if (e.target.checked) { setIsRecurring(false); setIsSplit(false); } }}
                     className="sr-only"
                   />
                   <div
@@ -566,7 +595,7 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                   <input
                     type="checkbox"
                     checked={isRecurring}
-                    onChange={e => setIsRecurring(e.target.checked)}
+                    onChange={e => { setIsRecurring(e.target.checked); if (e.target.checked) setIsSplit(false); }}
                     className="sr-only"
                   />
                   <div
@@ -586,7 +615,87 @@ export function AddExpenseDialog({ accessToken, sheetId, monthName, onClose, onS
                   <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>Auto-added when you create a new month</p>
                 </div>
               </label>
+
+              {/* Split across months toggle */}
+              <label className="flex items-start gap-3 cursor-pointer group">
+                <div className="relative flex-shrink-0 mt-0.5">
+                  <input
+                    type="checkbox"
+                    checked={isSplit}
+                    onChange={e => { setIsSplit(e.target.checked); if (e.target.checked) { setIsRecurring(false); setIsNonMonthly(false); } }}
+                    className="sr-only"
+                  />
+                  <div
+                    className="w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors"
+                    style={isSplit
+                      ? { background: 'var(--color-accent)', borderColor: 'var(--color-accent)' }
+                      : { background: 'var(--sur-5)', borderColor: 'var(--sur-20)' }
+                    }
+                  >
+                    {isSplit && <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-sm font-bold transition-colors" style={{ color: 'var(--color-text)' }}>
+                    Split across months
+                  </p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>Spread this charge evenly over several months</p>
+                </div>
+              </label>
             </div>
+
+            {/* Split detail panel */}
+            {isSplit && (() => {
+              const amt = parseFloat(amount) || 0;
+              const n = Math.max(2, parseInt(splitCount, 10) || 0);
+              const parts = computeInstallments(amt, n);
+              const per = parts.length ? parts[0] : 0;
+              const dec = (v) => v.toFixed(2);
+              return (
+                <div className="rounded-2xl p-4 space-y-3" style={{ background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-bold" style={{ color: 'var(--color-text)' }}>Split into</span>
+                    <div className="flex items-center gap-1">
+                      <button type="button" onClick={() => setSplitCount(c => Math.max(2, (parseInt(c, 10) || 2) - 1))}
+                        className="w-8 h-8 rounded-xl flex items-center justify-center text-lg font-bold"
+                        style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-20)', color: 'var(--color-text)' }}
+                        aria-label="One fewer month">−</button>
+                      <input
+                        type="number" min="2" max="36" inputMode="numeric" value={splitCount}
+                        onChange={e => setSplitCount(e.target.value)}
+                        onBlur={() => setSplitCount(c => Math.min(36, Math.max(2, parseInt(c, 10) || 2)))}
+                        className="w-14 h-8 text-center rounded-xl font-bold tabular-nums"
+                        style={{ background: 'var(--sur-2)', border: '1px solid var(--sur-20)', color: 'var(--color-text)' }}
+                      />
+                      <button type="button" onClick={() => setSplitCount(c => Math.min(36, (parseInt(c, 10) || 2) + 1))}
+                        className="w-8 h-8 rounded-xl flex items-center justify-center text-lg font-bold"
+                        style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-20)', color: 'var(--color-text)' }}
+                        aria-label="One more month">+</button>
+                    </div>
+                    <span className="text-sm font-bold" style={{ color: 'var(--color-text)' }}>months</span>
+                  </div>
+                  {amt > 0 ? (
+                    <>
+                      <p className="text-sm font-bold" style={{ color: 'var(--color-accent)' }}>
+                        {currencySymbol}{dec(per)} / month
+                      </p>
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-xs rounded-lg px-2.5 py-1.5" style={{ background: 'var(--sur-2)', color: 'var(--color-text)' }}>
+                          <span>{installmentLabel(vendor.trim() || 'Expense', 1, n)} · this month</span>
+                          <span className="font-bold tabular-nums">{currencySymbol}{dec(per)}</span>
+                        </div>
+                        <p className="text-xs px-2.5" style={{ color: 'var(--color-text-muted)' }}>
+                          2/{n}–{n}/{n} are added automatically as you create each new month.
+                          {parts.length > 1 && parts[n - 1] !== per ? ` Last month is ${currencySymbol}${dec(parts[n - 1])}.` : ''}
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Enter an amount to see the monthly split.</p>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Geo-tagging (optional, only shown when setting is enabled) */}
             {geoTagEnabled && (

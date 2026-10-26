@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef, lazy, Suspense } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { useSheetData } from './useSheetData.js';
 import { use503020 } from './use503020.js';
 import { getCurrencySymbol } from './currency.js';
@@ -21,6 +21,7 @@ import { useNonMonthlyExpenses } from './useNonMonthlyExpenses.js';
 import { useEscapeDismiss } from './useEscapeDismiss.js';
 import { useGlobalShortcuts } from './useGlobalShortcuts.js';
 import { SalaryEditDialog } from './SalaryEditDialog.jsx';
+import { mirrorInvestContribution } from './investFlowThrough.js';
 
 // Heavy components — loaded only when first rendered
 const SpendingHeatmap  = lazy(() => import('./SpendingHeatmap.jsx').then(m => ({ default: m.SpendingHeatmap })));
@@ -33,9 +34,11 @@ import { HistoryTab } from './HistoryTab.jsx';
 import { LedgerTab } from './LedgerTab.jsx';
 import { invalidateLedger } from './ledgerCache.js';
 import { upsertRecurring, removeRecurring } from './recurringExpenses.js';
+import { upsertSplitPlan, markPlaced } from './splitPlans.js';
 const SettingsPanel    = lazy(() => import('./SettingsPanel.jsx').then(m => ({ default: m.SettingsPanel })));
 const CardsTab         = lazy(() => import('./CardsTab.jsx').then(m => ({ default: m.CardsTab })));
 const SplitTab         = lazy(() => import('./SplitTab.jsx').then(m => ({ default: m.SplitTab })));
+const InvestTab        = lazy(() => import('./InvestTab.jsx').then(m => ({ default: m.InvestTab })));
 const AddCategoryDialog    = lazy(() => import('./AddCategoryDialog.jsx').then(m => ({ default: m.AddCategoryDialog })));
 const ReconcileDialog      = lazy(() => import('./ReconcileDialog.jsx').then(m => ({ default: m.ReconcileDialog })));
 const BulkRecurringDialog  = lazy(() => import('./BulkRecurringDialog.jsx').then(m => ({ default: m.BulkRecurringDialog })));
@@ -141,7 +144,7 @@ function Dashboard({ auth }) {
 
   // Per-user settings (saved to Google Sheets)
   const isReadOnly = user.role === 'viewer';
-  const { settings, loading: settingsLoading, updateSettings } = useSettings(user.email, user.accessToken);
+  const { settings, loading: settingsLoading, loadError: settingsLoadError, retryLoad: retrySettingsLoad, updateSettings } = useSettings(user.email, user.accessToken);
   const currencySymbol = getCurrencySymbol(settings.currency || 'USD');
   const categoryIcons  = { ...DEFAULT_ICONS, ...(settings.categoryIcons || {}) };
   // Stable array references so memoized children (ExpenseTable etc.) can skip re-renders
@@ -291,6 +294,11 @@ function Dashboard({ auth }) {
   const { messages, unreadCount, markAllRead, dismissMessage, clearAll: clearMessages } =
     useMessages(settings, updateSettings, expenses, totalActual, salaryReceived, selectedMonth?.name);
 
+  // ── Invest flow-through: Investment-category expenses mirror as deposits ──────
+  const handleInvestContribution = useCallback(({ vendor, amount, txDate }) => {
+    mirrorInvestContribution({ settings, accessToken: user.accessToken, vendor, amount, txDate });
+  }, [settings, user.accessToken]);
+
   // ── Push notifications ────────────────────────────────────────────────────────
   const pushHook = usePush(user.email, settings.pushHour ?? 20, user.accessToken);
 
@@ -368,6 +376,17 @@ function Dashboard({ auth }) {
             {getQueue().length > 0
               ? `You're offline — ${getQueue().length} expense${getQueue().length === 1 ? '' : 's'} pending sync`
               : "You're offline — changes will sync when reconnected"}
+          </div>
+        )}
+
+        {/* Settings failed to load — saving is disabled so defaults can't overwrite the stored row */}
+        {settingsLoadError && (
+          <div
+            className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl"
+            style={{ background: 'oklch(62% 0.22 25 / 10%)', border: '1px solid oklch(62% 0.22 25 / 25%)' }}
+          >
+            <span className="text-sm font-bold" style={{ color: 'var(--color-danger)' }}>Couldn't load your settings. Changes won't be saved.</span>
+            <button onClick={retrySettingsLoad} className="text-sm font-bold underline" style={{ color: 'var(--color-danger)' }}>Retry</button>
           </div>
         )}
 
@@ -527,6 +546,20 @@ function Dashboard({ auth }) {
               accessToken={user.accessToken}
               currencySymbol={currencySymbol}
               settings={settings}
+            />
+          </Suspense>
+        )}
+
+        {/* Invest tab — HYSAs vs the $250k FDIC goal + Fidelity holdings */}
+        {activeTab === 'invest' && (
+          <Suspense fallback={null}>
+            <InvestTab
+              user={user}
+              settings={settings}
+              updateSettings={updateSettings}
+              settingsLoading={settingsLoading}
+              currencySymbol={currencySymbol}
+              isReadOnly={isReadOnly}
             />
           </Suspense>
         )}
@@ -807,6 +840,10 @@ function Dashboard({ auth }) {
               ? upsertRecurring(prev.recurringExpenses || [], entry)
               : removeRecurring(prev.recurringExpenses || [], entry.category, entry.vendor),
           })) : undefined}
+          onSaveSplitPlan={!isReadOnly ? (plan) => updateSettings(prev => ({
+            ...prev,
+            splitPlans: upsertSplitPlan(prev.splitPlans || [], plan),
+          })) : undefined}
           cards={settings.cards || []}
         /></Suspense>
       )}
@@ -851,12 +888,18 @@ function Dashboard({ auth }) {
               item,
             ],
           }))}
+          onSaveSplitPlan={(plan) => updateSettings(prev => ({
+            ...prev,
+            splitPlans: upsertSplitPlan(prev.splitPlans || [], plan),
+          }))}
+          currencySymbol={currencySymbol}
           onSaveTransactionNote={(key, data) => updateSettings(prev => ({
             ...prev,
             transactionNotes: { ...(prev.transactionNotes || {}), [key]: data },
           }))}
           geoTagEnabled={settings.geoTagEnabled || false}
           geoPrivacyBlur={settings.geoPrivacyBlur !== false}
+          onInvestContribution={handleInvestContribution}
         /></Suspense>
       )}
 
@@ -876,6 +919,11 @@ function Dashboard({ auth }) {
           accessToken={user.accessToken}
           customCategories={settings.customCategories || []}
           recurringExpenses={settings.recurringExpenses || []}
+          splitPlans={settings.splitPlans || []}
+          onSplitPlaced={(planId, number) => updateSettings(prev => ({
+            ...prev,
+            splitPlans: (prev.splitPlans || []).map(p => p.id === planId ? markPlaced(p, number) : p),
+          }))}
           onClose={() => setShowNewMonth(false)}
           onCreate={async (name) => {
             const newMonth = await createMonth(name);
@@ -930,6 +978,7 @@ function Dashboard({ auth }) {
             ...prev,
             reconciledFingerprints: [...new Set([...(prev.reconciledFingerprints || []), ...fps])],
           }))}
+          onInvestContribution={handleInvestContribution}
         /></Suspense>
       )}
 

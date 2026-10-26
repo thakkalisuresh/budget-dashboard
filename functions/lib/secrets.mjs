@@ -14,7 +14,7 @@
  * VITE_ prefix on VITE_TEMPLATE_SHEET_ID) so the lib modules stay byte-identical
  * to their source and behave the same.
  */
-import { defineSecret } from 'firebase-functions/params';
+import { defineSecret, defineString } from 'firebase-functions/params';
 
 // ── Google Sheets / Drive (OAuth refresh-token flow) ───────────────────────
 export const GOOGLE_CLIENT_ID         = defineSecret('GOOGLE_CLIENT_ID');
@@ -63,8 +63,32 @@ export const TELEGRAM_EMAIL_MAP      = defineSecret('TELEGRAM_EMAIL_MAP');
 // ── MCP server (bound in Phase 6) ──────────────────────────────────────────
 export const MCP_API_KEY = defineSecret('MCP_API_KEY');
 
+// ── Invest tab — Finnhub quotes proxy ──────────────────────────────────────
+// ⚠️ Same deploy-order rule as TELEGRAM_EMAIL_MAP: set the value BEFORE the
+// quotes function first deploys:  firebase functions:secrets:set FINNHUB_API_KEY
+export const FINNHUB_API_KEY = defineSecret('FINNHUB_API_KEY');
+
 // ── Wallet webhook (iOS Shortcuts / Android Automate) ──────────────────
 export const WALLET_WEBHOOK_SECRET = defineSecret('WALLET_WEBHOOK_SECRET');
+
+// ── Invest tab — EDGAR N-PORT look-through (etf-holdings function) ──────────
+// NOT a secret: a plain string param. SEC fair-access policy requires a
+// descriptive User-Agent ("Sample Company name admin@example.com"). The owner
+// sets the real "name email" value at deploy time (via .env or the deploy
+// prompt); the fallback below keeps dev working but SEC may throttle a generic
+// UA, so set a contactable one before relying on it. See docs/INVEST.md.
+export const EDGAR_USER_AGENT = defineString('EDGAR_USER_AGENT', {
+  default: 'Fundient/1.0 (contact via app owner)',
+});
+
+// ── Invest tab — OpenFIGI CUSIP↔ticker reconciliation (openfigi function) ───
+// Deliberately NOT declared here. OPENFIGI_API_KEY is an OPTIONAL plain env var
+// read straight from process.env in openfigi.mjs (key-less OpenFIGI works at
+// ~25 req/min; a free key lifts the limit). Declaring it as defineString made
+// every non-interactive `firebase deploy` abort ("no value for the following
+// environment variables") unless it also had a functions/.env entry, because
+// the CLI ignores a param's `default` when it cannot prompt. To use a key, put
+// OPENFIGI_API_KEY=... in functions/.env (deployed with the functions).
 
 /** Secrets needed by any function that touches the Sheets/Drive data layer. */
 export const SHEETS_DRIVE_SECRETS = [

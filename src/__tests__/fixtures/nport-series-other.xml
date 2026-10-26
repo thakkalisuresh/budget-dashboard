@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Synthetic multi-series N-PORT fixture: a SIBLING series (not VOO's) filed by
+  the same trust and more recently, so the series scan must skip it. Illustrative.
+-->
+<edgarSubmission xmlns="http://www.sec.gov/edgar/nport">
+  <headerData><submissionType>NPORT-P</submissionType></headerData>
+  <formData>
+    <genInfo>
+      <regName>VANGUARD INDEX FUNDS</regName>
+      <regCik>0000036405</regCik>
+      <seriesName>Vanguard Total Stock Market Index Fund</seriesName>
+      <seriesId>S000002848</seriesId>
+      <repPdDate>2026-06-30</repPdDate>
+    </genInfo>
+    <invstOrSecs>
+      <invstOrSec>
+        <name>Tesla Inc</name>
+        <cusip>88160R101</cusip>
+        <identifiers><isin value="US88160R1014"/></identifiers>
+        <pctVal>2.00000000</pctVal>
+      </invstOrSec>
+    </invstOrSecs>
+  </formData>
+</edgarSubmission>

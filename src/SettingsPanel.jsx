@@ -10,6 +10,8 @@ import { detectRecurring, upsertRecurring } from './recurringExpenses.js';
 import { CATEGORIES, getAllCategoryNames } from './sheetsApi.js';
 import { newRuleId } from './smartRules.js';
 import { fetchHistory } from './sheetHistory.js';
+import { InvestSettingsSection } from './InvestSettings.jsx';
+import { SplitPlansSection } from './SplitPlansSection.jsx';
 import { schemeTableau10 } from 'd3-scale-chromatic';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -1195,6 +1197,16 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
             )}
           </div>
 
+          {/* ── Installments (split-across-months plans) ──────────────────── */}
+          <SplitPlansSection
+            splitPlans={settings.splitPlans || []}
+            updateSettings={updateSettings}
+            accessToken={accessToken}
+            sheetId={sheetId}
+            months={months}
+            currencySymbol={currencySymbol}
+          />
+
           {/* ── AI categorization ────────────────────────────────────────── */}
           <div>
             <SectionLabel>AI Categorization</SectionLabel>
@@ -1713,6 +1725,9 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
               </button>
             </div>
           </div>
+
+          {/* ── Investing ───────────────────────────────────────────────── */}
+          <InvestSettingsSection settings={settings} updateSettings={updateSettings} />
 
           {/* ── Reward Rates ────────────────────────────────────────────── */}
           <div>

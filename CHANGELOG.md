@@ -1,10 +1,35 @@
 # Changelog
 
+## [2026-10-26] — Split a charge across months
+
+### New feature: installment splits
+
+- **Split across months** (`splitPlans.js`) — spread one fixed charge (e.g. a 6-month insurance premium paid in full) evenly over N months, each row written as `Vendor n/N`. A plan divides the total into integer-cent installments that sum to exactly the total (the odd cent lands on the last month) and stops after N — the bounded cousin of recurring expenses, reusing the same replay machinery.
+- **Where plans live** — `settings.splitPlans` in the central `UserSettings` sheet (not any month sheet), so installments still owed exist before their months do, and sync across devices. `placed:[]` tracks which installments are written, keeping replays idempotent.
+- **Two entry points** — a "Split across months" toggle in the Add Expense dialog (writes `1/N` now, schedules the rest) and a layers action in the transaction detail panel to split an existing charge retroactively (shrinks the row to `1/N` at total/N, preserving its date, card and UUID).
+- **Auto-placement** — `NewMonthDialog` writes each active plan's next installment into a newly created month automatically; a failed write is swallowed so it can never abort month creation, and the installment simply retries next month. Settings → Installments lists active plans with progress, a manual "place next" into the open month, and cancel.
+- **History** — split installments log under a new `Split` action (`historyActions.js`).
+
 ## [2026-09-03] — Security: bump pdfjs-dist to 6.x
 
 ### Dependencies
 
 - **`pdfjs-dist` 5.7.284 → 6.3.289** — resolves the high-severity advisory GHSA-hq66-cqwq-w95j ("arbitrary JavaScript execution upon opening a malicious PDF"), which affected the whole `>=5.6.83 <6.2.108` range and was failing the CI `npm audit` gate. The advisory has no in-5.x fix, so the upgrade is a major version bump. The only integration point is `src/pdfParsers.js` (statement PDF text extraction); its API surface (`getDocument`, `getTextContent`, item `transform`/`str`, `PasswordException`, and the bundled `build/pdf.worker.min.mjs` worker path) is unchanged across the bump — build and the full test suite pass.
+## [2026-07-19] — Invest tab (Phase 1): HYSAs, holdings, live-ish quotes
+
+### New feature: Invest
+
+- **Invest dashboard tab** (`InvestTab.jsx` + `InvestOrbit/Parts/Dialogs.jsx`) — the household's investments in one place: an orbital portfolio hero (net worth center, HYSAs inner ring, equities outer, planet size honest to dollar weight), a scrolling ticker tape, both HYSAs as liquid gauges against the **$250k FDIC goal** with growth projection and years-to-goal, an account card with ‹ › switcher and 3D tilt, Apple-Stocks-style equity rows with live price ticks and today-range sparklines, and an ETF/stock split donut with a Split ⇄ Holdings toggle. Replaces Split on the mobile bottom nav (Split stays on the desktop tab switcher and moves into the header user menu on mobile).
+- **"Fundient Investments" spreadsheet** (`sheetInvest.js`) — a dedicated sheet (not the monthly template, which gets copied every month) auto-provisioned on first open, shared with the household, id persisted in `settings.investSheetId`. Tabs: `Accounts` (balance/APY/goal anchors), `Activities` (Ghostfolio-style append-only BUY/SELL/DIVIDEND/DEPOSIT/WITHDRAW/INTEREST/FEE log — holdings and FIFO lots derive from it, `investMath.deriveHoldings`), `Snapshots` (balance history), `RateWatch` (written by the Phase-2 scan; the card renders an empty state until then).
+- **`/api/quotes` Cloud Function** (`functions/quotes.mjs`) — authenticated Finnhub proxy (key server-side only; origin + `sec-fetch-site` + bearer-allowlist gates like the other endpoints), ≤30 symbols/request, per-instance 60s quote cache, `maxInstances: 2` to respect the free 60/min tier. Client (`useQuotes.js`) polls only while the Invest tab is mounted **and** the app is visible — $0 recurring cost by construction. New secret: `FINNHUB_API_KEY` (set it before first deploy).
+- **Fidelity CSV import** (`fidelityCsvParser.js`) — auto-detects positions exports (seeds one opening lot per symbol at average cost) and activity/history exports (true BUY/SELL/DIVIDEND/DEPOSIT rows), tolerant of Fidelity's disclaimer tails, `SPAXX**` cash rows, and pending-activity lines.
+- **Contribution flow-through** (`investFlowThrough.js`) — expenses saved to the *Investment* budget category (Add-Expense dialog and statement reconcile) mirror into the Investments sheet as `DEPOSIT`s via vendor rules (`settings.investAccountRules`, smart-rules semantics) and bump HYSA balances so the FDIC gauges track without manual entry. Always non-fatal.
+- **Settings → Investing** (`InvestSettings.jsx`) — flow-through rules editor, pre-buy flag thresholds (Phase 2), extra ETF symbols for the split donut, link to the sheet.
+
+### Notes
+
+- Chart palette is CVD-validated for the dark surface (`#6366f1 #d97706 #0d9488 #f43f5e #0284c7`, adjacent-pair ΔE ≥ 13.8, ≥3:1 contrast); all Invest motion is transform/opacity-only and fully disabled under `prefers-reduced-motion` (`index.css` invest block).
+- Tests: `investMath`, `fidelityCsvParser`, `sheetInvest`, `quotes-fn` suites (+69 tests, 459 total).
 
 ## [2026-06-23] — Split spending by person + Chase Freedom Rise
 

@@ -66,6 +66,7 @@ export default defineConfig({
     // be tested without the functions runtime. See test-stubs/.
     alias: {
       'firebase-functions/v2/https': new URL('./test-stubs/firebase-functions-https.mjs', import.meta.url).pathname,
+      'firebase-functions/v2/scheduler': new URL('./test-stubs/firebase-functions-scheduler.mjs', import.meta.url).pathname,
       'firebase-functions/params':   new URL('./test-stubs/firebase-functions-params.mjs', import.meta.url).pathname,
       // vite-plugin-pwa's virtual module only exists during a real Vite build,
       // so anything importing useAppUpdate would fail to resolve under vitest.

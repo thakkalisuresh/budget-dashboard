@@ -501,3 +501,62 @@ button:active {
   transform: scale(0.97);
   transition-duration: 75ms;
 }
+
+/* ═══ Invest tab ═══════════════════════════════════════════════════════════
+   Motion for the orbit hero, liquid FDIC gauges, ticker tape, sparkline
+   draw-ins, and price ticks. Transform/opacity only — no layout animation. */
+
+@keyframes invest-orbit {
+  from { transform: rotate(0); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes invest-drift {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+@keyframes invest-draw {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes invest-tape {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+.invest-spin        { animation: invest-orbit var(--orbit-dur, 30s) linear infinite; }
+.invest-spin-rev    { animation: invest-orbit var(--orbit-dur, 30s) linear infinite reverse; }
+.invest-drift       { animation: invest-drift var(--drift-dur, 8s) linear infinite; }
+.invest-drift-rev   { animation: invest-drift var(--drift-dur, 11s) linear infinite reverse; }
+.invest-tape-inner  { animation: invest-tape 26s linear infinite; }
+
+.invest-draw {
+  stroke-dasharray: 600;
+  stroke-dashoffset: 600;
+  animation: invest-draw 1.5s cubic-bezier(0.19, 1, 0.22, 1) forwards 0.25s;
+}
+
+/* Price flash on a live tick — colour only, resolves back via transition */
+.invest-tick b { transition: color 0.35s; }
+.invest-tick.tick-up b { color: var(--color-success); }
+.invest-tick.tick-dn b { color: var(--color-danger); }
+
+/* 3D tilt cards (account switcher) */
+.invest-tilt {
+  transform: perspective(700px);
+  transition: transform 0.25s ease-out;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .invest-spin, .invest-spin-rev, .invest-drift, .invest-drift-rev,
+  .invest-tape-inner {
+    animation: none !important;
+  }
+  .invest-draw {
+    animation: none !important;
+    stroke-dashoffset: 0;
+  }
+  .invest-tilt { transition: none; }
+}

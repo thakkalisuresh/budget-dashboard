@@ -34,3 +34,20 @@ export { categoryAudit } from './category-audit.mjs';
 
 // Daily backend error digest (scheduled). See docs/ERROR_CODES.md.
 export { errorDigest } from './error-digest.mjs';
+// Invest tab — Finnhub quotes proxy (key stays server-side).
+export { quotes } from './quotes.mjs';
+// Invest tab — Indian mutual-fund NAVs (AMFI + mfapi.in), no secrets beyond the allowlist.
+export { mfNav } from './mf-nav.mjs';
+// Invest tab — EDGAR N-PORT holdings look-through (descriptive User-Agent stays server-side).
+export { etfHoldings } from './etf-holdings.mjs';
+// Invest tab — CUSIP↔ticker reconciliation via OpenFIGI (optional key stays server-side).
+export { openfigi } from './openfigi.mjs';
+
+// Invest tab — bi-weekly HYSA rate watch (scheduled; 1st & 15th).
+export { rateWatch } from './rate-watch.mjs';
+
+// Invest tab — monthly AMC holdings for the household's Indian MFs (scheduled days 8-20 IST + on-demand).
+export { mfHoldingsRefresh, mfHoldings } from './mf-holdings.mjs';
+
+// Invest tab — fund vs peers data for the household's Indian MFs (scheduled weekly held + monthly peers/TER, + on-demand).
+export { mfPeersHeldRefresh, mfPeersMonthlyRefresh, mfPeers } from './mf-peers.mjs';

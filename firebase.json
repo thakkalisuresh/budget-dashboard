@@ -13,6 +13,12 @@
       { "source": "/api/mcp", "function": "mcp" },
       { "source": "/api/wallet", "function": "walletWebhook" },
       { "source": "/api/item-categorize", "function": "itemCategorize" },
+      { "source": "/api/quotes", "function": "quotes" },
+      { "source": "/api/mf-nav", "function": "mfNav" },
+      { "source": "/api/mf-holdings", "function": "mfHoldings" },
+      { "source": "/api/mf-peers", "function": "mfPeers" },
+      { "source": "/api/etf-holdings", "function": "etfHoldings" },
+      { "source": "/api/openfigi", "function": "openfigi" },
       {
         "source": "**",
         "destination": "/index.html"

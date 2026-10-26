@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { resolveImportDate } from './recurringExpenses.js';
+import { activeSplitPlans, nextDueInstallment } from './splitPlans.js';
 import { X, Plus, ChevronRight, ChevronLeft, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   fetchTotalsForEdit, writeSalary, writeBudgetAmounts,
@@ -20,7 +21,7 @@ const YEARS = [currentYear - 1, currentYear, currentYear + 1];
 // Rows to exclude from budget editing
 const EXCLUDED_ROWS = ['expense', 'total expenses', 'moving exp', ''];
 
-export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessToken, customCategories = [], recurringExpenses = [] }) {
+export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessToken, customCategories = [], recurringExpenses = [], splitPlans = [], onSplitPlaced }) {
   // Step 1 state
   const [month, setMonth]   = useState('');
   const [year, setYear]     = useState(String(currentYear));
@@ -149,6 +150,25 @@ export function NewMonthDialog({ onClose, onCreate, existingMonths = [], accessT
           resolveImportDate(exp, Number(year), monthIndex),
           exp.card || ''
         );
+      }
+
+      // Auto-place the next installment of each active split plan into this
+      // month. A failed write is swallowed so it can't abort month creation —
+      // the plan keeps that installment unplaced and retries next month.
+      for (const plan of activeSplitPlans(splitPlans)) {
+        const due = nextDueInstallment(plan);
+        if (!due) continue;
+        try {
+          await addOrUpdateExpense(
+            plan.category, due.label, due.amount,
+            accessToken, newMonth.sheetId, name, 'split',
+            resolveImportDate({}, Number(year), monthIndex),
+            plan.card || ''
+          );
+          onSplitPlaced?.(plan.id, due.number);
+        } catch (e) {
+          console.warn('split installment skipped:', plan.id, e?.message);
+        }
       }
 
       onClose();
