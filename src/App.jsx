@@ -34,6 +34,7 @@ import { HistoryTab } from './HistoryTab.jsx';
 import { LedgerTab } from './LedgerTab.jsx';
 import { invalidateLedger } from './ledgerCache.js';
 import { upsertRecurring, removeRecurring } from './recurringExpenses.js';
+import { upsertSplitPlan, markPlaced } from './splitPlans.js';
 const SettingsPanel    = lazy(() => import('./SettingsPanel.jsx').then(m => ({ default: m.SettingsPanel })));
 const CardsTab         = lazy(() => import('./CardsTab.jsx').then(m => ({ default: m.CardsTab })));
 const SplitTab         = lazy(() => import('./SplitTab.jsx').then(m => ({ default: m.SplitTab })));
@@ -839,6 +840,10 @@ function Dashboard({ auth }) {
               ? upsertRecurring(prev.recurringExpenses || [], entry)
               : removeRecurring(prev.recurringExpenses || [], entry.category, entry.vendor),
           })) : undefined}
+          onSaveSplitPlan={!isReadOnly ? (plan) => updateSettings(prev => ({
+            ...prev,
+            splitPlans: upsertSplitPlan(prev.splitPlans || [], plan),
+          })) : undefined}
           cards={settings.cards || []}
         /></Suspense>
       )}
@@ -883,6 +888,11 @@ function Dashboard({ auth }) {
               item,
             ],
           }))}
+          onSaveSplitPlan={(plan) => updateSettings(prev => ({
+            ...prev,
+            splitPlans: upsertSplitPlan(prev.splitPlans || [], plan),
+          }))}
+          currencySymbol={currencySymbol}
           onSaveTransactionNote={(key, data) => updateSettings(prev => ({
             ...prev,
             transactionNotes: { ...(prev.transactionNotes || {}), [key]: data },
@@ -909,6 +919,11 @@ function Dashboard({ auth }) {
           accessToken={user.accessToken}
           customCategories={settings.customCategories || []}
           recurringExpenses={settings.recurringExpenses || []}
+          splitPlans={settings.splitPlans || []}
+          onSplitPlaced={(planId, number) => updateSettings(prev => ({
+            ...prev,
+            splitPlans: (prev.splitPlans || []).map(p => p.id === planId ? markPlaced(p, number) : p),
+          }))}
           onClose={() => setShowNewMonth(false)}
           onCreate={async (name) => {
             const newMonth = await createMonth(name);

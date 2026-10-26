@@ -51,6 +51,7 @@ export const DEFAULT_SETTINGS = {
   categoryIcons:     {},  // { categoryName: emoji }
   customCategories:  [],  // [categoryName, ...]
   recurringExpenses: [],  // [{ category, vendor, amount }]
+  splitPlans:        [],  // [{ id, category, vendor, totalAmount, installments, card?, startMonth?, placed:[] }]
   nonMonthlyItems:   {},  // { 'April 2026': ['Vendor1', 'Vendor2', ...] }
   transactionNotes:  {},  // { 'sheetId_category_vendor': { note: '', tags: [], location?: {lat,lng} } }
   disabledWalletVendors: [], // [{ name, patterns: [lowercase strings] }] — skipped by wallet-webhook
@@ -197,6 +198,7 @@ async function loadOnce(userId, accessToken) {
       categoryIcons:     { ...(parsed.categoryIcons || {}) },
       customCategories:  parsed.customCategories || [],
       recurringExpenses: parsed.recurringExpenses || [],
+      splitPlans:        parsed.splitPlans        || [],
       nonMonthlyItems:   parsed.nonMonthlyItems   || {},
       transactionNotes:  parsed.transactionNotes  || {},
       disabledWalletVendors: parsed.disabledWalletVendors || [],

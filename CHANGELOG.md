@@ -1,5 +1,15 @@
 # Changelog
 
+## [2026-10-26] — Split a charge across months
+
+### New feature: installment splits
+
+- **Split across months** (`splitPlans.js`) — spread one fixed charge (e.g. a 6-month insurance premium paid in full) evenly over N months, each row written as `Vendor n/N`. A plan divides the total into integer-cent installments that sum to exactly the total (the odd cent lands on the last month) and stops after N — the bounded cousin of recurring expenses, reusing the same replay machinery.
+- **Where plans live** — `settings.splitPlans` in the central `UserSettings` sheet (not any month sheet), so installments still owed exist before their months do, and sync across devices. `placed:[]` tracks which installments are written, keeping replays idempotent.
+- **Two entry points** — a "Split across months" toggle in the Add Expense dialog (writes `1/N` now, schedules the rest) and a layers action in the transaction detail panel to split an existing charge retroactively (shrinks the row to `1/N` at total/N, preserving its date, card and UUID).
+- **Auto-placement** — `NewMonthDialog` writes each active plan's next installment into a newly created month automatically; a failed write is swallowed so it can never abort month creation, and the installment simply retries next month. Settings → Installments lists active plans with progress, a manual "place next" into the open month, and cancel.
+- **History** — split installments log under a new `Split` action (`historyActions.js`).
+
 ## [2026-09-03] — Security: bump pdfjs-dist to 6.x
 
 ### Dependencies

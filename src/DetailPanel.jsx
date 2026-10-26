@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Repeat, CalendarX, Plus, CreditCard, ChevronRight, ChevronDown, FolderInput } from 'lucide-react';
+import { X, Edit2, Check, Trash2, AlertTriangle, MessageSquare, Repeat, CalendarX, Plus, CreditCard, ChevronRight, ChevronDown, FolderInput, Layers } from 'lucide-react';
 import { updateVendorName, updateVendorAmounts, updateTransactionDate, unmarkNonMonthly, renameNonMonthly, markNonMonthly, formatTxDate, todayIso, updatePaymentMethod, updateHistoryPaymentMethod, moveTransactionCategory } from './sheetsApi.js';
 import { CategoryPickerSheet } from './CategoryPickerSheet.jsx';
 import { findHighlightTarget, uuidSelector } from './txHighlight.js';
 import { txNoteKey } from './transactionNotes.js';
 import { relearnMovedSplit } from './sheetItemMemory.js';
 import { isRecurring } from './recurringExpenses.js';
+import { computeInstallments, installmentLabel, makeSplitPlan, markPlaced } from './splitPlans.js';
 
 // ── Vendor logo helpers ───────────────────────────────────────────────────────
 
@@ -132,7 +133,7 @@ function VendorLogo({ name, size = 22, onEditDomain }) {
 /**
  * rows: Array of { rowIndex, description, amounts: number[] }
  */
-export function DetailPanel({ expense, rows, loading, onClose, accessToken, sheetId, onRefresh, currencySymbol = '$', onVendorRenamed, monthName, transactionNotes = {}, onUpdateNote, nonMonthlyVendors = [], onNonMonthlyChanged, onAddExpense, onAddForVendor, highlight = null, recurringExpenses = [], onToggleRecurring, cards = [], userId = '' }) {
+export function DetailPanel({ expense, rows, loading, onClose, accessToken, sheetId, onRefresh, currencySymbol = '$', onVendorRenamed, monthName, transactionNotes = {}, onUpdateNote, nonMonthlyVendors = [], onNonMonthlyChanged, onAddExpense, onAddForVendor, highlight = null, recurringExpenses = [], onToggleRecurring, onSaveSplitPlan, cards = [], userId = '' }) {
   const total = rows ? rows.reduce((s, r) => s + r.amounts.reduce((a, b) => a + b, 0), 0) : 0;
   // Scroll container, so the arrive-from-ledger highlight can find its row.
   const listRef = useRef(null);
@@ -141,6 +142,7 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
   const [editingVendor, setEditingVendor]   = useState(null);
   const [editingAmount, setEditingAmount]   = useState(null);
   const [deletingVendor, setDeletingVendor] = useState(null);
+  const [splittingRow, setSplittingRow]     = useState(null); // { rowIndex, count }
   const [saving, setSaving]                 = useState(false);
   const [error, setError]                   = useState('');
   const [editingDomain, setEditingDomain]   = useState(null);
@@ -268,6 +270,28 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
       await updateVendorAmounts(expense, row.rowIndex, [], accessToken, sheetId, row.description, prevTotal, [], row._v2);
       await unmarkNonMonthly(sheetId, accessToken, row.description);
       setDeletingVendor(null);
+    });
+  };
+
+  // ── Split an existing charge across months ───────────────────────────────
+  // Shrinks this row to installment 1 (relabelled "Vendor 1/N" at total/N),
+  // then saves a plan so 2/N…N/N land as future months are created. Only
+  // offered for a single-amount row; its date, card and UUID are preserved.
+  const splitTransaction = (row, n) => {
+    const total = row.amounts.reduce((a, b) => a + b, 0);
+    const parts = computeInstallments(total, n);
+    if (!parts.length || row.amounts.length !== 1) { setSplittingRow(null); return; }
+    const base = row.description;
+    withSave(async () => {
+      await updateVendorAmounts(expense, row.rowIndex, [parts[0]], accessToken, sheetId, base, total, row.uuids || [], row._v2);
+      const label = installmentLabel(base, 1, n);
+      await updateVendorName(expense, row.rowIndex, label, accessToken, sheetId, base, row._v2);
+      onVendorRenamed?.(base, label);
+      onSaveSplitPlan?.(markPlaced(makeSplitPlan({
+        category: expense, vendor: base, totalAmount: total,
+        installments: n, card: row.paymentMethod || '', startMonth: monthName,
+      }), 1));
+      setSplittingRow(null);
     });
   };
 
@@ -561,6 +585,12 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                     className="p-1 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }} title="Edit amount">
                     <Edit2 className="w-3.5 h-3.5" />
                   </button>
+                  {onSaveSplitPlan && (
+                    <button onClick={() => setSplittingRow(sr => sr?.rowIndex === row.rowIndex ? null : { rowIndex: row.rowIndex, count: 3 })}
+                      className="p-1 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }} title="Split across months">
+                      <Layers className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <button onClick={() => deleteAmount(row, 0)}
                     className="p-1 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }} title="Delete transaction">
                     <Trash2 className="w-3.5 h-3.5" />
@@ -580,6 +610,39 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
           return (
             <div className="px-4 pb-2 pl-10 text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
               Part of a {currencySymbol}{nd.receiptTotal.toFixed(2)} split{n ? ` (${n} ${n === 1 ? 'category' : 'categories'})` : ''}
+            </div>
+          );
+        })()}
+        {/* Split-across-months panel (single-amount rows only) */}
+        {single && splittingRow?.rowIndex === row.rowIndex && (() => {
+          const n = Math.max(2, parseInt(splittingRow.count, 10) || 2);
+          const total = row.amounts[0];
+          const parts = computeInstallments(total, n);
+          const per = parts.length ? parts[0] : 0;
+          return (
+            <div className="mx-4 mb-2 ml-10 rounded-2xl p-3 space-y-2" style={{ background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-bold" style={{ color: 'var(--color-text)' }}>Split this charge into</span>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setSplittingRow(sr => ({ ...sr, count: Math.max(2, n - 1) }))} className="w-6 h-6 rounded-lg flex items-center justify-center font-bold" style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-20)', color: 'var(--color-text)' }} aria-label="One fewer month">−</button>
+                  <span className="w-6 text-center text-sm font-black tabular-nums" style={{ color: 'var(--color-text)' }}>{n}</span>
+                  <button onClick={() => setSplittingRow(sr => ({ ...sr, count: Math.min(36, n + 1) }))} className="w-6 h-6 rounded-lg flex items-center justify-center font-bold" style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-20)', color: 'var(--color-text)' }} aria-label="One more month">+</button>
+                </div>
+                <span className="text-xs font-bold" style={{ color: 'var(--color-text)' }}>months</span>
+              </div>
+              <p className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
+                This row becomes <span className="font-bold" style={{ color: 'var(--color-accent)' }}>{installmentLabel(row.description, 1, n)} · {currencySymbol}{per.toFixed(2)}</span> (same date and card). 2/{n}–{n}/{n} auto-add as you create each new month.
+              </p>
+              <div className="flex gap-2">
+                <button onClick={() => splitTransaction(row, n)} disabled={saving}
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold" style={{ background: 'var(--color-accent)', color: '#fff' }}>
+                  Split into {n}
+                </button>
+                <button onClick={() => setSplittingRow(null)} disabled={saving}
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold" style={{ background: 'var(--sur-5)', color: 'var(--color-text-muted)' }}>
+                  Cancel
+                </button>
+              </div>
             </div>
           );
         })()}
