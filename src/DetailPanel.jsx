@@ -585,12 +585,6 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                     className="p-1 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }} title="Edit amount">
                     <Edit2 className="w-3.5 h-3.5" />
                   </button>
-                  {onSaveSplitPlan && (
-                    <button onClick={() => setSplittingRow(sr => sr?.rowIndex === row.rowIndex ? null : { rowIndex: row.rowIndex, count: 3 })}
-                      className="p-1 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }} title="Split across months">
-                      <Layers className="w-3.5 h-3.5" />
-                    </button>
-                  )}
                   <button onClick={() => deleteAmount(row, 0)}
                     className="p-1 rounded-lg transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)' }} title="Delete transaction">
                     <Trash2 className="w-3.5 h-3.5" />
@@ -610,39 +604,6 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
           return (
             <div className="px-4 pb-2 pl-10 text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
               Part of a {currencySymbol}{nd.receiptTotal.toFixed(2)} split{n ? ` (${n} ${n === 1 ? 'category' : 'categories'})` : ''}
-            </div>
-          );
-        })()}
-        {/* Split-across-months panel (single-amount rows only) */}
-        {single && splittingRow?.rowIndex === row.rowIndex && (() => {
-          const n = Math.max(2, parseInt(splittingRow.count, 10) || 2);
-          const total = row.amounts[0];
-          const parts = computeInstallments(total, n);
-          const per = parts.length ? parts[0] : 0;
-          return (
-            <div className="mx-4 mb-2 ml-10 rounded-2xl p-3 space-y-2" style={{ background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-bold" style={{ color: 'var(--color-text)' }}>Split this charge into</span>
-                <div className="flex items-center gap-1">
-                  <button onClick={() => setSplittingRow(sr => ({ ...sr, count: Math.max(2, n - 1) }))} className="w-6 h-6 rounded-lg flex items-center justify-center font-bold" style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-20)', color: 'var(--color-text)' }} aria-label="One fewer month">−</button>
-                  <span className="w-6 text-center text-sm font-black tabular-nums" style={{ color: 'var(--color-text)' }}>{n}</span>
-                  <button onClick={() => setSplittingRow(sr => ({ ...sr, count: Math.min(36, n + 1) }))} className="w-6 h-6 rounded-lg flex items-center justify-center font-bold" style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-20)', color: 'var(--color-text)' }} aria-label="One more month">+</button>
-                </div>
-                <span className="text-xs font-bold" style={{ color: 'var(--color-text)' }}>months</span>
-              </div>
-              <p className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
-                This row becomes <span className="font-bold" style={{ color: 'var(--color-accent)' }}>{installmentLabel(row.description, 1, n)} · {currencySymbol}{per.toFixed(2)}</span> (same date and card). 2/{n}–{n}/{n} auto-add as you create each new month.
-              </p>
-              <div className="flex gap-2">
-                <button onClick={() => splitTransaction(row, n)} disabled={saving}
-                  className="px-3 py-1.5 rounded-xl text-xs font-bold" style={{ background: 'var(--color-accent)', color: '#fff' }}>
-                  Split into {n}
-                </button>
-                <button onClick={() => setSplittingRow(null)} disabled={saving}
-                  className="px-3 py-1.5 rounded-xl text-xs font-bold" style={{ background: 'var(--sur-5)', color: 'var(--color-text-muted)' }}>
-                  Cancel
-                </button>
-              </div>
             </div>
           );
         })()}
@@ -1031,6 +992,13 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                     style={{ color: 'var(--color-text-muted)' }}>
                     <Edit2 className="w-3.5 h-3.5" />
                   </button>
+                  {onSaveSplitPlan && row.amounts.length === 1 && (
+                    <button onClick={() => setSplittingRow(sr => sr?.rowIndex === row.rowIndex ? null : { rowIndex: row.rowIndex, count: 3 })}
+                      className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Split across months"
+                      style={{ color: 'var(--color-text-muted)' }}>
+                      <Layers className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <button onClick={() => { setEditingAmount(null); setDeletingVendor(row.rowIndex); }}
                     className="p-1.5 rounded-lg transition-colors flex-shrink-0 hover:bg-[var(--sur-5)]" title="Delete entire vendor"
                     style={{ color: 'var(--color-text-muted)' }}>
@@ -1039,6 +1007,40 @@ export function DetailPanel({ expense, rows, loading, onClose, accessToken, shee
                   </div>
                 </div>
               )}
+
+              {/* Split-across-months panel */}
+              {splittingRow?.rowIndex === row.rowIndex && row.amounts.length === 1 && deletingVendor !== row.rowIndex && (() => {
+                const n = Math.max(2, parseInt(splittingRow.count, 10) || 2);
+                const total = row.amounts[0];
+                const parts = computeInstallments(total, n);
+                const per = parts.length ? parts[0] : 0;
+                return (
+                  <div className="mx-4 mb-2 rounded-2xl p-3 space-y-2" style={{ background: 'var(--color-accent-subtle)', border: '1px solid var(--color-accent-border)' }}>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-bold" style={{ color: 'var(--color-text)' }}>Split this charge into</span>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => setSplittingRow(sr => ({ ...sr, count: Math.max(2, n - 1) }))} className="w-6 h-6 rounded-lg flex items-center justify-center font-bold" style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-20)', color: 'var(--color-text)' }} aria-label="One fewer month">−</button>
+                        <span className="w-6 text-center text-sm font-black tabular-nums" style={{ color: 'var(--color-text)' }}>{n}</span>
+                        <button onClick={() => setSplittingRow(sr => ({ ...sr, count: Math.min(36, n + 1) }))} className="w-6 h-6 rounded-lg flex items-center justify-center font-bold" style={{ background: 'var(--sur-5)', border: '1px solid var(--sur-20)', color: 'var(--color-text)' }} aria-label="One more month">+</button>
+                      </div>
+                      <span className="text-xs font-bold" style={{ color: 'var(--color-text)' }}>months</span>
+                    </div>
+                    <p className="text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
+                      This row becomes <span className="font-bold" style={{ color: 'var(--color-accent)' }}>{installmentLabel(row.description, 1, n)} · {currencySymbol}{per.toFixed(2)}</span> (same date and card). 2/{n}–{n}/{n} auto-add as you create each new month.
+                    </p>
+                    <div className="flex gap-2">
+                      <button onClick={() => splitTransaction(row, n)} disabled={saving}
+                        className="px-3 py-1.5 rounded-xl text-xs font-bold" style={{ background: 'var(--color-accent)', color: '#fff' }}>
+                        Split into {n}
+                      </button>
+                      <button onClick={() => setSplittingRow(null)} disabled={saving}
+                        className="px-3 py-1.5 rounded-xl text-xs font-bold" style={{ background: 'var(--sur-5)', color: 'var(--color-text-muted)' }}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Individual amounts */}
               {deletingVendor !== row.rowIndex && row.amounts.map((amt, amtIndex) => (
