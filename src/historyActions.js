@@ -23,11 +23,12 @@ export function historyAction(source) {
   if (source === 'scan')      return 'Receipt Scan';
   if (source === 'import')    return 'Import';
   if (source === 'recurring') return 'Recurring';
+  if (source === 'split')     return 'Split';
   return 'Added';
 }
 
 /** Every action historyAction can emit — what the ledger must reconcile against. */
-export const WRITE_ACTIONS = ['Added', 'Receipt Scan', 'Import', 'Recurring'];
+export const WRITE_ACTIONS = ['Added', 'Receipt Scan', 'Import', 'Recurring', 'Split'];
 
 /** Short badge label per action. */
 export const METHOD_LABELS = {
@@ -35,4 +36,5 @@ export const METHOD_LABELS = {
   'Import':       'Import',
   'Added':        'Manual',
   'Recurring':    'Recurring',
+  'Split':        'Split',
 };
