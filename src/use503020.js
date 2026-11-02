@@ -15,6 +15,14 @@ function parseCell(cell) {
   return isNaN(num) ? cell : num;     // use the number if it parsed, else keep the text
 }
 
+// Turn a raw percentage cell into a fraction. A cell with a % sign is always out
+// of 100, so "0.58%" → 0.0058; without one it may be stored as 50 or as 0.5.
+export function parsePct(cell) {
+  const v = parseCell(cell);
+  if (typeof v !== 'number') return 0;
+  return String(cell).includes('%') || v > 1 ? v / 100 : v;
+}
+
 export function use503020(sheetId, accessToken) {
   const [data, setData] = useState(null);        // parsed buckets (null while loading)
   const [loading, setLoading] = useState(true);
@@ -42,15 +50,15 @@ export function use503020(sheetId, accessToken) {
           .filter(r => r[descCol] && typeof r[descCol] === 'string')
           .map(r => ({ name: r[descCol], amount: r[amtCol] ?? 0 }));
 
-      // A percentage might be stored as 50 or as 0.5 — normalize both to a fraction.
-      const normPct = v => (v != null && v > 1 ? v / 100 : v) || 0;
+      // Percentages come from the raw cell: parseCell has already dropped the % sign.
+      const pctRow = json.values?.[11] || [];
 
       // Assemble the three buckets. The fixed row indices (10,11,13,14) and column
       // indices (1,4,7) mirror the fixed layout of this worksheet.
       setData({
-        needs:   { items: parseItems(0, 1), total: rows[10]?.[1] || 0, pct: normPct(rows[11]?.[1]), target: rows[13]?.[1] || 0, diff: rows[14]?.[1] || 0 },
-        wants:   { items: parseItems(3, 4), total: rows[10]?.[4] || 0, pct: normPct(rows[11]?.[4]), target: rows[13]?.[4] || 0, diff: rows[14]?.[4] || 0 },
-        savings: { items: parseItems(6, 7), total: rows[10]?.[7] || 0, pct: normPct(rows[11]?.[7]), target: rows[13]?.[7] || 0, diff: rows[14]?.[7] || 0 },
+        needs:   { items: parseItems(0, 1), total: rows[10]?.[1] || 0, pct: parsePct(pctRow[1]), target: rows[13]?.[1] || 0, diff: rows[14]?.[1] || 0 },
+        wants:   { items: parseItems(3, 4), total: rows[10]?.[4] || 0, pct: parsePct(pctRow[4]), target: rows[13]?.[4] || 0, diff: rows[14]?.[4] || 0 },
+        savings: { items: parseItems(6, 7), total: rows[10]?.[7] || 0, pct: parsePct(pctRow[7]), target: rows[13]?.[7] || 0, diff: rows[14]?.[7] || 0 },
       });
     } catch (e) {
       console.error('503020 fetch error:', e);   // log and keep whatever we had before
