@@ -1902,7 +1902,12 @@ export function SettingsPanel({ settings, updateSettings, expenses, onClose, cur
         {/* Footer */}
         <div className="flex-shrink-0 px-6 py-4 space-y-2" style={{ borderTop: '1px solid var(--sur-8)' }}>
           <button
-            onClick={() => updateSettings({ ...DEFAULT_SETTINGS })}
+            onClick={() => {
+              if (!window.confirm(
+                'Reset all settings to defaults? This also deletes your recurring expenses, split plans and transaction notes, and unlinks your Invest sheet.'
+              )) return;
+              updateSettings({ ...DEFAULT_SETTINGS });
+            }}
             className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-sm font-bold transition-colors hover:bg-[var(--sur-5)]" style={{ color: 'var(--color-text-muted)', background: 'var(--sur-8)' }}
           >
             <RotateCcw className="w-3.5 h-3.5" />
