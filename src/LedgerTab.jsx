@@ -45,12 +45,16 @@ function formatDate(iso) {
 
 async function buildLedger(sheetId, accessToken, monthName = '') {
   const categories = getAllCategoryNames();
+  // A failed category read must not look like an empty category: an empty
+  // ledger that got cached reads as "no results" and hides real transactions.
+  // Track failures so the caller can warn and skip caching a partial ledger.
+  const failed = [];
   const [historyEntries, ...categoryRows] = await Promise.all([
     fetchHistory(sheetId, accessToken),
     ...categories.map(cat =>
       fetchDetailRows(cat, accessToken, sheetId, monthName)
         .then(rows => ({ cat, rows }))
-        .catch(() => ({ cat, rows: [] }))
+        .catch(() => { failed.push(cat); return { cat, rows: [] }; })
     ),
   ]);
 
@@ -100,7 +104,7 @@ async function buildLedger(sheetId, accessToken, monthName = '') {
       });
     }
   }
-  return transactions;
+  return { transactions, failed };
 }
 
 // Shared row renderer — used by both the animated .map() path and the
@@ -200,6 +204,9 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
   const [refreshing, setRefreshing]     = useState(false);
   // True when a background refresh failed and what's on screen came from cache.
   const [stale, setStale]               = useState(false);
+  // Categories whose sheet read failed on the last load. Non-zero means the
+  // list on screen is incomplete, so it is never cached.
+  const [failedCount, setFailedCount]   = useState(0);
 
   const [sortBy, setSortBy]             = useState('date-desc');
   const [showSortMenu, setShowSortMenu] = useState(false);
@@ -232,13 +239,24 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
     if (isRefresh) setRefreshing(true);
     else if (!silent) setLoading(true);
     try {
-      const data = await buildLedger(sheetId, accessToken, monthName);
-      storeLedger(sheetId, data);
-      setTransactions(data);
-      setStale(false);
+      const { transactions: data, failed } = await buildLedger(sheetId, accessToken, monthName);
+      if (failed.length === 0) {
+        storeLedger(sheetId, data);
+        setTransactions(data);
+        setStale(false);
+        setFailedCount(0);
+      } else if (silent) {
+        // Warm-start refresh: keep the cached rows rather than swap in a
+        // partial list, but say the refresh didn't fully work.
+        setStale(true);
+      } else {
+        // Show what loaded, but don't cache it — the next visit must refetch.
+        setTransactions(data);
+        setFailedCount(failed.length);
+      }
     }
     catch {
-      if (!silent) setTransactions([]);
+      if (!silent) { setTransactions([]); setFailedCount(1); }
       // A silent refresh is the warm-start path: we're already showing cached
       // rows, so blanking them would be worse than keeping them. But failing
       // invisibly is how a stale ledger looks identical to an up-to-date one —
@@ -250,6 +268,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
 
   // Warm-start from localStorage cache instantly on sheet change, then refresh in background
   useEffect(() => {
+    setFailedCount(0);
     const cached = loadCachedLedger(sheetId);
     if (cached) {
       setTransactions(cached.data);
@@ -427,7 +446,7 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
     const all = [];
     for (const m of months) {
       try {
-        const txs = await buildLedger(m.sheetId, accessToken, m.name);
+        const { transactions: txs } = await buildLedger(m.sheetId, accessToken, m.name);
         all.push(...txs.map(t => ({ ...t, month: m.name })));
       } catch {}
       setAllMonthsProgress(p => ({ ...p, done: p.done + 1 }));
@@ -622,6 +641,24 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
         </button>
       )}
 
+      {/* Partial load — some category sheets failed to read, so the list is
+          incomplete (and was not cached). Without this, searching a missing
+          transaction just says "No results". */}
+      {failedCount > 0 && !refreshing && !loading && (
+        <button
+          onClick={() => load(true)}
+          className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-colors"
+          style={{
+            background: 'oklch(70% 0.19 25 / 12%)',
+            color: 'oklch(70% 0.19 25)',
+            border: '1px solid oklch(70% 0.19 25 / 25%)',
+          }}
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          Couldn't load everything — some transactions may be missing. Tap to retry
+        </button>
+      )}
+
       {/* Search bar */}
       <div className="relative">
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: 'var(--color-text-muted)' }} />
@@ -676,7 +713,8 @@ export function LedgerTab({ sheetId, accessToken, currencySymbol = '$', monthNam
             <Inbox className="w-6 h-6" style={{ color: 'var(--color-text-muted)' }} />
           </div>
           <p className="text-sm font-bold" style={{ color: 'var(--color-text-muted)' }}>
-            {searchQuery ? `No results for "${searchQuery}"` : 'No transactions found'}
+            {failedCount > 0 ? "Couldn't load all transactions"
+              : searchQuery ? `No results for "${searchQuery}"` : 'No transactions found'}
           </p>
           {(activeFilterCount > 0 || searchQuery) && (
             <button onClick={() => { clearFilters(); setSearchQuery(''); }}
