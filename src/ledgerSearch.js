@@ -24,11 +24,29 @@ export function rowMatchesQuery(t, query, receiptTotal = null) {
   if ((t?.vendor || '').toLowerCase().includes(q)) return true;
   if ((t?.category || '').toLowerCase().includes(q)) return true;
 
-  const amt = Number(t?.amount);
-  if (Number.isFinite(amt) && (amt.toFixed(2).includes(q) || String(Math.floor(amt)).includes(q))) return true;
-
-  if (typeof receiptTotal === 'number' &&
-      (receiptTotal.toFixed(2).includes(q) || String(Math.floor(receiptTotal)).includes(q))) return true;
+  // Amount queries are typed the way people read money: "$1,234.50", "₹45".
+  // Rows are matched against plain digits, so strip separators/symbols first.
+  const aq = normalizeAmountQuery(q);
+  if (aq) {
+    const amt = Number(t?.amount);
+    if (Number.isFinite(amt) && amountContains(amt, aq)) return true;
+    if (typeof receiptTotal === 'number' && amountContains(receiptTotal, aq)) return true;
+  }
 
   return false;
+}
+
+/**
+ * Reduce a typed query to digits and at most one '.', or '' if it isn't a
+ * plausible amount fragment (so "," or "$" alone never match every row).
+ */
+export function normalizeAmountQuery(q) {
+  const cleaned = String(q ?? '').replace(/[^0-9.]/g, '');
+  if (!/\d/.test(cleaned) || (cleaned.match(/\./g) || []).length > 1) return '';
+  return cleaned;
+}
+
+function amountContains(amount, aq) {
+  const abs = Math.abs(amount);
+  return abs.toFixed(2).includes(aq) || String(Math.floor(abs)).includes(aq);
 }
