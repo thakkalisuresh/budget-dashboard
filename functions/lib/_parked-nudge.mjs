@@ -16,7 +16,9 @@ import { createBotStore } from './bot-store.mjs';
 import { sendMessage, kbCategoryConfirm } from './_telegram.mjs';
 import { CATEGORIES } from './_extraction.mjs';
 import { getUserSettingsByEmail } from './_sheets.mjs';
-import { tgCategoryNudge, tgSplitNudge } from './_wallet-messages.mjs';
+import { tgCategoryNudge, tgSplitNudge, tgAmountNudge } from './_wallet-messages.mjs';
+import { AMOUNT_PENDING_PREFIX, kbAmountPending } from './_amount-pending.mjs';
+import { isFuelVendor } from './_categorize.mjs';
 
 export const NUDGE_AFTER_MS = 12 * 60 * 60 * 1000;
 export const GIVE_UP_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
@@ -37,9 +39,10 @@ async function loadBlobs(store, prefix) {
 
 export async function runParkedNudge({ now = new Date(), primaryEmail = '', primaryChatId = '' } = {}) {
   const store = createBotStore(getDb());
-  const [cats, splits] = await Promise.all([
+  const [cats, splits, holds] = await Promise.all([
     loadBlobs(store, 'category_pending:'),
     loadBlobs(store, 'split_pending:'),
+    loadBlobs(store, AMOUNT_PENDING_PREFIX),
   ]);
 
   const ageOf = (blob, key) => {
@@ -56,6 +59,14 @@ export async function runParkedNudge({ now = new Date(), primaryEmail = '', prim
     if (age == null) continue;
     if (age >= GIVE_UP_AFTER_MS) { if (!it.blob.giveUpNotedAt) gaveUp.push(it); continue; }
     if (age >= NUDGE_AFTER_MS) units.push({ kind: 'cat', age, ...it });
+  }
+
+  // $0 holds waiting on a typed amount. Same cadence and give-up as a category.
+  for (const it of holds) {
+    const age = ageOf(it.blob, it.key);
+    if (age == null) continue;
+    if (age >= GIVE_UP_AFTER_MS) { if (!it.blob.giveUpNotedAt) gaveUp.push(it); continue; }
+    if (age >= NUDGE_AFTER_MS) units.push({ kind: 'amt', age, ...it });
   }
 
   // Split: group per chat, keeping list() order — the SKIP handler acts on the
@@ -114,6 +125,17 @@ export async function runParkedNudge({ now = new Date(), primaryEmail = '', prim
             suggested: b.suggested, parkedHours: Math.floor(u.age / HOUR), fromEmail: from,
           }),
           kbCategoryConfirm(b.id, await categoriesFor(b.email), b.suggested)
+        );
+        nudged += 1;
+      } else if (u.kind === 'amt') {
+        const b = u.blob;
+        await sendMessage(
+          u.chatId,
+          tgAmountNudge({
+            vendor: b.vendor, card: b.paymentMethod, monthName: b.monthName, txDate: b.txDate,
+            parkedHours: Math.floor(u.age / HOUR), fuel: isFuelVendor(b.vendor),
+          }),
+          kbAmountPending(b.id)
         );
         nudged += 1;
       } else {

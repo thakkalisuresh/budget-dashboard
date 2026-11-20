@@ -1742,3 +1742,121 @@ describe('wallet-webhook — Chase SMS card and vendor pass-through', () => {
     expect(appendMock.mock.calls[0][0]).toMatchObject({ amount: 12.34, paymentMethod: held });
   });
 });
+
+describe('wallet-webhook — $0 pre-authorization holds', () => {
+  const EMAIL = 'nair.sabarish97@gmail.com';
+  const gasTap = (extra = {}) => ({
+    merchant: 'Costco Gas', amount: '$0.00', email: EMAIL, card: 'Chase Freedom Unlimited',
+    date: '2026-11-17', source: 'ios-wallet-tap', ...extra,
+  });
+  const holdKeys = () => [...splitStore.data.keys()].filter(k => k.startsWith('amount_pending:'));
+
+  beforeEach(() => {
+    vi.stubEnv('TELEGRAM_EMAIL_MAP', `${EMAIL}:111222333`);
+    extractMock.mockResolvedValue({ ok: true, data: { reward_category: 'Misc', store_name: 'Costco Gas' } });
+    getSettingsMock.mockResolvedValue({ splitReceiptVendors: [{ name: 'Costco', patterns: ['costco'] }] });
+  });
+
+  it('parks a $0 Costco Gas tap and asks for the final amount instead of rejecting it', async () => {
+    const res = await call(req({ body: gasTap() }));
+
+    expect(res.status).toBe(200);
+    expect(res.json).toMatchObject({ ok: true, pendingAmount: true, vendor: 'Costco Gas', amount: 0 });
+    expect(res.json.message).toMatch(/^⛽ \$0 hold at Costco Gas/);
+    expect(appendMock).not.toHaveBeenCalled();
+    expect(reportErrorMock).not.toHaveBeenCalled();
+
+    const keys = holdKeys();
+    expect(keys).toHaveLength(1);
+    expect(keys[0]).toMatch(/^amount_pending:111222333:[0-9a-f]{8}$/);
+    const blob = splitStore.data.get(keys[0]);
+    expect(blob).toMatchObject({
+      vendor: 'Costco Gas', paymentMethod: 'Chase Freedom Unlimited', txDate: '2026-11-17',
+      monthName: 'November 2026', email: EMAIL, source: 'ios-wallet-tap',
+    });
+
+    // One Telegram message: the amount question, not a category or receipt prompt.
+    expect(telegramSend).toHaveBeenCalledTimes(1);
+    const [chatId, text, kb] = telegramSend.mock.calls[0];
+    expect(chatId).toBe('111222333');
+    expect(text).toMatch(/What was the final amount\?/);
+    expect(kb[0][0].callback_data).toBe(`AMTSKIP:${blob.id}`);
+    expect([...splitStore.data.keys()].some(k => k.startsWith('split_pending:') || k.startsWith('category_pending:'))).toBe(false);
+  });
+
+  it('treats any merchant\'s $0 tap the same way (not only fuel)', async () => {
+    extractMock.mockResolvedValue({ ok: true, data: { reward_category: 'Misc', store_name: 'ChargePoint' } });
+    const res = await call(req({ body: gasTap({ merchant: 'ChargePoint', amount: 0 }) }));
+    expect(res.json).toMatchObject({ pendingAmount: true, vendor: 'ChargePoint' });
+    expect(res.json.message).toMatch(/^💳/);
+    expect(holdKeys()).toHaveLength(1);
+  });
+
+  it('treats a blank amount on a structured Wallet tap as a hold', async () => {
+    const res = await call(req({ body: gasTap({ amount: '' }) }));
+    expect(res.json).toMatchObject({ pendingAmount: true });
+    expect(holdKeys()).toHaveLength(1);
+  });
+
+  it('asks only once when two automations send the same $0 tap', async () => {
+    await call(req({ body: gasTap() }));
+    const second = await call(req({ body: gasTap() }));
+    expect(second.json).toMatchObject({ ok: true, skipped: true, reason: 'duplicate_recent' });
+    expect(holdKeys()).toHaveLength(1);
+    expect(telegramSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('still rejects a $0 tap as WAL-001 when there is no Telegram chat to ask', async () => {
+    vi.stubEnv('TELEGRAM_EMAIL_MAP', 'someone-else@x.com:999');
+    const res = await call(req({ body: gasTap() }));
+    expect(res.status).toBe(400);
+    expect(res.json.code).toBe('WAL-001');
+    expect(reportErrorMock).toHaveBeenCalledWith('WAL-001', expect.any(Error), expect.objectContaining({ zeroHold: true }));
+    expect(holdKeys()).toHaveLength(0);
+  });
+
+  it('still rejects a negative amount', async () => {
+    const res = await call(req({ body: gasTap({ amount: '-5.00' }) }));
+    expect(res.status).toBe(400);
+    expect(holdKeys()).toHaveLength(0);
+  });
+
+  it('a raw-text notification with no readable amount is still WAL-001, not a hold', async () => {
+    extractMock.mockResolvedValue({ ok: true, data: { store_name: 'Costco Gas', total_amount: null, is_purchase: true } });
+    const res = await call(req({ body: { text: 'Costco Gas purchase', email: EMAIL } }));
+    expect(res.status).toBe(400);
+    expect(holdKeys()).toHaveLength(0);
+  });
+
+  it('a real-amount Costco Gas tap skips the warehouse receipt split', async () => {
+    const res = await call(req({ body: gasTap({ amount: '52.18' }) }));
+    expect(res.status).toBe(200);
+    expect(res.json.split).toBeUndefined();
+    expect(appendMock).toHaveBeenCalledTimes(1);
+    expect(appendMock.mock.calls[0][0]).toMatchObject({ vendor: 'Costco Gas', amount: 52.18 });
+  });
+});
+
+describe('wallet-webhook — rejected automation key is reported', () => {
+  it('reports AUTH-002 for a request shaped like our automation, without the key', async () => {
+    const res = await call(req({ key: 'stale-key', body: { merchant: 'Costco Gas', amount: '0', email: 'a@b.com', source: 'ios-wallet-tap' } }));
+    expect(res.status).toBe(401);
+    expect(reportErrorMock).toHaveBeenCalledTimes(1);
+    const [code, err, ctx] = reportErrorMock.mock.calls[0];
+    expect(code).toBe('AUTH-002');
+    expect(err.message).toMatch(/wrong key/);
+    expect(ctx).toMatchObject({ source: 'ios-wallet-tap', vendor: 'Costco Gas', amount: '0' });
+    expect(JSON.stringify(ctx)).not.toContain('stale-key');
+  });
+
+  it('says "no key" when the header is missing', async () => {
+    await call(req({ key: null, body: { merchant: 'X', amount: '1', email: 'a@b.com' } }));
+    expect(reportErrorMock.mock.calls[0][1].message).toMatch(/no key/);
+  });
+
+  it('does not report a probe with no account email', async () => {
+    const res = await call(req({ key: 'nope', body: {} }));
+    expect(res.status).toBe(401);
+    expect(reportErrorMock).not.toHaveBeenCalled();
+  });
+});
