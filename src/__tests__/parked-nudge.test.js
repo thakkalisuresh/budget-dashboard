@@ -229,3 +229,34 @@ describe('empty / degraded', () => {
     expect(r).toMatchObject({ nudged: 0, splitNudged: 0 });
   });
 });
+
+describe('$0 hold nudge', () => {
+  const hold = (id, over = {}) => {
+    store.data.set(`amount_pending:${over.chat || '111'}:${id}`, {
+      id, vendor: 'Costco Gas', txDate: '2026-09-09', monthName: 'September 2026',
+      sheetId: 'sheet-sep', paymentMethod: 'Chase Freedom Unlimited',
+      email: PRIMARY, source: 'ios-wallet-tap', createdAt: ago(20 * HOUR), ...over,
+    });
+  };
+
+  it('re-asks for the amount with the "don\'t log" button after 12h', async () => {
+    hold('h1');
+    hold('h2', { createdAt: ago(2 * HOUR) });
+    const r = await runParkedNudge(opts);
+    expect(r.nudged).toBe(1);
+    const [chat, text, kb] = sendMock.mock.calls[0];
+    expect(chat).toBe('111');
+    expect(text).toBe(
+      '⏰ Still need the final amount\n' +
+      '⛽ Costco Gas · Chase Freedom Unlimited · Sep 2026 09-09 · waiting 20h\n' +
+      'Reply with the amount, e.g. 52.18.');
+    expect(kb).toEqual([[{ text: "🚫 Don't log this", callback_data: 'AMTSKIP:h1' }]]);
+  });
+
+  it('gives up after 30 days like any parked charge', async () => {
+    hold('old', { createdAt: ago(31 * DAY) });
+    const r = await runParkedNudge(opts);
+    expect(r.gaveUp).toBe(1);
+    expect(store.data.get('amount_pending:111:old').giveUpNotedAt).toBe(NOW.toISOString());
+  });
+});

@@ -91,7 +91,7 @@ export const ERROR_CODES = {
     title: 'Wallet webhook rejected an unauthorized request',
     severity: 'fatal',
     cause: 'Missing or wrong API key on the wallet webhook.',
-    fix: 'Expected if someone is probing the endpoint. If it is your own phone, the key in the automation no longer matches WALLET_WEBHOOK_SECRET.',
+    fix: 'Only requests carrying an account email are reported, so this is almost always your own phone: an automation (often an old duplicate Shortcut firing on every tap) holds a key that no longer matches WALLET_WEBHOOK_SECRET. Point it at the core Shortcut or turn it off. The charge it sent was not logged.',
   },
   'AUTH-003': {
     title: 'Telegram webhook signature rejected',

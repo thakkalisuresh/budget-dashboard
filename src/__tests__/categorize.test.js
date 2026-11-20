@@ -470,3 +470,23 @@ describe('always-ask vendors', () => {
     expect(byHistory).toMatchObject({ category: 'Health', source: 'history', needsConfirm: false });
   });
 });
+
+describe('fuel at a warehouse store', () => {
+  it('Costco Gas is not an always-ask vendor; Costco still is', () => {
+    expect(isAlwaysAsk('Costco Gas')).toBe(false);
+    expect(isAlwaysAsk('COSTCO GAS #0117')).toBe(false);
+    expect(isAlwaysAsk("Sam's Club Fuel")).toBe(false);
+    expect(isAlwaysAsk('Costco Wholesale')).toBe(true);
+    expect(isAlwaysAsk('Costco')).toBe(true);
+  });
+
+  it('warehouse filings do not leak into Costco Gas history, and vice versa', () => {
+    const cats = [...CATEGORIES, 'Car Payments'];
+    const rows = [
+      { vendor: 'Costco', category: 'Grocery' }, { vendor: 'Costco', category: 'Health' },
+      { vendor: 'Costco Gas', category: 'Car Payments' }, { vendor: 'COSTCO GAS #0117', category: 'Car Payments' },
+    ];
+    expect(categoryFromHistory('Costco Gas', rows, cats)).toMatchObject({ category: 'Car Payments', count: 2, supported: true });
+    expect(categoryFromHistory('Costco', rows, cats)).toMatchObject({ count: 2, agree: false });
+  });
+});
