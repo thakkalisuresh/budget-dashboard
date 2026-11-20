@@ -87,3 +87,36 @@ describe('ledger filter by split total (integration)', () => {
     expect(notes[k2].splitId).toBe('sp-2');
   });
 });
+
+describe('rowMatchesQuery — amounts typed the way people read money', () => {
+  const big = { vendor: 'Rent', category: 'Home', amount: 1234.5 };
+  const mm  = { vendor: 'Mint and Martini', category: 'Eating Out', amount: 42.16 };
+  it('finds 42.16 exactly and by prefix', () => {
+    expect(rowMatchesQuery(mm, '42.16')).toBe(true);
+    expect(rowMatchesQuery(mm, '42.1')).toBe(true);
+    expect(rowMatchesQuery(mm, '42')).toBe(true);
+  });
+  it('ignores thousands separators', () => {
+    expect(rowMatchesQuery(big, '1,234.50')).toBe(true);
+    expect(rowMatchesQuery(big, '1,234')).toBe(true);
+  });
+  it('ignores currency symbols and spaces', () => {
+    expect(rowMatchesQuery(mm, '$42.16')).toBe(true);
+    expect(rowMatchesQuery(mm, '₹ 42')).toBe(true);
+  });
+  it('tolerates trailing zeros / dot', () => {
+    expect(rowMatchesQuery({ vendor: 'x', category: 'y', amount: 45 }, '45.0')).toBe(true);
+    expect(rowMatchesQuery({ vendor: 'x', category: 'y', amount: 45 }, '45.')).toBe(true);
+  });
+  it('symbol-only or junk queries do not match every row', () => {
+    expect(rowMatchesQuery(mm, '$')).toBe(false);
+    expect(rowMatchesQuery(mm, ',')).toBe(false);
+    expect(rowMatchesQuery(mm, '1.2.3')).toBe(false);
+  });
+  it('still matches vendor names containing digits/punctuation', () => {
+    expect(rowMatchesQuery({ vendor: '7-Eleven', category: 'Misc', amount: 3 }, '7-eleven')).toBe(true);
+  });
+  it('applies to receiptTotal with separators too', () => {
+    expect(rowMatchesQuery({ vendor: 'C', category: 'G', amount: 40 }, '$1,002.54', 1002.54)).toBe(true);
+  });
+});
