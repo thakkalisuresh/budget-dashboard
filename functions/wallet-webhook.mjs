@@ -20,8 +20,11 @@ import {
   msgWritten, msgWrittenDuplicate, msgNeedsCategory, msgSplitParked, msgUnreadable,
   msgNoSheet, msgWriteFailed, msgVendorDisabled, msgUnauthorized, tgCategoryPrompt,
   msgDuplicateSkipped, tgDuplicateNote, msgConvertFailed, tgConvertFailed, fxNote,
+  msgAmountPending, tgAmountPrompt,
 } from './lib/_wallet-messages.mjs';
 import { matchesSplitVendor } from './lib/_item-categorizer.mjs';
+import { isFuelVendor } from './lib/_categorize.mjs';
+import { AMOUNT_PENDING_PREFIX, isZeroHold, kbAmountPending } from './lib/_amount-pending.mjs';
 import { resolveCardName, normCard } from './lib/_card-resolver.mjs';
 import { sha256Hex } from './lib/http-common.mjs';
 import { convertToUSD } from './lib/_currency.mjs';
@@ -100,6 +103,72 @@ async function getPreviousMonthRows(monthName) {
   }
 }
 
+/** Two automations firing on one $0 tap must not ask twice. */
+const HOLD_DUP_WINDOW_MS = 2 * 60 * 1000;
+
+/**
+ * Park a $0 hold as `amount_pending:` and ask the household primary for the
+ * final amount. Send FIRST, park after (as with the category prompt), so a
+ * failed send never leaves a blob nobody was asked about. If Telegram can't be
+ * reached there is nothing sensible to log, so the charge is reported as lost
+ * (WAL-001, field amount) exactly as a $0 tap was before. Never throws.
+ */
+async function parkZeroHold({ res, email, source, vendor, card, txDate, monthName, sheetId, extractedCategory }) {
+  const fuel = isFuelVendor(vendor);
+  const lost = async (why, e) => {
+    await reportError('WAL-001', e || new Error(`$0 hold not parked: ${why}`), { field: 'amount', zeroHold: true, vendor, source });
+    res.status(400).json({ ok: false, code: 'WAL-001', error: 'Missing or invalid amount', message: msgUnreadable('amount') });
+  };
+
+  const chatId = await resolvePromptChatId(email);
+  if (!chatId) { await lost('no Telegram chat'); return; }
+
+  let store;
+  try {
+    store = createBotStore(getDb());
+    const emailHash = crypto.createHash('sha256').update(email.toLowerCase()).digest('hex').slice(0, 16);
+    const vendorKey = vendor.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 40);
+    const c = await store.claimWindow(`wdup-hold:${emailHash}:${vendorKey}`, {
+      windowMs: HOLD_DUP_WINDOW_MS, takeoverMs: DUP_TAKEOVER_MS, vendor,
+    });
+    if (!c.claimed) {
+      res.status(200).json({ ok: true, skipped: true, reason: 'duplicate_recent', vendor, amount: 0, message: msgAmountPending({ vendor, fuel }) });
+      return;
+    }
+    // Settled at once: the window alone is the guard, and a failed send below
+    // still blocks a second identical prompt for two minutes, which is harmless.
+    await store.settleClaim(`wdup-hold:${emailHash}:${vendorKey}`, c.token).catch(() => {});
+  } catch (e) {
+    await reportError('WAL-005', e, { step: 'hold-claim', vendor });
+  }
+
+  // 8 chars: the id is reused for the CATFIX callback once the amount is known.
+  const id = crypto.randomUUID().slice(0, 8);
+  try {
+    await sendMessage(chatId, tgAmountPrompt({ vendor, card, monthName, fuel }), kbAmountPending(id));
+  } catch (e) {
+    await reportError('TG-001', e, { flow: 'amount-prompt', vendor });
+    await lost('prompt send failed', e);
+    return;
+  }
+  try {
+    await (store || createBotStore(getDb())).setJSON(`${AMOUNT_PENDING_PREFIX}${chatId}:${id}`, {
+      id, vendor, txDate, monthName, sheetId,
+      paymentMethod: card ?? '',
+      extractedCategory: extractedCategory || null,
+      email, source,
+      createdAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    await reportError('TG-001', e, { flow: 'amount-park', vendor });
+    try { await sendMessage(chatId, `⚠️ Couldn't save that — replying with the amount won't work. Add ${vendor} by hand.`); } catch { /* reported above */ }
+    await lost('park failed', e);
+    return;
+  }
+  console.log(`wallet-webhook: $0 hold parked for ${vendor} (${fuel ? 'fuel' : 'other'})`);
+  res.status(200).json({ ok: true, pendingAmount: true, vendor, amount: 0, message: msgAmountPending({ vendor, fuel }) });
+}
+
 /**
  * Park the skipped charge, then tell the household primary's chat with a
  * "Log it anyway" button. Park FIRST (opposite of the category prompt): there is
@@ -151,6 +220,19 @@ export const walletWebhook = onRequest(
     const key = extractKey(req);
     const secret = process.env.WALLET_WEBHOOK_SECRET;
     if (!key || !secret || !(await keyMatches(key, secret))) {
+      // Only a request shaped like one of our automations is reported: a stale
+      // key on the phone silently drops every charge it sends (a duplicate
+      // Shortcut did this on every tap for weeks), whereas a random probe has
+      // no account email in its body. The key itself is never recorded.
+      const b = req.body || {};
+      if (typeof b.email === 'string' && b.email.includes('@')) {
+        await reportError('AUTH-002', new Error(key ? 'Wallet automation sent a wrong key' : 'Wallet automation sent no key'), {
+          source: typeof b.source === 'string' ? b.source.slice(0, 40) : null,
+          vendor: typeof b.merchant === 'string' ? b.merchant.slice(0, 60) : (b.text ? 'raw text' : null),
+          amount: b.amount ?? null,
+          userAgent: (req.get('user-agent') || '').slice(0, 60),
+        });
+      }
       res.status(401).json({ ok: false, code: 'AUTH-002', error: 'Unauthorized', message: msgUnauthorized() });
       return;
     }
@@ -249,7 +331,14 @@ export const walletWebhook = onRequest(
       await reject('merchant');
       return;
     }
-    if (isNaN(amount) || amount <= 0) {
+    // A $0 (or, on a structured Wallet tap, blank) amount is a pre-authorization
+    // hold: a gas pump or EV charger authorizes the card at the tap and the real
+    // total posts later, with no notification. Parked below and asked about on
+    // Telegram instead of being rejected.
+    const zeroHold = isZeroHold({ amount, amountRaw, fromRawText: Boolean(rawText) });
+    if (zeroHold) {
+      amount = 0;
+    } else if (isNaN(amount) || amount <= 0) {
       await reject('amount');
       return;
     }
@@ -268,7 +357,7 @@ export const walletWebhook = onRequest(
       || (amountFromParsed ? String(parsed?.currency || '').toUpperCase() : detectCurrency(amountRaw))
       || 'USD';
     let fx = null;
-    if (currency !== 'USD') {
+    if (currency !== 'USD' && !zeroHold) {
       const original = amount;
       try {
         const r = await convertToUSD(original, currency);
@@ -361,6 +450,14 @@ export const walletWebhook = onRequest(
     // wipe a card name that was perfectly good.
     if (card) {
       card = resolveCardName(card, userSettings.cards || []) || card;
+    }
+
+    // ── $0 hold: park it and ask for the final amount. Category resolution, the
+    // duplicate guard (keyed on cents, so every $0 tap would collide) and the
+    // receipt split all wait for the real amount; the bot runs them on reply.
+    if (zeroHold) {
+      await parkZeroHold({ res, email, source, vendor, card, txDate, monthName, sheetId, extractedCategory });
+      return;
     }
 
     // ── Category resolution: smart rules → Groq → whatever the extractor said.
@@ -478,7 +575,16 @@ export const walletWebhook = onRequest(
     // below then goes ahead and this follow-up tells the user to ignore the buttons.
     let parkFailNote = null;
 
-    if (decision.needsConfirm) {
+    // A split-receipt vendor (Costco, Amazon…) skips the category question: the
+    // receipt split below assigns a category per line item, and resolveCategory
+    // always wants to ask about these vendors (ALWAYS_ASK_VENDORS, and a history
+    // split across categories by earlier receipts). Parking for a category first
+    // returned before the receipt prompt was ever sent.
+    // Fuel at a warehouse store ("Costco Gas") is one category: no receipt split.
+    const isSplitVendor = !isFuelVendor(vendor)
+      && matchesSplitVendor(vendor, userSettings.splitReceiptVendors || []);
+
+    if (decision.needsConfirm && !isSplitVendor) {
       const chatId = await resolvePromptChatId(email);
       if (chatId) {
         // Send FIRST, park after: a failed send then never leaves an orphaned
@@ -532,7 +638,7 @@ export const walletWebhook = onRequest(
     // ── Split-receipt vendor (Costco, Amazon…): don't log a lump sum. Stash the
     // charge and ask the user (via Telegram) to upload the receipt so it can be
     // split by category. Falls back to normal logging if we can't reach them.
-    if (matchesSplitVendor(vendor, userSettings.splitReceiptVendors || [])) {
+    if (isSplitVendor) {
       const chatId = await resolvePromptChatId(email);
       if (chatId) {
         let sent = false;

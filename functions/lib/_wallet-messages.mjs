@@ -103,3 +103,27 @@ export const tgSplitNudge = (items) => {
     items.map(i => `• ${i.vendor} · ${usd(i.amount)} · parked ${i.parkedHours}h`).join('\n') +
     `\nUpload a receipt to split one, or tap SKIP to log as one expense. SKIP logs the first listed; tap again for the next.`;
 };
+
+/**
+ * A $0 tap: a pre-authorization hold (gas pump, EV charger) whose real amount
+ * posts later and is never sent to the phone. Nothing is logged until the user
+ * replies with the amount on Telegram.
+ */
+const holdIcon = (fuel) => (fuel ? '⛽' : '💳');
+
+export const msgAmountPending = ({ vendor, fuel }) =>
+  `${holdIcon(fuel)} $0 hold at ${vendor} — reply on Telegram with the final amount and I'll log it.`;
+
+/** Telegram prompt for a $0 hold (button: don't log). The reply is a bare amount. */
+export const tgAmountPrompt = ({ vendor, card, monthName, fuel }) =>
+  `${holdIcon(fuel)} What was the final amount?\n` +
+  `${vendor}${card ? ` · ${card}` : ''} · ${shortMonth(monthName)}\n` +
+  `The tap came through as $0 (${fuel ? 'the pump only holds a placeholder' : 'a pre-authorization hold'}). ` +
+  `Reply with the amount, e.g. 52.18.`;
+
+/** Daily nudge for a $0 hold nobody has answered. */
+export const tgAmountNudge = ({ vendor, card, monthName, txDate, parkedHours, fuel }) =>
+  `⏰ Still need the final amount\n` +
+  `${holdIcon(fuel)} ${vendor}${card ? ` · ${card}` : ''} · ${shortMonth(monthName)}` +
+  `${/^\d{4}-\d{2}-\d{2}/.test(txDate || '') ? ` ${txDate.slice(5, 10)}` : ''} · waiting ${parkedHours}h\n` +
+  `Reply with the amount, e.g. 52.18.`;

@@ -43,6 +43,7 @@ import { buildSplitNote, buildCategoryItems } from './_split-notes.mjs';
 import { txNoteKey } from './_transaction-notes.mjs';
 import { applyDiscounts } from './_receipt-discounts.mjs';
 import { runToolLoop } from './_agent.mjs';
+import { AMOUNT_PENDING_PREFIX, parseReplyAmount, listAmountPending, completeAmountPending } from './_amount-pending.mjs';
 
 const DAILY_LIMIT    = 50;
 const UNDO_WINDOW_MS = 10 * 60 * 1000;
@@ -250,6 +251,15 @@ export async function handleTextReply(ctx, text) {
       }
       await store.delete(`awaiting_add:${userId}`).catch(() => {});
     }
+
+    // ── Answering "what was the final amount?" for a $0 wallet hold ──
+    // Only a bare amount counts, and only while a hold is waiting, so normal
+    // messages with a number in them still reach the parsers below.
+    const holdAmount = parseReplyAmount(text);
+    if (holdAmount != null) {
+      const holds = await listAmountPending(store, userId).catch(() => []);
+      if (holds.length) return await handleAmountReply(ctx, holds, holdAmount);
+    }
   }
 
   // Any other text message clears an awaiting ATTACH state
@@ -280,7 +290,7 @@ export async function handleTextReply(ctx, text) {
     for (const prefix of [
       `confirm:${userId}:`, `transfer_pending:${userId}:`,
       `split_pending:${userId}:`, `split_confirm:${userId}:`,
-      `category_pending:${userId}:`,
+      `category_pending:${userId}:`, `${AMOUNT_PENDING_PREFIX}${userId}:`,
     ]) {
       const { blobs } = await store.list({ prefix });
       for (const b of (blobs || [])) {
@@ -326,6 +336,15 @@ export async function handleTextReply(ctx, text) {
   // ── CATFIX callback (user picked a category for an unconfident wallet charge) ──
   if (text.startsWith('CATFIX:')) {
     return await handleCategoryPick(ctx, text);
+  }
+
+  // ── AMTSKIP callback ("Don't log this" under a $0-hold amount prompt) ──
+  if (text.startsWith('AMTSKIP:')) {
+    const key = `${AMOUNT_PENDING_PREFIX}${userId}:${text.slice('AMTSKIP:'.length)}`;
+    const blob = await store.get(key, { type: 'json' }).catch(() => null);
+    if (!blob) return ctx.send('That charge is no longer waiting.');
+    await store.delete(key);
+    return ctx.send(`OK — ${blob.vendor} won't be logged.`);
   }
 
   // ── DUPLOG callback ("Log it anyway" on a wallet charge the duplicate guard skipped) ──
@@ -1318,6 +1337,39 @@ async function handleCategoryPick(ctx, text) {
     // Leave the pending blob in place so the charge isn't lost — the user can
     // tap again once whatever broke is back.
     return ctx.send(`Couldn't log that: ${e.message}. Tap a category again to retry. [BOT-007]`);
+  }
+}
+
+/**
+ * A bare amount reply while one or more $0 wallet holds are waiting: it answers
+ * the OLDEST one (the order they were asked in), then asks about the next.
+ * The hold blob is only removed once the charge is logged or handed to the
+ * category prompt, so a failure leaves it waiting for another reply.
+ */
+async function handleAmountReply(ctx, holds, amount) {
+  const { store, userId } = ctx;
+  const [{ key, blob }, ...rest] = holds;
+  try {
+    const r = await completeAmountPending({
+      store, chatId: userId, key, blob, amount,
+      send: (text, markup) => ctx.send(text, markup),
+    });
+    if (r.logged) {
+      await store.setJSON(`lastlog:${userId}`, {
+        uuid: r.uuid, category: r.category, vendor: blob.vendor, amount,
+        sheetId: blob.sheetId, monthName: blob.monthName,
+        loggedAt: new Date().toISOString(),
+      });
+      await ctx.send(`Logged ${blob.vendor} · $${amount.toFixed(2)} as ${r.category}.`);
+    }
+    console.log(`bot-core: $0 hold ${blob.vendor} completed at $${amount} (${r.logged ? 'logged' : 'category prompt'}) for ${userId}`);
+  } catch (e) {
+    await reportError('BOT-007', e, { userId, vendor: blob?.vendor, flow: 'amount-reply' });
+    return ctx.send(`Couldn't log that: ${e.message}. Reply with the amount again to retry. [BOT-007]`);
+  }
+  if (rest.length) {
+    const next = rest[0].blob;
+    return ctx.send(`Next: ${next.vendor}${next.paymentMethod ? ` · ${next.paymentMethod}` : ''} on ${next.txDate} also came through as $0. Reply with its amount.`);
   }
 }
 

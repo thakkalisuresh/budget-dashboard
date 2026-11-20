@@ -56,8 +56,20 @@ export const ALWAYS_ASK_VENDORS = [
   /\bzelle\b/i, /\bvenmo\b/i, /\bpaypal\b/i, /\bapple\.com\b/i, /^google\s*\*/i,
 ];
 
+/**
+ * A fuel purchase at a store that otherwise sells everything ("Costco Gas",
+ * "Sam's Club Fuel"). It is one category however the store's other trips are
+ * filed, so it is exempt from ALWAYS_ASK_VENDORS and the receipt split, and it
+ * only learns from its own past filings, never from the warehouse's.
+ */
+const FUEL_VENDOR = /\b(?:gas|gasoline|fuel|petrol)\b/i;
+
+export function isFuelVendor(vendor) {
+  return !!vendor && FUEL_VENDOR.test(vendor);
+}
+
 export function isAlwaysAsk(vendor) {
-  return !!vendor && ALWAYS_ASK_VENDORS.some(re => re.test(vendor));
+  return !!vendor && !isFuelVendor(vendor) && ALWAYS_ASK_VENDORS.some(re => re.test(vendor));
 }
 
 /**
@@ -208,8 +220,12 @@ export function categoryFromHistory(vendor, rows, categories) {
   if (!vendor || !rows?.length) return null;
   const counts = new Map();
   let total = 0;
+  const fuel = isFuelVendor(vendor);
   for (const r of rows) {
     if (!categories.includes(r?.category) || !sameVendor(r.vendor, vendor)) continue;
+    // "Costco Gas" and a bare "Costco" share a leading word, but the warehouse's
+    // mixed filings say nothing about fuel, and vice versa.
+    if (isFuelVendor(r.vendor) !== fuel) continue;
     counts.set(r.category, (counts.get(r.category) || 0) + 1);
     total++;
   }

@@ -59,11 +59,12 @@ Every response has a `message`; show **only** that. Full table: `wallet-ingestio
 | Logged | ✅ | `✅ $17.58 at Little Oddfellows on Amex BCP → Dining. Added to your September 2026 budget in Fundient.` |
 | Waiting on a category (Telegram prompt) | 🤔 | not logged yet: tap a category on Telegram |
 | Split-receipt vendor | 🧾 | not logged yet: upload receipt or SKIP on Telegram |
+| $0 tap (gas pump, EV charger: a pre-authorization hold) | ⛽ / 💳 | not logged yet: reply on Telegram with the final amount |
 | Not a purchase (declined, statement, deposit, autopay, refund, OTP) | ℹ️ | skipped quietly, nothing logged, no error |
 | Duplicate within 2 minutes (same email), or same card + amount from the other phone within 3 minutes | ⏭ | skipped, Telegram note with "Log it anyway" |
 | Could not read amount | ⚠️ | nothing logged |
 | No sheet for the month | ⚠️ | create the month in the dashboard |
-| Bad or missing secret | ❌ | check the `X-API-Key` / Authorization header |
+| Bad or missing secret | ❌ | check the `X-API-Key` / Authorization header. Also reported as AUTH-002 (instant Telegram alert) when the body carries an `email`. A 401 a few seconds after every ✅ means a second, stale automation fires on each tap: turn it off |
 | Foreign charge, converted | ✅ | `✅ $18.33 at Xt Network Sas (€16.00 converted at 0.873) → Misc…`: an estimate, the bank's rate differs a few percent |
 | Foreign charge, could not convert | ⚠️ | NOT logged: add it by hand (the Capital One app's USD notification is exact) |
 | Save failed | ❌ | the charge was NOT logged: enter it by hand |
@@ -153,6 +154,7 @@ callers as described here.)
 - **No secret, no email, no `sheetId` in a caller.** The core adds them. A caller therefore never changes when the key is rotated or when going live.
 - **Structured callers send `amount` as text.** A Dictionary action's value pills are text, and the server accepts that (`"17.58"` works as well as a number), so do not fight the Number type.
 - Notification callers send `text` (Title, Subtitle, Body joined), `card` (the Title) and `source`; Wallet-tap callers send `amount`, `merchant`, `card` and `source`.
+- **Wallet-tap callers must send the tap even when the amount is $0 or blank.** A gas pump (Costco Gas included) or EV charger only pre-authorizes the card, so Wallet reports $0 and the real total posts later with no notification. Do not put an "amount > 0" check or a Number step that fails on $0 in the Shortcut: the server parks the tap and asks for the final amount on Telegram.
 - **One-time prompt:** the first time each caller runs the core, iOS asks "Allow ... to run another shortcut?". Tap **Allow**. Do this by running the caller by hand from its editor once (while MODE is `test`, with empty or placeholder values, which the server rejects harmlessly), so the prompt is not left for the first real charge.
 - Automation callers work with the phone locked and unlocked (Automation on, Notify off).
 
