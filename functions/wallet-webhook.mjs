@@ -478,7 +478,14 @@ export const walletWebhook = onRequest(
     // below then goes ahead and this follow-up tells the user to ignore the buttons.
     let parkFailNote = null;
 
-    if (decision.needsConfirm) {
+    // A split-receipt vendor (Costco, Amazon…) skips the category question: the
+    // receipt split below assigns a category per line item, and resolveCategory
+    // always wants to ask about these vendors (ALWAYS_ASK_VENDORS, and a history
+    // split across categories by earlier receipts). Parking for a category first
+    // returned before the receipt prompt was ever sent.
+    const isSplitVendor = matchesSplitVendor(vendor, userSettings.splitReceiptVendors || []);
+
+    if (decision.needsConfirm && !isSplitVendor) {
       const chatId = await resolvePromptChatId(email);
       if (chatId) {
         // Send FIRST, park after: a failed send then never leaves an orphaned
@@ -532,7 +539,7 @@ export const walletWebhook = onRequest(
     // ── Split-receipt vendor (Costco, Amazon…): don't log a lump sum. Stash the
     // charge and ask the user (via Telegram) to upload the receipt so it can be
     // split by category. Falls back to normal logging if we can't reach them.
-    if (matchesSplitVendor(vendor, userSettings.splitReceiptVendors || [])) {
+    if (isSplitVendor) {
       const chatId = await resolvePromptChatId(email);
       if (chatId) {
         let sent = false;

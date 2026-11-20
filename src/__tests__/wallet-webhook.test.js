@@ -590,6 +590,50 @@ describe('wallet-webhook — LLM category correction', () => {
     expect(appendMock).not.toHaveBeenCalled();
   });
 
+  // Regression: since the v2 categorize rework put Costco/Amazon on
+  // ALWAYS_ASK_VENDORS, the category park ran first and returned, so a Costco
+  // tap never got the receipt prompt. A configured split vendor goes straight
+  // to the receipt prompt instead.
+  describe('configured split-receipt vendor (v2 Wallet tap)', () => {
+    const SPLIT_VENDORS = [
+      { name: 'Costco', patterns: ['costco'] },
+      { name: 'Amazon', patterns: ['amazon', 'amzn'] },
+    ];
+    const v2Tap = {
+      merchant: 'COSTCO WHSE #0123', amount: '142.37', email: 'nair.sabarish97@gmail.com',
+      sheetId: 'sheet-abc', card: 'Chase Sapphire Reserve', date: '2026-11-18', source: 'ios-wallet',
+    };
+
+    it('sends the receipt prompt, not a category prompt, for a Costco tap', async () => {
+      getSettingsMock.mockResolvedValue({ splitReceiptVendors: SPLIT_VENDORS });
+      extractMock.mockResolvedValue({ ok: true, data: { reward_category: 'Grocery', store_name: 'Costco Wholesale' } });
+      groqSays('Grocery', 0.6);   // would ask on its own; Costco is always-ask too
+      const res = await call(req({ body: v2Tap }));
+
+      expect(res.status).toBe(200);
+      expect(res.json).toMatchObject({ ok: true, split: true, amount: 142.37 });
+      expect(res.json.pendingCategory).toBeUndefined();
+      expect(appendMock).not.toHaveBeenCalled();
+      expect(telegramSend).toHaveBeenCalledOnce();
+      expect(telegramSend.mock.calls[0][1]).toMatch(/Upload the receipt photo/);
+      const keys = [...splitStore.data.keys()];
+      expect(keys.some(k => k.startsWith('category_pending:'))).toBe(false);
+      const [, blob] = [...splitStore.data.entries()].find(([k]) => k.startsWith('split_pending:111222333:'));
+      expect(blob).toMatchObject({ vendor: 'Costco Wholesale', amount: 142.37, source: 'ios-wallet', category: 'Grocery' });
+    });
+
+    it('does the same for an Amazon charge', async () => {
+      getSettingsMock.mockResolvedValue({ splitReceiptVendors: SPLIT_VENDORS });
+      extractMock.mockResolvedValue({ ok: true, data: { reward_category: 'Misc', store_name: 'AMZN Mktp US' } });
+      groqSays('Entertainment', 1);   // sure, but Amazon is always-ask
+      const res = await call(req({ body: { ...v2Tap, merchant: 'AMZN Mktp US*2K4', amount: '23.99' } }));
+
+      expect(res.json).toMatchObject({ ok: true, split: true });
+      expect([...splitStore.data.keys()].some(k => k.startsWith('split_pending:111222333:'))).toBe(true);
+      expect([...splitStore.data.keys()].some(k => k.startsWith('category_pending:'))).toBe(false);
+    });
+  });
+
   it('asks about a really extracted Misc that Groq also says, the weakest agreement', async () => {
     // beforeEach extractor says reward_category: 'Misc'.
     groqSays('Misc', 1);
